@@ -2,11 +2,11 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace NyaFs.ImageFormat.Elements.Fs.Items
+namespace NyaFs.Filesystem.Universal.Items
 {
     public class Node : FilesystemItem
     {
-        public Node(string Filename, uint User, uint Group, uint Mode) : base(Types.FilesystemItemType.Node, Filename, User, Group, Mode)
+        public Node(string Filename, uint User, uint Group, uint Mode) : base(Types.FilesystemItemType.Character, Filename, User, Group, Mode)
         {
 
         }

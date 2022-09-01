@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace NyaFs.ImageFormat.Elements.Fs
+namespace NyaFs.Filesystem.Universal
 {
     // cpio
     // gzipped cpio
@@ -21,11 +21,6 @@ namespace NyaFs.ImageFormat.Elements.Fs
         public Items.Dir Root = new Items.Dir(".", 0, 0, 0x755);
 
         /// <summary>
-        /// Image information, arch or supported os
-        /// </summary>
-        public Types.ImageInfo Info = new Types.ImageInfo();
-
-        /// <summary>
         /// Is image loaded?
         /// </summary>
         public bool Loaded => Root.Items.Count > 0;
@@ -40,7 +35,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
             Console.WriteLine(Dir.ToString());
             foreach(var I in Dir.Items)
             {
-                if (I.ItemType == Types.FilesystemItemType.Dir)
+                if (I.ItemType == Types.FilesystemItemType.Directory)
                     DumpDir(I as Items.Dir);
                 else
                     Console.WriteLine(I.ToString());
@@ -51,9 +46,12 @@ namespace NyaFs.ImageFormat.Elements.Fs
         {
             int Pos = Path.LastIndexOf('/');
             if (Pos >= 0)
-                return Path.Substring(0, Pos);
+            {
+                var Res = Path.Substring(0, Pos);
+                return (Res.Length > 0) ? Res : "/";
+            }
             else
-                return ".";
+                return "/";
         }
 
         public Items.Dir GetDirectory(string Path)
@@ -97,7 +95,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                         if (Rel == Path)
                             return true;
 
-                        if (I.ItemType == Types.FilesystemItemType.Dir)
+                        if (I.ItemType == Types.FilesystemItemType.Directory)
                         {
                             Base = I as Items.Dir;
                             Found = true;
@@ -139,7 +137,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                         if (Rel == Path)
                             return I;
 
-                        if (I.ItemType == Types.FilesystemItemType.Dir)
+                        if (I.ItemType == Types.FilesystemItemType.Directory)
                         {
                             Base = I as Items.Dir;
                             Found = true;

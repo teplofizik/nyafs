@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace NyaFs.ImageFormat.Elements.Fs.Items
+namespace NyaFs.Filesystem.Universal.Items
 {
     public class Block : FilesystemItem
     {

@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace NyaFs.ImageFormat.Elements.Fs
+namespace NyaFs.Filesystem.Universal
 {
     public class FilesystemItem
     {

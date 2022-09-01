@@ -2,15 +2,17 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace NyaFs.ImageFormat.Types
+namespace NyaFs.Filesystem.Universal.Types
 {
     public enum FilesystemItemType
     {
+        Unknown,
         File,
-        Dir,
+        Directory,
         SymLink,
-        Node,
+        Character,
         Block,
-        Fifo
+        Fifo,
+        Socket
     }
 }

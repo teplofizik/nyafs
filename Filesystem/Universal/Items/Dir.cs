@@ -2,13 +2,13 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace NyaFs.ImageFormat.Elements.Fs.Items
+namespace NyaFs.Filesystem.Universal.Items
 {
     public class Dir : FilesystemItem
     {
         public List<FilesystemItem> Items = new List<FilesystemItem>();
 
-        public Dir(string Filename, uint User, uint Group, uint Mode) : base(Types.FilesystemItemType.Dir, Filename, User, Group, Mode)
+        public Dir(string Filename, uint User, uint Group, uint Mode) : base(Types.FilesystemItemType.Directory, Filename, User, Group, Mode)
         {
 
         }

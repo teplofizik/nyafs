@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Extensions\Extensions.csproj" />
+    <ProjectReference Include="..\NyaExtensions\NyaExtensions.csproj" />
     <ProjectReference Include="..\NyaLZO\NyaLZO.csproj" />
   </ItemGroup>
 

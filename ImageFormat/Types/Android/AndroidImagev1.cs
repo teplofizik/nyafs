@@ -1,5 +1,5 @@
-﻿using Extension.Array;
-using Extension.Packet;
+﻿using NyaExtensions.Array;
+using NyaExtensions.Packet;
 using System;
 using System.Collections.Generic;
 using System.Linq;

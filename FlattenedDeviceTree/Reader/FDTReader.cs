@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using Extension.Packet;
-using Extension.Array;
+using NyaExtensions.Packet;
+using NyaExtensions.Array;
 using NyaFs.FlattenedDeviceTree.Types;
 
 namespace NyaFs.FlattenedDeviceTree.Reader

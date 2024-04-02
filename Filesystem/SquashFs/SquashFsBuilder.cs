@@ -1,5 +1,5 @@
-﻿using Extension.Array;
-using Extension.Packet;
+﻿using NyaExtensions.Array;
+using NyaExtensions.Packet;
 using NyaFs.Filesystem.Universal;
 using NyaFs.ImageFormat.Types;
 using System;

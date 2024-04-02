@@ -1,5 +1,5 @@
-﻿using Extension.Packet;
-using Extension.Array;
+﻿using NyaExtensions.Packet;
+using NyaExtensions.Array;
 using System;
 using System.Collections.Generic;
 using System.Text;

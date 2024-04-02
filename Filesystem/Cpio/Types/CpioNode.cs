@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-using Extension.Array;
-using Extension.Packet;
+using NyaExtensions.Array;
+using NyaExtensions.Packet;
 
 namespace NyaFs.Filesystem.Cpio.Types
 {

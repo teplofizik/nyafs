@@ -1,4 +1,4 @@
-﻿using Extension.Array;
+﻿using NyaExtensions.Array;
 using System;
 using System.IO;
 

@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using Extension.Array;
-using Extension.Packet;
+using NyaExtensions.Array;
+using NyaExtensions.Packet;
 
 namespace NyaFs.ImageFormat.Types
 {

@@ -1,4 +1,4 @@
-﻿using Extension.Array;
+﻿using NyaExtensions.Array;
 using NyaFs.ImageFormat.Elements.Fs;
 using System;
 using System.Collections.Generic;

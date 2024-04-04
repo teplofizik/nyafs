@@ -103,7 +103,7 @@ namespace NyaFs.Filesystem.SquashFs
                     //if(!System.IO.File.Exists(FN))
                     //    System.IO.File.WriteAllBytes(FN, FragData);
 
-                    Debug.WriteLine($"ReadFragmentTable data sz {Entry.Size:x06}");
+                    if (DebugReader) Debug.WriteLine($"ReadFragmentTable data sz {Entry.Size:x06}");
                 }
             }
 
@@ -282,7 +282,7 @@ namespace NyaFs.Filesystem.SquashFs
 
                 for (int i = 0; i < DirHeader.Count + 1; i++)
                 {
-                    Debug.WriteLine($"INode element: {Superblock.DirectoryTableStart + Dir.DirBlockStart + Dir.BlockOffset:X08}");
+                    if (DebugReader) Debug.WriteLine($"INode element: {Superblock.DirectoryTableStart + Dir.DirBlockStart + Dir.BlockOffset:X08}");
                     var E = new Types.SqDirectoryEntry(DirHeader.INodeNumber, DirHeader.Start, Raw, Offset);
                     DirEntries.Add(E);
 
@@ -342,7 +342,7 @@ namespace NyaFs.Filesystem.SquashFs
                 {
                     if (I.Name == P)
                     {
-                        Debug.WriteLine($"Read INode: {Superblock.INodeTableStart:x08} block {I.Reference.Block:x04} offset {I.Reference.Offset:x04} index {I.Inode}");
+                        if (DebugReader) Debug.WriteLine($"Read INode: {Superblock.INodeTableStart:x08} block {I.Reference.Block:x04} offset {I.Reference.Offset:x04} index {I.Inode}");
 
                         var N = GetNode(I.Reference);
                         if (i == Parts.Length - 1)
@@ -380,16 +380,18 @@ namespace NyaFs.Filesystem.SquashFs
             long Offset = 0;
             long SrcOffset = N.BlocksStart;
 
-            if(N.FragmentBlockIndex != 0xffffffff)
-                Debug.WriteLine($"Node {Path}: {N.FileSize}   blocks {BlockSizes.Length} fragment {N.FragmentBlockIndex} address {FragmentEntries[N.FragmentBlockIndex].Start:X08} off {N.FragmentBlockOffset:X08} size {N.FragmentSize:X08}");
-            else
-                Debug.WriteLine($"Node {Path}: {N.FileSize}   blocks {BlockSizes.Length}");
-
+            if (DebugReader)
+            {
+                if (N.FragmentBlockIndex != 0xffffffff)
+                    Debug.WriteLine($"Node {Path}: {N.FileSize}   blocks {BlockSizes.Length} fragment {N.FragmentBlockIndex} address {FragmentEntries[N.FragmentBlockIndex].Start:X08} off {N.FragmentBlockOffset:X08} size {N.FragmentSize:X08}");
+                else
+                    Debug.WriteLine($"Node {Path}: {N.FileSize}   blocks {BlockSizes.Length}");
+            }
 
             for (int i = 0; i < BlockSizes.Length; i++)
             {
                 var FragData = ReadArray(Convert.ToInt64(SrcOffset), BlockSizes[i]);
-                Debug.WriteLine($"  Node block index {i} foffset {Offset} offset {SrcOffset} size {BlockSizes[i]}");
+                if(DebugReader) Debug.WriteLine($"  Node block index {i} foffset {Offset} offset {SrcOffset} size {BlockSizes[i]}");
                 var UncompressedData = Comp.Decompress(FragData);
                 Res.WriteArray(Offset, UncompressedData, UncompressedData.Length);
                 Offset += UncompressedData.Length;
@@ -534,9 +536,7 @@ namespace NyaFs.Filesystem.SquashFs
 
                 foreach (var E in Entries)
                 {
-                    Debug.WriteLine($"ENTRY {E.Inode} {E.Reference.Block:X04} {E.Reference.Offset:X08}");
-                    if (E.Name == "System.Reflection.DispatchProxy.dll")
-                        Debug.WriteLine("Atatta!");
+                    if (DebugReader) Debug.WriteLine($"ENTRY {E.Inode} {E.Reference.Block:X04} {E.Reference.Offset:X08}");
 
                     var N = GetNode(E.Reference);
                     var G = GetGID(N.GidIndex);

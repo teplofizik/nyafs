@@ -49,7 +49,7 @@ namespace NyaFs.Filesystem.SquashFs.Builder.Nodes
 
                 if ((LastMetadata != E.NodeRef.MetadataOffset) || (Temp.Count == 255) || (Diff < 0) || (Diff > 255))
                 {
-                    Debug.WriteLine($"Directory HEADER: index:{Index} offset:{LastMetadata} count:{Temp.Count:X08} block offset {Res.Count:X08}");
+                    //Debug.WriteLine($"Directory HEADER: index:{Index} offset:{LastMetadata} count:{Temp.Count:X08} block offset {Res.Count:X08}");
 
                     var Header = new Types.SqDirectoryHeader(Convert.ToUInt32(Temp.Count), Convert.ToUInt32(LastMetadata), LastIndex);
                     Res.AddRange(Header.getPacket());
@@ -70,13 +70,13 @@ namespace NyaFs.Filesystem.SquashFs.Builder.Nodes
                                                     Diff,
                                                     E.Filename);
 
-                Debug.WriteLine($"Directory entry: {Index} {E.Filename} ref: {E.NodeRef.MetadataOffset:X08} {E.NodeRef.UnpackedOffset:X08} block offset {Res.Count:X08}");
+                //Debug.WriteLine($"Directory entry: {Index} {E.Filename} ref: {E.NodeRef.MetadataOffset:X08} {E.NodeRef.UnpackedOffset:X08} block offset {Res.Count:X08}");
                 Temp.Add(DE.getPacket());
             }
 
             if (Temp.Count > 0)
             {
-                Debug.WriteLine($"Directory HEADER: index:{Index} offset:{LastMetadata} count:{Temp.Count:X08} block offset {Res.Count:X08}");
+                //Debug.WriteLine($"Directory HEADER: index:{Index} offset:{LastMetadata} count:{Temp.Count:X08} block offset {Res.Count:X08}");
 
                 var Header = new Types.SqDirectoryHeader(Convert.ToUInt32(Temp.Count), Convert.ToUInt32(LastMetadata), LastIndex);
                 Res.AddRange(Header.getPacket());
@@ -84,7 +84,7 @@ namespace NyaFs.Filesystem.SquashFs.Builder.Nodes
                 foreach (var T in Temp)
                     Res.AddRange(T);
             }
-            Debug.WriteLine($"Directory size: {Res.Count:X08}");
+            //Debug.WriteLine($"Directory size: {Res.Count:X08}");
 
             Size = Convert.ToUInt32(Res.Count);
 

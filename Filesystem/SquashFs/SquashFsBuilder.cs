@@ -58,7 +58,7 @@ namespace NyaFs.Filesystem.SquashFs
         private uint MetadataBlockSize = 0x2000u;
         private uint MaxNodesPerMetadataBlock = 180;
 
-        private bool DebugBuilder = true;
+        private bool DebugBuilder = false;
 
         public SquashFsBuilder(Types.SqCompressionType Type)
         {

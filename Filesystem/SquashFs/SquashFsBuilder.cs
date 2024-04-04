@@ -2,10 +2,13 @@
 using NyaExtensions.Packet;
 using NyaFs.Filesystem.Universal;
 using NyaFs.ImageFormat.Types;
+using SharpCompress.Common;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using System.Xml.Schema;
 
 namespace NyaFs.Filesystem.SquashFs
 {
@@ -53,7 +56,9 @@ namespace NyaFs.Filesystem.SquashFs
         private ulong FragmentDataStart = 0;
 
         private uint MetadataBlockSize = 0x2000u;
-        private uint MaxNodesPerMetadataBlock = 200;
+        private uint MaxNodesPerMetadataBlock = 180;
+
+        private bool DebugBuilder = true;
 
         public SquashFsBuilder(Types.SqCompressionType Type)
         {
@@ -114,7 +119,7 @@ namespace NyaFs.Filesystem.SquashFs
             var NewNodesList = new List<Builder.Node>();
             var NewNodes = new List<Builder.Node>();
             NewNodes.Add(Nodes[0]);
-
+           
             // Process UID/GID
             foreach (var N in Nodes)
             {
@@ -147,11 +152,6 @@ namespace NyaFs.Filesystem.SquashFs
                 var Arr = NewNodes.ToArray();
                 NewNodesList.AddRange(Arr);
                 NodesBlocks.Add(Arr);
-
-                for(int i = 0; i < NewNodes.Count; i++)
-                {
-                    NewNodes[i].Index = Convert.ToUInt32(i + 1);
-                }
             }
 
             Nodes = NewNodesList;
@@ -209,11 +209,26 @@ namespace NyaFs.Filesystem.SquashFs
                 {
                     var F = N as Builder.Nodes.File;
                     var Fragment = F.GetFragment();
+                    //System.IO.File.WriteAllBytes($"fragments/file/fragment_{Fragment.Length:x06}_{F.Path.Replace('/', '_')}.bin", Fragment);
 
                     if ((Fragment != null) && (Fragment.Length > 0))
                     {
+                        // For this time fill block by padding, but there is need to search fragment that fit in free space (
+                        // TODO: FragmentFeeder(AvailSize)
+                        long AvailSize = Writer.CurrentBlockFreeSize;
+                        if(AvailSize < Fragment.Length)
+                        {
+                            // Fill block by zero
+                            byte[] Temp = new byte[AvailSize];
+                            Temp.Fill((byte)0);
+
+                            Writer.Write(Temp);
+                        }
+
                         F.FragmentIndex = Convert.ToUInt32(Fragments.Count);
                         F.FragmentRef = Writer.Write(Fragment);
+
+                        if (DebugBuilder) Debug.WriteLine($"PrepareFragmentTable data: {F.Path} idx {F.FragmentIndex} sz {Fragment.Length:x06}  bl {F.FragmentRef.SqRef.Block} of {F.FragmentRef.SqRef.Offset:x06}");
 
                         uint Pos = Convert.ToUInt32(Dst.Count);
                         if (Pos != Start)
@@ -239,7 +254,7 @@ namespace NyaFs.Filesystem.SquashFs
 
         private void AppendFragmentTable(List<byte> Dst)
         {
-            //System.Diagnostics.Debug.WriteLine($"AppendFragmentTable data: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendFragmentTable data: {Dst.Count:x06}");
             // Write fragment tables list
 
             var Writer = new Builder.MetadataWriter(Dst, 0, MetadataBlockSize, Comp);
@@ -247,13 +262,19 @@ namespace NyaFs.Filesystem.SquashFs
             uint LastTable = Convert.ToUInt32(Dst.Count);
             FragmentTablesList.Add(LastTable);
             //foreach (var F in Fragments)
+            //int id = 0;
+            var Tmp = Dst.ToArray();
             for (int i = 0; i < Fragments.Count; i++)
             {
                 var F = Fragments[i];
                 F.Start += FragmentDataStart;
-                var FragmentRef = Writer.Write(F.getPacket());
+                if (DebugBuilder) Debug.WriteLine($"Fragment {i}: start {F.Start:x08} size: {F.Size:x04} address {Dst.Count:X08}");
+                var Raw = F.getPacket();
 
-                //System.Diagnostics.Debug.WriteLine($"Fragment {i}: {F.Start:x08} size: {F.Size:x04}");
+                //System.IO.File.WriteAllBytes($"fragments/fragment_{F.Size:x06}_writed.bin", Tmp.ReadArray(Convert.ToInt64(F.Start), F.Size));
+                //id++;
+
+                var FragmentRef = Writer.Write(Raw);
                 uint Pos = Convert.ToUInt32(Dst.Count);
                 if (Pos != LastTable)
                 {
@@ -263,7 +284,7 @@ namespace NyaFs.Filesystem.SquashFs
             }
             Writer.Flush();
 
-            //System.Diagnostics.Debug.WriteLine($"AppendFragmentTable table: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendFragmentTable table: {Dst.Count:x06}");
             Superblock.FragmentTableStart = Convert.ToUInt64(Dst.Count);
             var Temp = new byte[8];
             foreach (var T in FragmentTablesList)
@@ -275,13 +296,13 @@ namespace NyaFs.Filesystem.SquashFs
 
         private void AppendIdTable(List<byte> Dst)
         {
-            //System.Diagnostics.Debug.WriteLine($"AppendIdTable data: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendIdTable data: {Dst.Count:x06}");
 
             uint MdAddress = Convert.ToUInt32(Dst.Count);
             var Table = new Builder.IdTable(IdTable.ToArray());
             Dst.AddRange(Table.Data);
 
-            //System.Diagnostics.Debug.WriteLine($"AppendIdTable table: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendIdTable table: {Dst.Count:x06}");
             Superblock.IdTableStart = Convert.ToUInt64(Dst.Count);
             byte[] Temp = new byte[8];
             Temp.WriteUInt64(0, MdAddress);
@@ -291,7 +312,7 @@ namespace NyaFs.Filesystem.SquashFs
 
         private void AppendDirectoryTable(List<byte> Dst)
         {
-            //System.Diagnostics.Debug.WriteLine($"AppendDirectoryTable data: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendDirectoryTable data: {Dst.Count:x06}");
             Superblock.DirectoryTableStart = Convert.ToUInt64(Dst.Count);
 
             var Temp = new List<byte>();
@@ -309,7 +330,7 @@ namespace NyaFs.Filesystem.SquashFs
 
             Writer.Flush();
             Dst.AddRange(Temp.ToArray());
-            //System.Diagnostics.Debug.WriteLine($"AppendDirectoryTable data end: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendDirectoryTable data end: {Dst.Count:x06}");
 
             // Update dirs data refs
             foreach (var N in Nodes)
@@ -323,10 +344,12 @@ namespace NyaFs.Filesystem.SquashFs
 
                     DE.DirBlockStart = Convert.ToUInt32(D.EntriesRef.MetadataOffset);
                     DE.BlockOffset = Convert.ToUInt32(D.EntriesRef.UnpackedOffset);
+                    DE.FileSize = D.GetSize();
 
-                    //System.Diagnostics.Debug.WriteLine($"Directory node {N.Index} entry data: block={DE.DirBlockStart:x06} offset={DE.BlockOffset:x06}");
+                    if (DebugBuilder) Debug.WriteLine($"Directory node {N.Index} {N.Path} entry data: block={DE.DirBlockStart:x06} offset={DE.BlockOffset:x06} (entries {D.Entries.Count} address {Dst.Count:X08})");
 
-                    WriteUncompressedMetadata(Dst, Superblock.INodeTableStart, D.Ref, DE.getPacket());
+                    var Raw = DE.getPacket();
+                    WriteUncompressedMetadata(Dst, Superblock.INodeTableStart, D.Ref, Raw);
                 }
             }
         }
@@ -351,24 +374,24 @@ namespace NyaFs.Filesystem.SquashFs
         private void AppendINodeTable(List<byte> Dst)
         {
             Superblock.INodeTableStart = Convert.ToUInt64(Dst.Count);
-            //System.Diagnostics.Debug.WriteLine($"AppendINodeTable: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendINodeTable: {Dst.Count:x06}");
 
             var Temp = new List<byte>();
             Builder.MetadataWriter Writer = new Builder.MetadataWriter(Temp, 0, MetadataBlockSize, null);
             Writer.FullBlocks = true;
             for (int b = 0; b < NodesBlocks.Count; b++)
             {
-                //System.Diagnostics.Debug.WriteLine($"Node block {b}: offset {Temp.Count:x06}");
-                var BNodes = NodesBlocks[b];
-                for (int i = 0; i < BNodes.Length; i++)
+                var BNode = NodesBlocks[b];
+                if (DebugBuilder) Debug.WriteLine($"Node block {b}: offset {Temp.Count:x06}");
+                for (int i = 0; i < BNode.Length; i++)
                 {
-                    var Node = BNodes[i].GetINode();
-                    Node.INodeNumber = BNodes[i].Index;
+                    var Node = BNode[i].GetINode();
+                    Node.INodeNumber = BNode[i].Index;
 
                     var Data = Node.getPacket();
 
-                    BNodes[i].Ref = Writer.Write(Data);
-                    //System.Diagnostics.Debug.WriteLine($"Node {Node.INodeNumber}: offset {BNodes[i].Ref.MetadataOffset} unp: {BNodes[i].Ref.UnpackedOffset}");
+                    BNode[i].Ref = Writer.Write(Data);
+                    if (DebugBuilder) Debug.WriteLine($"Node {Node.INodeNumber}: offset {BNode[i].Ref.MetadataOffset:x08} unp: {BNode[i].Ref.UnpackedOffset:x08} (address {Dst.Count:X08})");
                 }
 
                 Writer.Flush();
@@ -380,7 +403,7 @@ namespace NyaFs.Filesystem.SquashFs
 
         private void AppendExportTable(List<byte> Dst)
         {
-            //System.Diagnostics.Debug.WriteLine($"AppendExportTable data: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendExportTable data: {Dst.Count:x06}");
 
             // Add export data [inode table]
             var Writer = new Builder.MetadataWriter(Dst, 0, 0x8000, Comp);
@@ -400,7 +423,7 @@ namespace NyaFs.Filesystem.SquashFs
 
             Writer.Flush();
 
-            //System.Diagnostics.Debug.WriteLine($"AppendExportTable table: {Dst.Count:x06}");
+            if (DebugBuilder) Debug.WriteLine($"AppendExportTable table: {Dst.Count:x06}");
             Superblock.ExportTableStart = Convert.ToUInt64(Dst.Count);
 
             byte[] Temp = new byte[8];

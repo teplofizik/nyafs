@@ -9,17 +9,20 @@ namespace NyaFs.Filesystem.SquashFs.Builder
     {
         byte[] Content;
         long Filled = 0;
+        long BlockSize = 0;
         long BlockOffset = 0;
 
-        public FragmentBlock(long Offset, uint Size)
+        public FragmentBlock(long Offset, uint Size, bool AddHeader = true)
         {
+            BlockSize = Size;
             BlockOffset = Offset;
-            Content = new byte[Size];
+            Content = new byte[AddHeader ? Size - 2 : Size];
         }
 
         public byte[] FullData => Content;
         public byte[] Data => Content.ReadArray(0, Filled);
 
+        public long FreeSize => Content.Length - Filled;
         public long DataSize => Filled;
 
         /// <summary>
@@ -34,7 +37,7 @@ namespace NyaFs.Filesystem.SquashFs.Builder
             var Size = Data.Length - Offset;
 
             var FreeSpace = Content.Length - Filled;
-            if (Size > FreeSpace)
+            if (Size >= FreeSpace)
             {
                 Array.Copy(Data, Offset, Content, Filled, FreeSpace);
                 Filled += FreeSpace;

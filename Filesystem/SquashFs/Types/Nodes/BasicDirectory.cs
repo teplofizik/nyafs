@@ -60,8 +60,8 @@ namespace NyaFs.Filesystem.SquashFs.Types.Nodes
         /// </summary>
         public uint FileSize
         {
-            get { return ReadUInt16(0x18); }
-            set { WriteUInt16(0x18, value); }
+            get { return Convert.ToUInt32(ReadUInt16(0x18) + 3); }
+            set { WriteUInt16(0x18, value - 3); }
         }
 
         /// <summary>

@@ -21,5 +21,10 @@ namespace NyaFs.Filesystem.SquashFs.Types
         public long Block => (Value >> 16) & 0xFFFFFFFFFFFF;
 
         public int Offset => (int)(Value & 0xFFFF);
+
+        public override string ToString()
+        {
+            return $"{Block:X08} offset: {Offset:X08}";
+        }
     }
 }

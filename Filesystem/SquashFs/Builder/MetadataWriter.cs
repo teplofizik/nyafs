@@ -24,8 +24,10 @@ namespace NyaFs.Filesystem.SquashFs.Builder
             this.BlockSize = BlockSize;
             this.Compressor = Compressor;
 
-            TempMetablock = new FragmentBlock(0, BlockSize);
+            TempMetablock = new FragmentBlock(0, BlockSize, AddHeader);
         }
+
+        public long CurrentBlockFreeSize => TempMetablock.FreeSize;
 
         private byte[] CompressBlock(byte[] Data)
         {
@@ -35,6 +37,9 @@ namespace NyaFs.Filesystem.SquashFs.Builder
             {
                 if (Compressed.Length >= Data.Length)
                 {
+                    if (Data.Length > UInt16.MaxValue)
+                        Log.Error(0, "Block size is greater than allowed!");
+
                     var Res = new byte[Data.Length + 2];
                     Res.WriteUInt16(0, Convert.ToUInt32(Data.Length) | 0x8000);
                     Res.WriteArray(2, Data, Data.Length);
@@ -43,6 +48,9 @@ namespace NyaFs.Filesystem.SquashFs.Builder
                 }
                 else
                 {
+                    if (Compressed.Length > UInt16.MaxValue)
+                        Log.Error(0, "Block size is greater than allowed!");
+
                     var Res = new byte[Compressed.Length + 2];
                     Res.WriteUInt16(0, Convert.ToUInt32(Compressed.Length));
                     Res.WriteArray(2, Compressed, Compressed.Length);
@@ -91,6 +99,8 @@ namespace NyaFs.Filesystem.SquashFs.Builder
 
         private void TestCompressorData(byte[] Data, byte[] Compressed)
         {
+            return;
+
             // DEBUG
             if (Compressor != null)
             {
@@ -131,8 +141,8 @@ namespace NyaFs.Filesystem.SquashFs.Builder
                 var Data = FullBlocks ? TempMetablock.FullData : TempMetablock.Data;
 
                 var Compressed = CompressBlock(Data);
-                //System.Diagnostics.Debug.WriteLine($"Metadata Flush: {Dst.Count:x06} l {Compressed.Length:x04} ({Compressed.Length}): " +
-                //    $"{Compressed[0]:x02} {Compressed[1]:x02} {Compressed[2]:x02} {Compressed[3]:x02}  unc:{Data.Length}"); // DEBUG
+                System.Diagnostics.Debug.WriteLine($"Metadata Flush: {Dst.Count:x06} l {Compressed.Length:x04} ({Compressed.Length}): " +
+                    $"{Compressed[0]:x02} {Compressed[1]:x02} {Compressed[2]:x02} {Compressed[3]:x02}  unc:{Data.Length}"); // DEBUG
                 Dst.AddRange(Compressed);
 
                 TestCompressorData(Data, Compressed);

@@ -1,10 +1,14 @@
 ﻿using NyaExtensions.Array;
 using NyaExtensions.Packet;
 using NyaFs.Filesystem.Universal;
+using SharpCompress.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
+using System.Net;
 using System.Text;
+using System.Xml.Linq;
 
 namespace NyaFs.Filesystem.SquashFs
 {
@@ -15,6 +19,8 @@ namespace NyaFs.Filesystem.SquashFs
 
         Types.SqFragmentBlockEntry[] FragmentEntries = null;
         uint[] IdTable = null;
+
+        bool DebugReader = false;
 
         public Types.SqCompressionType Compression => Superblock.CompressionId;
 
@@ -30,10 +36,10 @@ namespace NyaFs.Filesystem.SquashFs
 
         protected virtual void Init()
         {
-            if(Superblock.IsCorrect)
+            if (Superblock.IsCorrect)
             {
                 InitCompressor();
-                if(Superblock.IdTableStart != 0xfffffffffffffffful) ReadIdTable();
+                if (Superblock.IdTableStart != 0xfffffffffffffffful) ReadIdTable();
                 if (Superblock.ExportTableStart != 0xfffffffffffffffful) ReadExportTable();
                 if (Superblock.FragmentTableStart != 0xfffffffffffffffful) ReadFragmentTable();
 
@@ -76,6 +82,7 @@ namespace NyaFs.Filesystem.SquashFs
         {
             var FragmentBlocksCount = (Superblock.FragmentEntryCount + 511) / 512;
             var Entries = new List<Types.SqFragmentBlockEntry>();
+            //int id = 0;
 
             for (int i = 0; i < FragmentBlocksCount; i++)
             {
@@ -88,6 +95,15 @@ namespace NyaFs.Filesystem.SquashFs
                     var Entry = new Types.SqFragmentBlockEntry(B, e * 0x10);
 
                     Entries.Add(Entry);
+
+                    var FragData = ReadArray(Convert.ToInt64(Entry.Start), Entry.Size);
+                    var UncompressedData = Entry.IsCompressed ? Comp.Decompress(FragData) : FragData;
+
+                    //var FN = $"fragments/fragment_{FragData.Length:x06}_readed.bin";
+                    //if(!System.IO.File.Exists(FN))
+                    //    System.IO.File.WriteAllBytes(FN, FragData);
+
+                    Debug.WriteLine($"ReadFragmentTable data sz {Entry.Size:x06}");
                 }
             }
 
@@ -96,14 +112,14 @@ namespace NyaFs.Filesystem.SquashFs
 
         private void InitCompressor()
         {
-            switch(Superblock.CompressionId)
+            switch (Superblock.CompressionId)
             {
                 case Types.SqCompressionType.Lzma:
                     Comp = new Compression.Lzma();
                     break;
                 case Types.SqCompressionType.Gzip:
                     Comp = (Superblock.Flags.HasFlag(Types.SqSuperblockFlags.COMPRESSOR_OPTIONS))
-                        ? new Compression.Gzip(Raw, 0x60) 
+                        ? new Compression.Gzip(Raw, 0x60)
                         : new Compression.Gzip();
                     break;
 
@@ -143,7 +159,7 @@ namespace NyaFs.Filesystem.SquashFs
             var Metadata = ReadINodeMetadata(Ref, 0x10);
             var UnknownNode = new Types.SqInode(Metadata);
 
-            switch(UnknownNode.InodeType)
+            switch (UnknownNode.InodeType)
             {
                 case Types.SqInodeType.BasicDirectory:
                     {
@@ -194,8 +210,10 @@ namespace NyaFs.Filesystem.SquashFs
             }
         }
 
-        private byte[] ReadINodeMetadata(Types.SqMetadataRef Ref, long Size) => 
-            ReadMetadata(Convert.ToInt64(Superblock.INodeTableStart) + Ref.Block, Ref.Offset, Size);
+        private byte[] ReadINodeMetadata(Types.SqMetadataRef Ref, long Size)
+        {
+            return ReadMetadata(Convert.ToInt64(Superblock.INodeTableStart) + Ref.Block, Ref.Offset, Size);
+        }
 
         /// <summary>
         /// Readout data from metadata blocks
@@ -208,6 +226,7 @@ namespace NyaFs.Filesystem.SquashFs
         {
             var Res = new byte[Size];
             long ResOffset = 0;
+
             while (true)
             {
                 byte[] Uncompressed;
@@ -250,7 +269,7 @@ namespace NyaFs.Filesystem.SquashFs
             return Res;
         }
 
-        internal Types.SqDirectoryEntry[] GetDirEntries(Types.Nodes.ExtendedDirectory Dir)
+        internal Types.SqDirectoryEntry[] GetDirEntries(Types.Nodes.ExtendedDirectory Dir, string Name, uint INode)
         {
             var Raw = ReadMetadata(Convert.ToInt64(Superblock.DirectoryTableStart) + Dir.DirBlockStart, Dir.BlockOffset, Dir.FileSize);
             long Offset = 0;
@@ -263,6 +282,7 @@ namespace NyaFs.Filesystem.SquashFs
 
                 for (int i = 0; i < DirHeader.Count + 1; i++)
                 {
+                    Debug.WriteLine($"INode element: {Superblock.DirectoryTableStart + Dir.DirBlockStart + Dir.BlockOffset:X08}");
                     var E = new Types.SqDirectoryEntry(DirHeader.INodeNumber, DirHeader.Start, Raw, Offset);
                     DirEntries.Add(E);
 
@@ -273,26 +293,31 @@ namespace NyaFs.Filesystem.SquashFs
             return DirEntries.ToArray();
         }
 
-        internal Types.SqDirectoryEntry[] GetDirEntries(Types.Nodes.BasicDirectory Dir)
-        { 
-            var Raw = ReadMetadata(Convert.ToInt64(Superblock.DirectoryTableStart) + Dir.DirBlockStart, Dir.BlockOffset, Dir.FileSize - 3);
+        internal Types.SqDirectoryEntry[] GetDirEntries(Types.Nodes.BasicDirectory Dir, string Name, uint INode)
+        {
+            if(DebugReader) Debug.WriteLine($"INode element read from DIR: {Superblock.DirectoryTableStart + Dir.DirBlockStart:X08}, offset {Dir.BlockOffset:X08} {Name} {INode}");
+
+            var Raw = ReadMetadata(Convert.ToInt64(Superblock.DirectoryTableStart) + Dir.DirBlockStart, Dir.BlockOffset, Dir.FileSize);
             long Offset = 0;
             var DirEntries = new List<Types.SqDirectoryEntry>();
-
             while (Offset < Dir.FileSize - 3)
             {
                 var DirHeader = new Types.SqDirectoryHeader(Raw, Offset);
+                if (DebugReader) Debug.WriteLine($"INode header read from DIR {INode}: start {DirHeader.Start:X08} node: {DirHeader.INodeNumber:X08} count:{DirHeader.Count:X08} at address {Offset:X08}");
                 Offset += DirHeader.getLength();
 
                 for (int i = 0; i < DirHeader.Count + 1; i++)
                 {
                     var E = new Types.SqDirectoryEntry(DirHeader.INodeNumber, DirHeader.Start, Raw, Offset);
+                    if (DebugReader) Debug.WriteLine($"INode element read from DIR {INode}: {E.Name} {Superblock.DirectoryTableStart + Dir.DirBlockStart:X08},{E.Reference.Block:X08},{E.Reference.Offset:X08}: offset {Offset:X08} ");
+                    
                     DirEntries.Add(E);
 
                     Offset += E.getLength();
                 }
             }
-            
+
+
             return DirEntries.ToArray();
         }
 
@@ -307,7 +332,7 @@ namespace NyaFs.Filesystem.SquashFs
             if (Path[0] == '/') Path = Path.Substring(1);
             var Parts = Path.Split("/");
 
-            var Entries = GetDirEntries(Root);
+            var Entries = GetDirEntries(Root, "/", 1);
             for (int i = 0; i < Parts.Length; i++)
             {
                 var P = Parts[i];
@@ -317,19 +342,21 @@ namespace NyaFs.Filesystem.SquashFs
                 {
                     if (I.Name == P)
                     {
+                        Debug.WriteLine($"Read INode: {Superblock.INodeTableStart:x08} block {I.Reference.Block:x04} offset {I.Reference.Offset:x04} index {I.Inode}");
+
                         var N = GetNode(I.Reference);
                         if (i == Parts.Length - 1)
                             return N;
 
                         if (N.InodeType == Types.SqInodeType.BasicDirectory)
                         {
-                            Entries = GetDirEntries(N as Types.Nodes.BasicDirectory);
+                            Entries = GetDirEntries(N as Types.Nodes.BasicDirectory, I.Name, I.Inode);
                             Found = true;
                             break;
                         }
                         else if (N.InodeType == Types.SqInodeType.ExtendedDirectory)
                         {
-                            Entries = GetDirEntries(N as Types.Nodes.ExtendedDirectory);
+                            Entries = GetDirEntries(N as Types.Nodes.ExtendedDirectory, I.Name, I.Inode);
                             Found = true;
                             break;
                         }
@@ -344,7 +371,7 @@ namespace NyaFs.Filesystem.SquashFs
             return null;
         }
 
-        private byte[] GetINodeContent(Types.Nodes.BasicFile N)
+        private byte[] GetINodeContent(Types.Nodes.BasicFile N, string Path)
         {
             // The offset from the start of the archive where the data blocks are stored
             var BlockOffset = N.FragmentBlockOffset;
@@ -353,9 +380,16 @@ namespace NyaFs.Filesystem.SquashFs
             long Offset = 0;
             long SrcOffset = N.BlocksStart;
 
+            if(N.FragmentBlockIndex != 0xffffffff)
+                Debug.WriteLine($"Node {Path}: {N.FileSize}   blocks {BlockSizes.Length} fragment {N.FragmentBlockIndex} address {FragmentEntries[N.FragmentBlockIndex].Start:X08} off {N.FragmentBlockOffset:X08} size {N.FragmentSize:X08}");
+            else
+                Debug.WriteLine($"Node {Path}: {N.FileSize}   blocks {BlockSizes.Length}");
+
+
             for (int i = 0; i < BlockSizes.Length; i++)
             {
                 var FragData = ReadArray(Convert.ToInt64(SrcOffset), BlockSizes[i]);
+                Debug.WriteLine($"  Node block index {i} foffset {Offset} offset {SrcOffset} size {BlockSizes[i]}");
                 var UncompressedData = Comp.Decompress(FragData);
                 Res.WriteArray(Offset, UncompressedData, UncompressedData.Length);
                 Offset += UncompressedData.Length;
@@ -371,7 +405,21 @@ namespace NyaFs.Filesystem.SquashFs
 
                 var OwnData = UncompressedData.ReadArray(N.FragmentBlockOffset, N.FragmentSize);
                 Res.WriteArray(Offset, OwnData, OwnData.Length);
+
+                /*
+                Debug.WriteLine($"  Node fragment  foffset {Offset} fragoffset {N.FragmentBlockOffset} size {N.FragmentSize}");
+                System.IO.File.WriteAllBytes($"fragments/file/fragment_{N.FragmentSize:x06}_{Path.Replace('/', '_')}_readed.bin", OwnData);
+                */
+                Offset += N.FragmentSize;
             }
+
+            if(Offset != N.FileSize)
+                Debug.WriteLine($"  Node invalid readed size: readed {Offset} size {N.FileSize}");
+
+            //if (Path == "usr/bin/AvaloniaSyncer/Avalonia.Controls.dll")
+            //{
+            //    System.IO.File.WriteAllBytes("Avalonia.Controls.dll", Res);
+            //}
             return Res;
         }
 
@@ -399,7 +447,7 @@ namespace NyaFs.Filesystem.SquashFs
                 switch (Node.InodeType)
                 {
                     case Types.SqInodeType.BasicFile:
-                        return GetINodeContent(Node as Types.Nodes.BasicFile);
+                        return GetINodeContent(Node as Types.Nodes.BasicFile, Path);
                     case Types.SqInodeType.ExtendedFile:
                         return null; // TODO
                     default:
@@ -478,14 +526,18 @@ namespace NyaFs.Filesystem.SquashFs
                 Types.SqDirectoryEntry[] Entries = null;
 
                 if (DirNode.InodeType == Types.SqInodeType.BasicDirectory)
-                    Entries = GetDirEntries(DirNode as Types.Nodes.BasicDirectory);
+                    Entries = GetDirEntries(DirNode as Types.Nodes.BasicDirectory, Path, DirNode.INodeNumber);
                 else if (DirNode.InodeType == Types.SqInodeType.ExtendedDirectory)
-                    Entries = GetDirEntries(DirNode as Types.Nodes.ExtendedDirectory);
+                    Entries = GetDirEntries(DirNode as Types.Nodes.ExtendedDirectory, Path, DirNode.INodeNumber);
                 else
                     return null;
 
                 foreach (var E in Entries)
                 {
+                    Debug.WriteLine($"ENTRY {E.Inode} {E.Reference.Block:X04} {E.Reference.Offset:X08}");
+                    if (E.Name == "System.Reflection.DispatchProxy.dll")
+                        Debug.WriteLine("Atatta!");
+
                     var N = GetNode(E.Reference);
                     var G = GetGID(N.GidIndex);
                     var U = GetUID(N.UidIndex);

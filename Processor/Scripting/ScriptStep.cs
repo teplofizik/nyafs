@@ -7,7 +7,7 @@ namespace NyaFs.Processor.Scripting
 {
     public class ScriptStep
     {
-        public string ScriptFilename;
+        public string ScriptFilename = "";
         public string ScriptName;
         public int ScriptLine;
 

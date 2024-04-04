@@ -11,7 +11,7 @@ namespace NyaFs.Processor.Scripting.Helper
             if (System.IO.File.Exists(Path))
                 return Path;
 
-            var RelPath = System.IO.Path.Combine(S.ScriptPath, Path);
+            var RelPath = System.IO.Path.Combine(S?.ScriptPath ?? "", Path);
             if (System.IO.Directory.Exists(RelPath))
                 return RelPath;
 
@@ -23,7 +23,7 @@ namespace NyaFs.Processor.Scripting.Helper
             if (System.IO.File.Exists(Path))
                 return Path;
 
-            var RelPath = System.IO.Path.Combine(S.ScriptPath, Path);
+            var RelPath = System.IO.Path.Combine(S?.ScriptPath ?? "", Path);
             if(System.IO.File.Exists(RelPath))
                 return RelPath;
 

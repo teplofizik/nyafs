@@ -5,9 +5,9 @@ VisualStudioVersion = 17.9.34723.18
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NyaFs", "src\NyaFs\NyaFs.csproj", "{8B453BE6-1E38-48DC-B29C-6E5E46BB1A80}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NyaExtensions", "src\submodules\NyaExtensions\NyaExtensions.csproj", "{513C8CEB-C1B9-431E-A6AB-79FF9EE52AEF}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NyaIO", "src\submodules\NyaIO\NyaIO.csproj", "{513C8CEB-C1B9-431E-A6AB-79FF9EE52AEF}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NyaLZO", "src\submodules\NyaLZO\NyaLZO.csproj", "{74D1C312-AE53-4FBF-8BE3-F3A3319262D5}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NyaLZO", "src\submodules\NyaLZO\src\NyaLZO\NyaLZO.csproj", "{74D1C312-AE53-4FBF-8BE3-F3A3319262D5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

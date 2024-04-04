@@ -21,14 +21,11 @@
     <PackageReference Include="CrcSharp" Version="1.2.0" />
     <PackageReference Include="FT.LZ4" Version="1.0.0" />
     <PackageReference Include="LZMA-SDK" Version="19.0.0" />
+    <PackageReference Include="NyaIO" Version="1.0.0" />
+    <PackageReference Include="NyaLZO" Version="1.0.0" />
     <PackageReference Include="SharpCompress" Version="0.32.2" />
     <PackageReference Include="SharpZipLib" Version="1.3.3" />
     <PackageReference Include="ZstdSharp.Port" Version="0.6.3" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\submodules\NyaIO\NyaIO.csproj" />
-    <ProjectReference Include="..\submodules\NyaLZO\NyaLZO.csproj" />
   </ItemGroup>
 
 </Project>

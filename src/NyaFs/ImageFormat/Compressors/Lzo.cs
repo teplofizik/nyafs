@@ -1,6 +1,6 @@
-﻿using NyaExtensions.Packet;
-using System;
+﻿using System;
 using NyaLZO;
+using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Compressors
 {

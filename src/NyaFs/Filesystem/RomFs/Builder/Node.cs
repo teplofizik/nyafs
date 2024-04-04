@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using NyaExtensions.Array;
+using NyaIO.Data;
 
 namespace NyaFs.Filesystem.RomFs.Builder
 {

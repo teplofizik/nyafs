@@ -1,8 +1,8 @@
-﻿using NyaExtensions.Array;
-using NyaFs.ImageFormat.Elements.Fs;
+﻿using NyaFs.ImageFormat.Elements.Fs;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Plugins.FilesystemPlugins
 {

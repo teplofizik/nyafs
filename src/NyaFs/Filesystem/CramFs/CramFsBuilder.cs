@@ -1,8 +1,8 @@
-﻿using NyaExtensions.Array;
-using NyaFs.Filesystem.Universal;
+﻿using NyaFs.Filesystem.Universal;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using NyaIO.Data;
 
 namespace NyaFs.Filesystem.CramFs
 {

@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="CrcSharp" Version="1.2.0" />
     <PackageReference Include="FT.LZ4" Version="1.0.0" />
     <PackageReference Include="LZMA-SDK" Version="19.0.0" />
     <PackageReference Include="SharpCompress" Version="0.32.2" />
@@ -26,7 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\submodules\NyaExtensions\NyaExtensions.csproj" />
+    <ProjectReference Include="..\submodules\NyaIO\NyaIO.csproj" />
     <ProjectReference Include="..\submodules\NyaLZO\NyaLZO.csproj" />
   </ItemGroup>
 

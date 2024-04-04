@@ -1,6 +1,6 @@
-﻿using NyaExtensions.Array;
-using System;
+﻿using System;
 using System.IO;
+using NyaIO.Data;
 
 namespace NyaFs.Filesystem.SquashFs.Compression
 {

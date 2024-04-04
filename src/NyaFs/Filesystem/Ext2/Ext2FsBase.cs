@@ -1,8 +1,7 @@
-﻿using NyaExtensions.Array;
-using NyaExtensions.Packet;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using NyaIO.Data;
 
 namespace NyaFs.Filesystem.Ext2
 {
@@ -14,7 +13,7 @@ namespace NyaFs.Filesystem.Ext2
 
         public Ext2FsBase(byte[] Data) : base(Data)
         {
-            Superblock = new Types.ExtSuperBlock(Raw, 0x400);
+            Superblock = new Types.ExtSuperBlock(Data, 0x400);
         }
 
         /// <summary>

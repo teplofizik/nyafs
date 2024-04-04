@@ -1,7 +1,8 @@
-﻿using NyaExtensions.Array;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using NyaIO.Data;
+
 
 namespace NyaFs.Processor.Scripting.Helper
 {

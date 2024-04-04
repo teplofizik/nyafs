@@ -1,9 +1,9 @@
-﻿using NyaExtensions.Array;
-using NyaExtensions.Packet;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using NyaIO.Data;
+
 
 namespace NyaFs.ImageFormat.Types.Android
 {

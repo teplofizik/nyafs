@@ -2,9 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-
-using NyaExtensions.Array;
-using NyaExtensions.Packet;
+using NyaIO.Data;
 
 namespace NyaFs.Filesystem.Cpio.Types
 {

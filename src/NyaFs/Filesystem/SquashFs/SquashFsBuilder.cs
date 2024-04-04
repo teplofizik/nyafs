@@ -1,7 +1,6 @@
-﻿using NyaExtensions.Array;
-using NyaExtensions.Packet;
-using NyaFs.Filesystem.Universal;
+﻿using NyaFs.Filesystem.Universal;
 using NyaFs.ImageFormat.Types;
+using NyaIO.Data;
 using SharpCompress.Common;
 using System;
 using System.Collections.Generic;

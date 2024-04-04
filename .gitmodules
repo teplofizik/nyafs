@@ -1,6 +1,0 @@
-[submodule "src/submodules/NyaExtensions"]
-	path = src/submodules/NyaExtensions
-	url = https://github.com/teplofizik/nyaextensions.git
-[submodule "src/submodules/NyaLZO"]
-	path = src/submodules/NyaLZO
-	url = https://github.com/teplofizik/nyalzo.git

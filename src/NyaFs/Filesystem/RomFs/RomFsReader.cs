@@ -1,10 +1,9 @@
-﻿using NyaExtensions.Array;
-using NyaExtensions.Packet;
-using NyaFs.Filesystem.Universal;
+﻿using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using NyaIO.Data;
 
 namespace NyaFs.Filesystem.RomFs
 {

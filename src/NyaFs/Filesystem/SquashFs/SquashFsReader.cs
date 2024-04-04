@@ -1,6 +1,4 @@
-﻿using NyaExtensions.Array;
-using NyaExtensions.Packet;
-using NyaFs.Filesystem.Universal;
+﻿using NyaFs.Filesystem.Universal;
 using SharpCompress.Common;
 using System;
 using System.Collections.Generic;
@@ -9,6 +7,7 @@ using System.Drawing;
 using System.Net;
 using System.Text;
 using System.Xml.Linq;
+using NyaIO.Data;
 
 namespace NyaFs.Filesystem.SquashFs
 {

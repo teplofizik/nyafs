@@ -1,10 +1,10 @@
 ﻿using CrcSharp;
-using NyaExtensions.Array;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Compressors
 {

@@ -1,7 +1,7 @@
-﻿using NyaExtensions.Packet;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using NyaIO.Data;
 
 namespace NyaFs.FlattenedDeviceTree.Writer.Types
 {

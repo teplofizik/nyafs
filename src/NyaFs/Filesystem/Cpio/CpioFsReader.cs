@@ -1,5 +1,4 @@
-﻿using NyaExtensions.Array;
-using NyaExtensions.Packet;
+﻿using NyaIO.Data;
 using NyaFs.Filesystem.Universal;
 using System;
 using System.Collections.Generic;

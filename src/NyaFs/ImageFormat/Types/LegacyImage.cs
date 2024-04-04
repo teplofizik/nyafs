@@ -1,9 +1,9 @@
 ﻿using CrcSharp;
-using NyaExtensions.Array;
-using NyaExtensions.Packet;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using NyaIO.Data;
+
 
 namespace NyaFs.ImageFormat.Types
 {

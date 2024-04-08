@@ -281,7 +281,7 @@ namespace NyaFs.Filesystem.SquashFs
 
                 for (int i = 0; i < DirHeader.Count + 1; i++)
                 {
-                    if (DebugReader) Debug.WriteLine($"INode element: {Superblock.DirectoryTableStart + Dir.DirBlockStart + Dir.BlockOffset:X08}");
+                    //if (DebugReader) Debug.WriteLine($"INode element: {Superblock.DirectoryTableStart + Dir.DirBlockStart + Dir.BlockOffset:X08}");
                     var E = new Types.SqDirectoryEntry(DirHeader.INodeNumber, DirHeader.Start, Raw, Offset);
                     DirEntries.Add(E);
 
@@ -294,7 +294,7 @@ namespace NyaFs.Filesystem.SquashFs
 
         internal Types.SqDirectoryEntry[] GetDirEntries(Types.Nodes.BasicDirectory Dir, string Name, uint INode)
         {
-            if(DebugReader) Debug.WriteLine($"INode element read from DIR: {Superblock.DirectoryTableStart + Dir.DirBlockStart:X08}, offset {Dir.BlockOffset:X08} {Name} {INode}");
+            //if(DebugReader) Debug.WriteLine($"INode element read from DIR: {Superblock.DirectoryTableStart + Dir.DirBlockStart:X08}, offset {Dir.BlockOffset:X08} {Name} {INode}");
 
             var Raw = ReadMetadata(Convert.ToInt64(Superblock.DirectoryTableStart) + Dir.DirBlockStart, Dir.BlockOffset, Dir.FileSize);
             long Offset = 0;
@@ -302,13 +302,13 @@ namespace NyaFs.Filesystem.SquashFs
             while (Offset < Dir.FileSize - 3)
             {
                 var DirHeader = new Types.SqDirectoryHeader(Raw, Offset);
-                if (DebugReader) Debug.WriteLine($"INode header read from DIR {INode}: start {DirHeader.Start:X08} node: {DirHeader.INodeNumber:X08} count:{DirHeader.Count:X08} at address {Offset:X08}");
+                //if (DebugReader) Debug.WriteLine($"INode header read from DIR {INode}: start {DirHeader.Start:X08} node: {DirHeader.INodeNumber:X08} count:{DirHeader.Count:X08} at address {Offset:X08}");
                 Offset += DirHeader.getLength();
 
                 for (int i = 0; i < DirHeader.Count + 1; i++)
                 {
                     var E = new Types.SqDirectoryEntry(DirHeader.INodeNumber, DirHeader.Start, Raw, Offset);
-                    if (DebugReader) Debug.WriteLine($"INode element read from DIR {INode}: {E.Name} {Superblock.DirectoryTableStart + Dir.DirBlockStart:X08},{E.Reference.Block:X08},{E.Reference.Offset:X08}: offset {Offset:X08} ");
+                    //if (DebugReader) Debug.WriteLine($"INode element read from DIR {INode}: {E.Name} {Superblock.DirectoryTableStart + Dir.DirBlockStart:X08},{E.Reference.Block:X08},{E.Reference.Offset:X08}: offset {Offset:X08} ");
                     
                     DirEntries.Add(E);
 
@@ -407,10 +407,9 @@ namespace NyaFs.Filesystem.SquashFs
                 var OwnData = UncompressedData.ReadArray(N.FragmentBlockOffset, N.FragmentSize);
                 Res.WriteArray(Offset, OwnData, OwnData.Length);
 
-                /*
-                Debug.WriteLine($"  Node fragment  foffset {Offset} fragoffset {N.FragmentBlockOffset} size {N.FragmentSize}");
-                System.IO.File.WriteAllBytes($"fragments/file/fragment_{N.FragmentSize:x06}_{Path.Replace('/', '_')}_readed.bin", OwnData);
-                */
+                //Debug.WriteLine($"  Node fragment {Path} foffset {Offset} fragoffset {N.FragmentBlockOffset} size {N.FragmentSize}");
+                //System.IO.File.WriteAllBytes($"fragments/file/fragment_{N.FragmentSize:x06}_{Path.Replace('/', '_')}_readed_{Path}.bin", OwnData);
+                
                 Offset += N.FragmentSize;
             }
 

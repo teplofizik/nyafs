@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using NyaIO.Data;
 
@@ -7,8 +8,11 @@ namespace NyaFs.Filesystem.SquashFs.Types
 {
     class SqFragmentBlockEntry : ArrayWrapper
     {
-        public SqFragmentBlockEntry(ulong Start, uint Size, bool Compressed) : base(0x10)
-        {
+        public string Path = "";
+
+        public SqFragmentBlockEntry(string Path, ulong Start, uint Size, bool Compressed) : base(0x10)
+        { 
+            this.Path = Path;
             this.Start = Start;
             this.Size = Size & 0xffffffu + (Compressed ? 0 : 0x01000000u);
         }

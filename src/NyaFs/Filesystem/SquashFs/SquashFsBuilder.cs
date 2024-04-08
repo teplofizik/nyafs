@@ -5,6 +5,7 @@ using SharpCompress.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Xml.Schema;
@@ -172,7 +173,9 @@ namespace NyaFs.Filesystem.SquashFs
                 for(int i = 0; i < Blocks.Count; i++)
                 {
                     var Compressed = Comp.Compress(Blocks[i]);
+                    if (DebugBuilder) Debug.WriteLine($"File {File.Path}: block {i} offset {Dst.Count:X08} size {Compressed.Length:X06}");
                     Dst.AddRange(Compressed);
+
 
                     File.DataBlocksSizes[i] = Convert.ToUInt32(Compressed.Length);
                 }
@@ -222,6 +225,14 @@ namespace NyaFs.Filesystem.SquashFs
                             Temp.Fill((byte)0);
 
                             Writer.Write(Temp);
+                            Writer.Flush();
+
+                            uint PosF = Convert.ToUInt32(Dst.Count);
+                            if (PosF != Start)
+                            {
+                                Fragments.Add(new Types.SqFragmentBlockEntry(F.Path, Start, PosF - Start, true));
+                                Start = PosF;
+                            }
                         }
 
                         F.FragmentIndex = Convert.ToUInt32(Fragments.Count);
@@ -232,7 +243,7 @@ namespace NyaFs.Filesystem.SquashFs
                         uint Pos = Convert.ToUInt32(Dst.Count);
                         if (Pos != Start)
                         {
-                            Fragments.Add(new Types.SqFragmentBlockEntry(Start, Pos - Start, true));
+                            Fragments.Add(new Types.SqFragmentBlockEntry(F.Path, Start, Pos - Start, true));
                             Start = Pos;
                         }
                     }
@@ -244,7 +255,7 @@ namespace NyaFs.Filesystem.SquashFs
                 uint Pos = Convert.ToUInt32(Dst.Count);
                 if (Pos != Start)
                 {
-                    Fragments.Add(new Types.SqFragmentBlockEntry(Start, Pos - Start, true));
+                    Fragments.Add(new Types.SqFragmentBlockEntry("Unknown", Start, Pos - Start, true));
                 }
             }
 
@@ -270,7 +281,7 @@ namespace NyaFs.Filesystem.SquashFs
                 if (DebugBuilder) Debug.WriteLine($"Fragment {i}: start {F.Start:x08} size: {F.Size:x04} address {Dst.Count:X08}");
                 var Raw = F.getPacket();
 
-                //System.IO.File.WriteAllBytes($"fragments/fragment_{F.Size:x06}_writed.bin", Tmp.ReadArray(Convert.ToInt64(F.Start), F.Size));
+                //System.IO.File.WriteAllBytes($"fragments/fragment_{F.Size:x06}_writed_{F.Path}.bin", Tmp.ReadArray(Convert.ToInt64(F.Start), F.Size));
                 //id++;
 
                 var FragmentRef = Writer.Write(Raw);

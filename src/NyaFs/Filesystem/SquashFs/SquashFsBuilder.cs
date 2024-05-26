@@ -528,9 +528,9 @@ namespace NyaFs.Filesystem.SquashFs
             }
         }
 
-        public SquashFsBuilder WithModificationDateTime(DateTime ModificationDateTime)
+        public SquashFsBuilder SetModificationTimestamp(DateTime ModificationTimestamp)
         {
-            Superblock.ModificationTime = Universal.Helper.FsHelper.ConvertToUnixTimestamp(ModificationDateTime);
+            Superblock.ModificationTime = Universal.Helper.FsHelper.ConvertToUnixTimestamp(ModificationTimestamp);
             return this;
         }
 

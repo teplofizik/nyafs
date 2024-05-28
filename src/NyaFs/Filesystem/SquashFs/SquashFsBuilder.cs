@@ -528,6 +528,12 @@ namespace NyaFs.Filesystem.SquashFs
             }
         }
 
+        public SquashFsBuilder SetModificationTimestamp(DateTime ModificationTimestamp)
+        {
+            Superblock.ModificationTime = Universal.Helper.FsHelper.ConvertToUnixTimestamp(ModificationTimestamp);
+            return this;
+        }
+
         /// <summary>
         /// Get builded filesystem image
         /// </summary>

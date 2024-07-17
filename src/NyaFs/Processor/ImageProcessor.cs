@@ -31,11 +31,24 @@ namespace NyaFs.Processor
         /// </summary>
         public Scripting.ScriptParser Parser;
 
-        public ImageProcessor(Scripting.ScriptParser Parser)
+        public ImageProcessor(Scripting.ScriptParser Parser, string[] PluginsDirs, bool LoadAll = false)
         {
             this.Parser = Parser;
-            if(System.IO.Directory.Exists("plugins"))
-                LoadPlugins();
+            foreach (string Dir in PluginsDirs)
+            {
+                if (System.IO.Directory.Exists(Dir))
+                {
+                    LoadPlugins(Dir);
+                    
+                    if(!LoadAll)
+                        break;
+                }
+            }
+        }
+
+        public ImageProcessor(Scripting.ScriptParser Parser) : this(Parser, new string[] { "plugins" })
+        {
+
         }
 
         public void SetFs(LinuxFilesystem Fs) => Blob.SetFilesystem(0, Fs);
@@ -86,9 +99,9 @@ namespace NyaFs.Processor
             }
         }
 
-        public void LoadPlugins()
+        public void LoadPlugins(string Path)
         {
-            var Filenames = System.IO.Directory.GetFiles("plugins/", "*.dll");
+            var Filenames = System.IO.Directory.GetFiles($"{Path}/", "*.dll");
 
             foreach (var F in Filenames)
             {
@@ -98,14 +111,15 @@ namespace NyaFs.Processor
 
                     foreach (var Plugin in PluginList)
                     {
-                        Plugins.Load(Plugin);
-
-                        var C = Plugin as Scripting.Plugins.CommandPlugin;
-                        if(C != null)
+                        if (Plugins.Load(Plugin))
                         {
-                            var Generators = C.GetGenerators();
+                            var C = Plugin as Scripting.Plugins.CommandPlugin;
+                            if (C != null)
+                            {
+                                var Generators = C.GetGenerators();
 
-                            Parser.AddGenerators(Generators);
+                                Parser.AddGenerators(Generators);
+                            }
                         }
                     }
                 }

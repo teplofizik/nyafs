@@ -107,7 +107,7 @@ namespace NyaFs.Processor.Scripting
             return false;
         }
 
-        public void Load(NyaPlugin Plugin)
+        public bool Load(NyaPlugin Plugin)
         {
             if(IsLoaded(Plugin.Name))
                 Log.Error(0, $"Plugin with name {Plugin.Name} already loaded");
@@ -119,6 +119,8 @@ namespace NyaFs.Processor.Scripting
                     {
                         LoadedPlugins.Add(Plugin);
                         Log.Ok(3, $"Plugin {Plugin.Name} was loaded.");
+
+                        return true;
                     }
                     else
                         Log.Error(0, $"Plugin {Plugin.Name} has unsupported type.");
@@ -126,6 +128,8 @@ namespace NyaFs.Processor.Scripting
                 else
                     Log.Error(0, $"Plugin {Plugin.Name} cannot be loaded.");
             }
+
+            return false;
         }
 
         private bool CheckPluginType(Type type)

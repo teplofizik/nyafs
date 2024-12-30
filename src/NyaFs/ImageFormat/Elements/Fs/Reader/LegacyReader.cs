@@ -71,10 +71,27 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
 
             var Data = GetDecompressedData(Image.ImageData, Image.Compression);
 
-            if(DetectAndRead(Dst, Data))
+            if (DetectAndRead(Dst, Data))
                 UpdateImageInfo(Dst);
             else
-                Log.Error(0, "Unsupported filesystem...");
+            {
+                if(Image.Compression == Types.CompressionType.IH_COMP_NONE)
+                {
+                    var Comp = Helper.FitHelper.DetectCompression(Image.ImageData);
+                    if (Comp != Types.CompressionType.IH_COMP_NONE)
+                    {
+                        byte[] Decompressed = Helper.FitHelper.GetDecompressedData(Image.ImageData, Comp);
+
+                        Log.Warning(0, $"Invalid compression type NONE in legacy header but detected {Comp}");
+                        if (DetectAndRead(Dst, Decompressed))
+                            UpdateImageInfo(Dst);
+                        else
+                            Log.Error(0, "Invalid BMU archive: unknown ramfs format");
+                    }
+                }
+                else
+                    Log.Error(0, "Unsupported filesystem...");
+            }
         }
 
         byte[] GetDecompressedData(byte[] Source, Types.CompressionType Compression)

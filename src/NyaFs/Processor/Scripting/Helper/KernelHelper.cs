@@ -5,7 +5,7 @@ using NyaIO.Data;
 
 namespace NyaFs.Processor.Scripting.Helper
 {
-    static class KernelHelper
+    public static class KernelHelper
     {
         private static string GetStringFromOffset(byte[] Image, long Offset)
         {

@@ -6,7 +6,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Compressors
 {
-    static class Xz
+    public static class Xz
     {
         public static byte[] Decompress(byte[] Data)
         {

@@ -4,7 +4,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Elements.Dtb.Reader
 {
-    class FitReader : Reader
+    public class FitReader : Reader
     {
         bool Loaded = false;
 

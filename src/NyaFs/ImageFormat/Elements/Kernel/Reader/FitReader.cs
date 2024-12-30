@@ -5,7 +5,7 @@ using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Elements.Kernel.Reader
 {
-    class FitReader : Reader
+    public class FitReader : Reader
     {
         bool Loaded = false;
 

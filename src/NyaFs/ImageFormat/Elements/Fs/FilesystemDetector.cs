@@ -5,7 +5,7 @@ using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Elements.Fs
 {
-    static class FilesystemDetector
+    public static class FilesystemDetector
     {
         private static bool IsExt4(byte[] Raw)
         {

@@ -8,7 +8,7 @@ using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Compressors
 {
-    static class Lzma
+    public static class Lzma
     {
         private static byte[] GetCompressionHeader(int CompressionLevel, long Length)
         {

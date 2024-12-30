@@ -6,7 +6,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Elements.Kernel.Reader
 {
-    class zImageReader : Reader
+    public class zImageReader : Reader
     {
         private BasezImage Image;
 

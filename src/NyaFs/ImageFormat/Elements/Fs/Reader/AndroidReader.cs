@@ -5,7 +5,7 @@ using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Elements.Fs.Reader
 {
-    class AndroidReader : Reader
+    public class AndroidReader : Reader
     {
         Types.Android.LegacyAndroidImage Image;
 

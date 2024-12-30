@@ -8,7 +8,7 @@ using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Compressors
 {
-    static class Gzip
+    public static class Gzip
     {
         readonly static byte[] GzipHeader = new byte[] { 0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A };
 

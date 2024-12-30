@@ -8,7 +8,7 @@ using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Compressors
 {
-    static class Lz4
+    public static class Lz4
     {
         public static byte[] CompressWithHeader(byte[] Data)
         {

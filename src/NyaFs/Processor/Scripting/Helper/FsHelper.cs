@@ -42,7 +42,7 @@ namespace NyaFs.Processor.Scripting.Helper
             }
         }
 
-        internal static Filesystem.Universal.FilesystemItem GetItem(ImageFormat.Elements.Fs.LinuxFilesystem Fs, string Base, string Path)
+        public static Filesystem.Universal.FilesystemItem GetItem(ImageFormat.Elements.Fs.LinuxFilesystem Fs, string Base, string Path)
         {
             if (Path == "")
                 return null;

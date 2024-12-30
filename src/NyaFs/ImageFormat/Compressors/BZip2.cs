@@ -2,7 +2,7 @@
 
 namespace NyaFs.ImageFormat.Compressors
 {
-    static class Bzip2
+    public static class Bzip2
     {
         public static byte[] CompressWithHeader(byte[] Data)
         {

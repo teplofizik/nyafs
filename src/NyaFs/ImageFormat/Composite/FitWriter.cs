@@ -4,7 +4,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Composite
 {
-    class FitWriter
+    public class FitWriter
     {
         private readonly string Path;
 

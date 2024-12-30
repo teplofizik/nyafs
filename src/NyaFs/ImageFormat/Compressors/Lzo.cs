@@ -4,7 +4,7 @@ using NyaIO.Data;
 
 namespace NyaFs.ImageFormat.Compressors
 {
-    static class LZO
+    public static class LZO
     {
         public static byte[] Decompress(byte[] Data)
         {

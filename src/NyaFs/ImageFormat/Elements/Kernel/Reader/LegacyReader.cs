@@ -10,6 +10,32 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
         bool Loaded = false;
         Types.LegacyImage Image;
 
+        public LegacyReader(byte[] Raw)
+        {
+            Image = new Types.LegacyImage(Raw);
+
+            if (!Image.CorrectHeader)
+            {
+                Log.Error(0, $"Invalid legacy header.");
+                return;
+            }
+
+            if (!Image.Correct)
+            {
+                Log.Error(0, $"Invalid data in legacy image.");
+                return;
+            }
+
+            if (Image.Type != ImageFormat.Types.ImageType.IH_TYPE_KERNEL)
+            {
+                Log.Error(0, $"Legacy image is not kernel legacy file.");
+                return;
+            }
+
+            Loaded = true;
+        }
+
+
         public LegacyReader(string Filename)
         {
             Image = new Types.LegacyImage(Filename);

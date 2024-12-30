@@ -6,7 +6,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Elements.Fs.Reader
 {
-    class CImgReader : Reader
+    public class CImgReader : Reader
     {
         Types.CvImage Image;
 

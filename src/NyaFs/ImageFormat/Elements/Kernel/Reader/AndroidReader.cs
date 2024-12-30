@@ -4,7 +4,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Elements.Kernel.Reader
 {
-    class AndroidReader : Reader
+    public class AndroidReader : Reader
     {
         Types.Android.LegacyAndroidImage Image;
 

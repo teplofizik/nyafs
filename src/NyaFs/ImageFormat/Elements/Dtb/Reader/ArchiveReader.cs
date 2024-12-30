@@ -4,7 +4,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Elements.Dtb.Reader
 {
-    class ArchiveReader : Reader
+    public class ArchiveReader : Reader
     {
         byte[] Data = null;
         Types.CompressionType Compression;

@@ -6,14 +6,14 @@ using NyaIO.Data;
 
 namespace NyaFs.Processor.Scripting.Helper
 {
-    internal static class ArchiveHelper
+    public static class ArchiveHelper
     {
         /// <summary>
         /// Get compression format in uboot format
         /// </summary>
         /// <param name="Format">compression format name</param>
         /// <returns></returns>
-        internal static ImageFormat.Types.CompressionType GetCompressionFormat(string Format)
+        public static ImageFormat.Types.CompressionType GetCompressionFormat(string Format)
         {
             switch (Format)
             {
@@ -34,7 +34,7 @@ namespace NyaFs.Processor.Scripting.Helper
             }
         }
 
-        private static Tuple<string, string> DetectImageFormat(byte[] Raw)
+        public static Tuple<string, string> DetectImageFormat(byte[] Raw)
         {
             var FilesystemType = ImageFormat.Elements.Fs.FilesystemDetector.DetectFs(Raw);
             if (FilesystemType != ImageFormat.Types.FsType.Unknown)
@@ -150,7 +150,7 @@ namespace NyaFs.Processor.Scripting.Helper
             return DetectImageFormat(Data);
         }
 
-        private static Tuple<string, string> TryDecompressArchive(byte[] Data, string Name, ImageFormat.Types.CompressionType Type)
+        public static Tuple<string, string> TryDecompressArchive(byte[] Data, string Name, ImageFormat.Types.CompressionType Type)
         {
             try
             {

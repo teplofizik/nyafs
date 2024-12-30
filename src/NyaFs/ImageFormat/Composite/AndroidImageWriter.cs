@@ -4,7 +4,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Composite
 {
-    class AndroidImageWriter
+    public class AndroidImageWriter
     {
         private readonly string Path;
 

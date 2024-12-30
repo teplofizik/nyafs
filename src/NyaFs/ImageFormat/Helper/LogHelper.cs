@@ -4,7 +4,7 @@ using System.Text;
 
 namespace NyaFs.ImageFormat.Helper
 {
-    static class LogHelper
+    public static class LogHelper
     {
         public static void KernelInfo(Elements.Kernel.LinuxKernel Kernel)
         {

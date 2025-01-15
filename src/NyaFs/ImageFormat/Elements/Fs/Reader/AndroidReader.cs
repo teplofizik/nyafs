@@ -34,27 +34,30 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
         private void ReadToFsv0(LinuxFilesystem Dst)
         {
             var RD = Image.Ramdisk;
-            // Is legacy image...
-            uint Magic = RD.ReadUInt32(0);
-            if (Magic == 0x56190527)
+            if (RD.Length > 0)
             {
-                // Parse as legacy
-                var Reader = new LegacyReader(RD);
-                Reader.ReadToFs(Dst);
-            }
-            else
-            {
-                var Comp = (Magic == 0x04224D18)
-                    ? Types.CompressionType.IH_COMP_LZ4
-                    : Helper.FitHelper.DetectCompression(RD);
+                // Is legacy image...
+                uint Magic = RD.ReadUInt32(0);
+                if (Magic == 0x56190527)
+                {
+                    // Parse as legacy
+                    var Reader = new LegacyReader(RD);
+                    Reader.ReadToFs(Dst);
+                }
+                else
+                {
+                    var Comp = (Magic == 0x04224D18)
+                        ? Types.CompressionType.IH_COMP_LZ4
+                        : Helper.FitHelper.DetectCompression(RD);
 
-                var Uncompressed = Helper.FitHelper.GetDecompressedData(RD, Comp);
+                    var Uncompressed = Helper.FitHelper.GetDecompressedData(RD, Comp);
 
-                Dst.Info.Compression = Comp;
-                Dst.Info.Type = Types.ImageType.IH_TYPE_RAMDISK;
-                Dst.Info.OperatingSystem = Types.OS.IH_OS_LINUX;
-                Dst.Info.DataLoadAddress = Image.RamdiskAddress;
-                DetectAndRead(Dst, Uncompressed);
+                    Dst.Info.Compression = Comp;
+                    Dst.Info.Type = Types.ImageType.IH_TYPE_RAMDISK;
+                    Dst.Info.OperatingSystem = Types.OS.IH_OS_LINUX;
+                    Dst.Info.DataLoadAddress = Image.RamdiskAddress;
+                    DetectAndRead(Dst, Uncompressed);
+                }
             }
         }
     }

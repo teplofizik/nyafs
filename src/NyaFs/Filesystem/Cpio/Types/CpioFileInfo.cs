@@ -5,14 +5,16 @@ using System.Text;
 
 namespace NyaFs.Filesystem.Cpio.Types
 {
-    class CpioFileInfo : ArrayWrapper
+    public class CpioFileInfo : ArrayWrapper
     {
-        public CpioFileInfo(byte[] Raw, long Offset) : base(Raw, Offset, 106)
-        {
+        private readonly string ExpectedMagic;
 
+        public CpioFileInfo(byte[] Raw, long Offset, string Magic = "070701") : base(Raw, Offset, 106)
+        {
+            ExpectedMagic = Magic;
         }
 
-        public bool IsCorrectMagic => Magic == "070701";
+        public bool IsCorrectMagic => Magic == ExpectedMagic;
 
         private UInt32 GetAsciiValue(long HeaderOffset, int Size)
         {

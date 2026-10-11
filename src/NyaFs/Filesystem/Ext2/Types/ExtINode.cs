@@ -265,7 +265,7 @@ namespace NyaFs.Filesystem.Ext2.Types
             set
             {
                 if (value == null) throw new ArgumentNullException("IMode Block must be not null value");
-                if (value.Length != 0x10) throw new ArgumentException("IMode Block length must be 15 dwords");
+                if (value.Length != 15) throw new ArgumentException("IMode Block length must be 15 dwords");
 
                 for(int i = 0; i < 15; i++)
                     WriteUInt32(0x28 + i * 4, value[i]); 

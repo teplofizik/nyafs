@@ -113,7 +113,10 @@ namespace NyaFs.Filesystem.CramFs
             {
                 var Node = GetINodeByPath(Path);
 
-                return new DeviceInfo(Node.Size >> 20, Node.Size & 0xFFFFF);
+                uint Dev = Node.Size;
+                uint Major = (Dev & 0xFFF00) >> 8;
+                uint Minor = (Dev & 0xFF) | ((Dev >> 12) & 0xFFF00);
+                return new DeviceInfo(Major, Minor);
             }
             else
                 return null;

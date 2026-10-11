@@ -14,9 +14,14 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
         FlattenedDeviceTree.Types.Node KernelNode = null;
 
         // https://github.com/siemens/u-boot/blob/master/common/image.c
-        public FitReader(string Filename, string Config)
+
+        public FitReader(string Filename, string Config) : this(System.IO.File.ReadAllBytes(Filename), Filename, Config)
         {
-            Fit = new FlattenedDeviceTree.Reader.FDTReader(Filename).Read();
+        }
+
+        public FitReader(byte[] Raw, string Filename, string Config)
+        {
+            Fit = new FlattenedDeviceTree.Reader.FDTReader(Raw).Read();
 
             if (Fit.Root.Nodes.Count == 0)
             {
@@ -30,17 +35,11 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
                 Log.Error(0, $"Invalid FIT image {Filename}: no 'configuration' node.");
                 return;
             }
-            var DefaultConfig = (Config != null) ? Config : Configurations.GetStringValue("default");
+            var DefaultConfig = Helper.FitHelper.GetDefaultConfigNode(Configurations, Config);
 
             if (DefaultConfig == null)
             {
-                Log.Error(0, $"Invalid FIT image {Filename}: no 'default' parameter in 'configuration' node.");
-                Log.Write(0, "Available configurations:");
-                foreach (var C in Configurations.Nodes)
-                {
-                    Log.Write(0, C.Name);
-                }
-
+                Log.Error(0, $"Invalid FIT image {Filename}: no configurations found in 'configurations' node.");
                 return;
             }
 
@@ -117,30 +116,24 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
             var Entry = KernelNode.GetValue("entry");
             if (Entry == null)
             {
-                Log.Warning(0, $"Invalid FIT image: no 'entry' parameter in loaded ramdisk node.");
+                Log.Error(0, $"Invalid FIT image: no 'data' parameter in kernel node.");
                 return;
             }
 
-            UInt64 EntryAddress = (Entry.Length == 8) ? Entry.ReadUInt64BE(0) : Entry.ReadUInt32BE(0);
-            UInt64 LoadAddress = (Load.Length == 8) ? Load.ReadUInt64BE(0) : Load.ReadUInt32BE(0);
+            UInt64 EntryAddress = (Entry == null) ? 0 : (Entry.Length == 8) ? Entry.ReadUInt64BE(0) : Entry.ReadUInt32BE(0);
+            UInt64 LoadAddress = (Load == null) ? 0 : (Load.Length == 8) ? Load.ReadUInt64BE(0) : Load.ReadUInt32BE(0);
 
             var Data = KernelNode.GetValue("data");
+            if (Data == null)
+            {
+                Log.Error(0, $"Invalid FIT image: no 'data' parameter in kernel node.");
+                return;
+            }
 
             var HashNode = Helper.FitHelper.GetHashNode(KernelNode);
             if (HashNode != null)
             {
-                if (Helper.FitHelper.CheckHash(Data, HashNode))
-                {
-                    var Kernel = Helper.FitHelper.GetDecompressedData(Data, Compression);
-                    Dst.Info.Architecture = Helper.FitHelper.GetCPUArchitecture(Arch);
-                    Dst.Info.Type = Helper.FitHelper.GetType(ImgType);
-                    Dst.Info.OperatingSystem = Helper.FitHelper.GetOperatingSystem(Os);
-                    Dst.Info.DataLoadAddress = LoadAddress;
-                    Dst.Info.EntryPointAddress = EntryAddress;
-                    Dst.Info.Compression = Helper.FitHelper.GetCompression(Compression);
-                    Dst.Image = Kernel;
-                }
-                else
+                if (!Helper.FitHelper.CheckHash(Data, HashNode))
                 {
                     Log.Error(0, $"Invalid FIT image: hash is not equal.");
                     return;
@@ -148,6 +141,15 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
             }
             else
                 Log.Warning(0, $"No hash node in kernel image node!");
+
+            var Kernel = Helper.FitHelper.GetDecompressedData(Data, Compression);
+            Dst.Info.Architecture = Helper.FitHelper.GetCPUArchitecture(Arch);
+            Dst.Info.Type = Helper.FitHelper.GetType(ImgType);
+            Dst.Info.OperatingSystem = Helper.FitHelper.GetOperatingSystem(Os);
+            Dst.Info.DataLoadAddress = LoadAddress;
+            Dst.Info.EntryPointAddress = EntryAddress;
+            Dst.Info.Compression = Helper.FitHelper.GetCompression(Compression);
+            Dst.Image = Kernel;
         }
 
     }

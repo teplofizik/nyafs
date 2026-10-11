@@ -1,6 +1,7 @@
 ﻿using NyaFs.ImageFormat.Elements.Dtb;
 using NyaFs.ImageFormat.Elements.Fs;
 using NyaFs.ImageFormat.Elements.Kernel;
+using NyaFs.ImageFormat.Plugins.Base;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -34,6 +35,7 @@ namespace NyaFs.Processor
         public ImageProcessor(Scripting.ScriptParser Parser, string[] PluginsDirs, bool LoadAll = false)
         {
             this.Parser = Parser;
+            LoadInternalPlugins();
             foreach (string Dir in PluginsDirs)
             {
                 if (System.IO.Directory.Exists(Dir))
@@ -62,11 +64,44 @@ namespace NyaFs.Processor
             Blob = new ImageFormat.BaseImageBlob();
         }
 
-        public LinuxKernel GetKernel() => Blob.GetKernel(0);
+        public LinuxKernel GetKernel(bool CreateIfNotExists = false)
+        {
+            var Res = Blob.GetKernel(0);
 
-        public LinuxFilesystem GetFs() => Blob.GetFilesystem(0);
+            if ((Res == null) && CreateIfNotExists)
+            {
+                Res = new LinuxKernel();
+                Blob.SetKernel(0, Res);
+            }
 
-        public DeviceTree GetDevTree() => Blob.GetDevTree(0);
+            return Res;
+        }
+
+        public LinuxFilesystem GetFs(bool CreateIfNotExists = false)
+        {
+            var Res = Blob.GetFilesystem(0);
+
+            if ((Res == null) && CreateIfNotExists)
+            {
+                Res = new LinuxFilesystem();
+                Blob.SetFilesystem(0, Res);
+            }
+
+            return Res;
+        }
+
+        public DeviceTree GetDevTree(bool CreateIfNotExists = false)
+        {
+            var Res = Blob.GetDevTree(0);
+
+            if((Res == null) && CreateIfNotExists)
+            {
+                Res = new DeviceTree();
+                Blob.SetDevTree(0, Res);
+            }
+
+            return Res;
+        }
 
         public ImageFormat.BaseImageBlob GetBlob() => Blob;
 
@@ -79,6 +114,9 @@ namespace NyaFs.Processor
                 if (S.CheckCondition(this))
                 {
                     var Step = S.GetPreprocessed(Scope);
+                    if (Step == null)
+                        continue;
+
                     var Res = Step.Exec(this);
 
                     WriteLogLine(S, Res);
@@ -99,6 +137,50 @@ namespace NyaFs.Processor
             }
         }
 
+        private void ProcessPluginList(NyaPlugin[] PluginList)
+        {
+            foreach (var Plugin in PluginList)
+            {
+                if (Plugins.Load(Plugin))
+                {
+                    var CP = Plugin as Scripting.Plugins.CommandPlugin;
+                    if (CP != null)
+                    {
+                        var Generators = CP.GetGenerators();
+
+                        Parser.AddGenerators(Generators);
+                    }
+                }
+            }
+        }
+
+        public void LoadInternalPlugins()
+        {
+            var PluginList = new NyaPlugin[]
+            {
+                // Images
+                new ImageFormat.Plugins.ImagePlugins.CompositePlugins.AndroidPlugin(),
+
+                // FS
+                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.CpioFilesystemPlugin(),
+                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.CramFsFilesystemPlugin(),
+                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.Ext2FilesystemPlugin(),
+                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.RomFsFilesystemPlugin(),
+                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.SquashFsFilesystemPlugin(),
+
+                // Compressors
+                new ImageFormat.Plugins.CompressorPlugins.GzipCompressorPlugin(),
+                new ImageFormat.Plugins.CompressorPlugins.Bz2CompressorPlugin(),
+                new ImageFormat.Plugins.CompressorPlugins.Lz4CompressorPlugin(),
+                new ImageFormat.Plugins.CompressorPlugins.LzmaCompressorPlugin(),
+                new ImageFormat.Plugins.CompressorPlugins.LzoCompressorPlugin(),
+                new ImageFormat.Plugins.CompressorPlugins.XzCompressorPlugin(),
+                new ImageFormat.Plugins.CompressorPlugins.ZStdCompressorPlugin()
+            };
+
+            ProcessPluginList(PluginList);
+        }
+
         public void LoadPlugins(string Path)
         {
             var Filenames = System.IO.Directory.GetFiles($"{Path}/", "*.dll");
@@ -108,20 +190,7 @@ namespace NyaFs.Processor
                 try
                 {
                     var PluginList = Plugins.LoadFromFile(F);
-
-                    foreach (var Plugin in PluginList)
-                    {
-                        if (Plugins.Load(Plugin))
-                        {
-                            var C = Plugin as Scripting.Plugins.CommandPlugin;
-                            if (C != null)
-                            {
-                                var Generators = C.GetGenerators();
-
-                                Parser.AddGenerators(Generators);
-                            }
-                        }
-                    }
+                    ProcessPluginList(PluginList);
                 }
                 catch (Exception E)
                 {

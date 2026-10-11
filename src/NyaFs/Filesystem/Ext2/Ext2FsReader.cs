@@ -199,9 +199,7 @@ namespace NyaFs.Filesystem.Ext2
 
         internal Types.ExtINode GetRootDir()
         {
-            uint FirstNode = Math.Max(1u, Superblock.FirstNonreservedINode);
-
-            for (uint i = FirstNode; i < Superblock.INodesCount; i++)
+            for (uint i = 1; i < Superblock.INodesCount; i++)
             {
                 var N = GetINode(i);
 

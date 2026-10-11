@@ -35,6 +35,7 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Echo());
 
             Add(new Commands.Load());
+            Add(new Commands.LoadP());
             Add(new Commands.Store());
             Add(new Commands.Set());
             Add(new Commands.Export());

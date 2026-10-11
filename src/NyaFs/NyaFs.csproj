@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>netcoreapp3.1</TargetFramework>
+		<TargetFramework>net10.0</TargetFramework>
 		<Authors>Alexey Sonkin</Authors>
 		<Description>Pure C# filesystem readers/builders + mini script core to manage operations with images (kernel/ramfs/devtree</Description>
 		<PackageProjectUrl>https://github.com/teplofizik/NyaFS.git</PackageProjectUrl>
@@ -20,7 +20,14 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<Folder Include="ImageFormat\Plugins\ImagePlugins\KernelPlugins\" />
 		<Folder Include="Processor\Scripting\Commands\Kernel\" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+			<_Parameter1>NyaFsTests</_Parameter1>
+		</AssemblyAttribute>
 	</ItemGroup>
 
 	<ItemGroup>
@@ -29,7 +36,7 @@
 		<PackageReference Include="LZMA-SDK" Version="19.0.0" />
 		<PackageReference Include="NyaIO" Version="1.0.0" />
 		<PackageReference Include="NyaLZO" Version="1.0.0" />
-		<PackageReference Include="SharpCompress" Version="0.32.2" />
+		<PackageReference Include="SharpCompress" Version="0.50.5" />
 		<PackageReference Include="SharpZipLib" Version="1.3.3" />
 		<PackageReference Include="ZstdSharp.Port" Version="0.6.3" />
 	</ItemGroup>

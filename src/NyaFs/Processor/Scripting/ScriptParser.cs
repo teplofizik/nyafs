@@ -52,7 +52,12 @@ namespace NyaFs.Processor.Scripting
                     if (Temp == null)
                     {
                         if (P.First() == '"')
-                            Temp = P;
+                        {
+                            if ((P.Length > 1) && (P.Last() == '"'))
+                                Args.Add(P.Substring(1, P.Length - 2));
+                            else
+                                Temp = P;
+                        }
                         else
                             Args.Add(P);
                     }

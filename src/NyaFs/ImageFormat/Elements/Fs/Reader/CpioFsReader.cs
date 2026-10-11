@@ -12,6 +12,6 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
 
         }
 
-        public CpioFsReader(byte[] Data) : base(Types.FsType.Cpio, new Filesystem.Cpio.CpioFsReader(Data)) { }
+        public CpioFsReader(byte[] Data, string Magic = "070701") : base(Types.FsType.Cpio, new Filesystem.Cpio.CpioFsReader(Data, Magic)) { }
     }
 }

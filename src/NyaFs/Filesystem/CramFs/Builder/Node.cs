@@ -33,9 +33,11 @@ namespace NyaFs.Filesystem.CramFs.Builder
 
         public virtual byte[] Content => null;
 
+        protected virtual uint StoredSize => Convert.ToUInt32(Content?.Length ?? 0);
+
         public Types.CrNode GenerateNode() => new Types.CrNode(Universal.Helper.FsHelper.GetLinuxMode(Type, Mode), 
                                                                User & 0xFFFF, Group & 0xFF,
-                                                               Convert.ToUInt32(Content?.Length ?? 0), 
+                                                               StoredSize, 
                                                                Filename);
     }
 }

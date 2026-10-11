@@ -96,6 +96,7 @@ namespace NyaFs.Processor.Scripting.Commands.Fs.Interactive
                     case Filesystem.Universal.Types.FilesystemItemType.Character: return "c";
                     case Filesystem.Universal.Types.FilesystemItemType.Block: return "b";
                     case Filesystem.Universal.Types.FilesystemItemType.Fifo: return "f";
+                    case Filesystem.Universal.Types.FilesystemItemType.Socket: return "s";
                     default: return "?";
                 }
             }

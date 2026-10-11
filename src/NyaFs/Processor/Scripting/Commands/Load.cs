@@ -1,4 +1,5 @@
 ﻿using NyaFs.ImageFormat.Elements.Dtb;
+using NyaFs.Processor.Scripting.Steps;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -38,7 +39,7 @@ namespace NyaFs.Processor.Scripting.Commands
                 return new LoadScriptStep(A[0], A[1], A[2]);
         }
 
-        public class LoadScriptStep : ScriptStep
+        public class LoadScriptStep : ImageImportScriptStep
         {
             string Path;
             string Type;

@@ -9,11 +9,11 @@ namespace NyaFs.Filesystem.Ext2
     {
         internal Types.ExtSuperBlock Superblock;
 
-        protected uint INodeSize => 128;//Math.Max(128, Superblock.INodeSize);
+        protected uint INodeSize => 128;
 
         public Ext2FsBase(byte[] Data) : base(Data)
         {
-            Superblock = new Types.ExtSuperBlock(Data, 0x400);
+            Superblock = new Types.ExtSuperBlock(Raw, 0x400);
         }
 
         /// <summary>
@@ -21,7 +21,7 @@ namespace NyaFs.Filesystem.Ext2
         /// </summary>
         /// <param name="Id"></param>
         /// <returns></returns>
-        internal Types.ExtBlockGroup GetBlockGroup(uint Id) => new Types.ExtBlockGroup(Raw, Id, 0x800/*Superblock.BlockSize*/ + Id * 0x20);
+        internal Types.ExtBlockGroup GetBlockGroup(uint Id) => new Types.ExtBlockGroup(Raw, Id, 0x800 + Id * 0x20);
 
         internal Types.ExtBlockGroup GetBlockGroupByNodeId(uint Id) => GetBlockGroup(Id / Superblock.InodesPerGroup);
         internal Types.ExtBlockGroup GetBlockGroupByBlockId(uint Id) => GetBlockGroup(Id / Superblock.BlocksPerGroup);

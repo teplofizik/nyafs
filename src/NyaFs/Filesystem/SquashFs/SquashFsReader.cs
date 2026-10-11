@@ -52,22 +52,21 @@ namespace NyaFs.Filesystem.SquashFs
 
         private void ReadIdTable()
         {
+            // Each metadata block of the id table holds at most 2048 u32 entries.
             var IdBlocksCount = (Superblock.IdCount + 2047) / 2048;
             var Entries = new List<uint>();
+            int Remaining = Convert.ToInt32(Superblock.IdCount);
 
             for (int i = 0; i < IdBlocksCount; i++)
             {
                 var Offset = Convert.ToInt64(Superblock.IdTableStart) + 0x08 * i;
-                var B = ReadMetadata((long)ReadUInt64(Offset), 0, Superblock.IdCount * 4);
+                var Count = Math.Min(Remaining, 2048);
+                var B = ReadMetadata((long)ReadUInt64(Offset), 0, Count * 4);
 
-                for (int e = 0; e < 2048; e++)
-                {
-                    var Entry = B.ReadUInt32(e * 0x04);
+                for (int e = 0; e < Count; e++)
+                    Entries.Add(B.ReadUInt32(e * 0x04));
 
-                    Entries.Add(Entry);
-                    if (Entries.Count >= Superblock.IdCount)
-                        break;
-                }
+                Remaining -= Count;
             }
 
             IdTable = Entries.ToArray();
@@ -389,13 +388,17 @@ namespace NyaFs.Filesystem.SquashFs
 
             for (int i = 0; i < BlockSizes.Length; i++)
             {
-                var FragData = ReadArray(Convert.ToInt64(SrcOffset), BlockSizes[i]);
-                if(DebugReader) Debug.WriteLine($"  Node block index {i} foffset {Offset} offset {SrcOffset} size {BlockSizes[i]}");
-                var UncompressedData = Comp.Decompress(FragData);
+                // Bit 24 of the block size indicates a block stored uncompressed.
+                bool IsUncompressed = (BlockSizes[i] & 0x1000000u) != 0;
+                uint BlockLen = BlockSizes[i] & 0xFFFFFFu;
+
+                var FragData = ReadArray(Convert.ToInt64(SrcOffset), BlockLen);
+                if(DebugReader) Debug.WriteLine($"  Node block index {i} foffset {Offset} offset {SrcOffset} size {BlockLen} uncompressed {IsUncompressed}");
+                var UncompressedData = IsUncompressed ? FragData : Comp.Decompress(FragData);
                 Res.WriteArray(Offset, UncompressedData, UncompressedData.Length);
                 Offset += UncompressedData.Length;
 
-                SrcOffset += BlockSizes[i];
+                SrcOffset += BlockLen;
             }
 
             if (N.FragmentBlockIndex != 0xffffffff)
@@ -425,12 +428,23 @@ namespace NyaFs.Filesystem.SquashFs
 
         private uint GetGID(uint GidId)
         {
-            return IdTable[GidId];
+            return GetId(GidId);
         }
 
         private uint GetUID(uint UidId)
         {
-            return IdTable[UidId];
+            return GetId(UidId);
+        }
+
+        private uint GetId(uint Id)
+        {
+            if ((IdTable == null) || (Id >= IdTable.Length))
+            {
+                Log.Warning(0, $"SquashFs: user/group id index {Id} is out of range (id count {IdTable?.Length ?? 0}); using 0.");
+                return 0;
+            }
+
+            return IdTable[Id];
         }
 
         /// <summary>

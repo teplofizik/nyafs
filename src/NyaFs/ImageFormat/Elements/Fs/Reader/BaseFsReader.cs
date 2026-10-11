@@ -46,7 +46,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.File:
                         {
-                            var Data = FsReader.Read(E.Path);
+                            var Data = FsReader.Read(E.Path) ?? new byte[0];
                             var File = new Filesystem.Universal.Items.File(E.Path, E.User, E.Group, E.HexMode, Data);
                             Dir.Items.Add(File);
                         }
@@ -67,8 +67,8 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                         {
                             var DevInfo = FsReader.ReadDevice(E.Path);
                             var Char = new Filesystem.Universal.Items.Char(E.Path, E.User, E.Group, E.HexMode);
-                            Char.Major = DevInfo.Major;
-                            Char.Minor = DevInfo.Minor;
+                            Char.Major = DevInfo?.Major ?? 0;
+                            Char.Minor = DevInfo?.Minor ?? 0;
                             Dir.Items.Add(Char);
                         }
                         break;
@@ -76,8 +76,8 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                         {
                             var DevInfo = FsReader.ReadDevice(E.Path);
                             var Block = new Filesystem.Universal.Items.Block(E.Path, E.User, E.Group, E.HexMode);
-                            Block.Major = DevInfo.Major;
-                            Block.Minor = DevInfo.Minor;
+                            Block.Major = DevInfo?.Major ?? 0;
+                            Block.Minor = DevInfo?.Minor ?? 0;
                             Dir.Items.Add(Block);
                         }
                         break;

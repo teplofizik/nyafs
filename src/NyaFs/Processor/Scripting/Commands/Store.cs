@@ -89,27 +89,6 @@ namespace NyaFs.Processor.Scripting.Commands
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Cannot compile FIT Image! No enough information...");
                         }
-                    case "android":
-                        {
-                            var Kernel = Processor.GetKernel();
-                            var Fs = Processor.GetFs();
-
-                            if ((Kernel == null) || !Kernel.Loaded)
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"No kernel image are loaded!");
-
-                            if ((Kernel != null) && Kernel.Loaded)
-                                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
-
-                            if ((Fs != null) && Fs.Loaded)
-                                ImageFormat.Helper.LogHelper.RamfsInfo(Fs);
-
-                            var Writer = new ImageFormat.Composite.AndroidImageWriter(Path);
-
-                            if (Writer.Write(Processor.GetBlob()))
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as Android Image!");
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Cannot compile Android Image! No enough information...");
-                        }
                     default:
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown multiimage format!");
 

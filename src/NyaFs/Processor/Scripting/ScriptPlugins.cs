@@ -10,19 +10,61 @@ namespace NyaFs.Processor.Scripting
     {
         private List<NyaPlugin> LoadedPlugins = new List<NyaPlugin>();
 
+        private List<CompositeImagePlugin> Images = new List<CompositeImagePlugin>();
         private List<CompressorPlugin> Compressors = new List<CompressorPlugin>();
         private List<FilesystemPlugin> Filesystems = new List<FilesystemPlugin>();
+        private List<KernelPlugin> Kernels = new List<KernelPlugin>();
         private List<ServicePlugin> Services = new List<ServicePlugin>();
         private List<Plugins.CommandPlugin> Commands = new List<Plugins.CommandPlugin>();
+
+        /// <summary>
+        /// Get composite image plugins
+        /// </summary>
+        /// <returns></returns>
+        public CompositeImagePlugin[] GetImages() => Images.ToArray();
+
+        /// <summary>
+        /// Get all available kernel images
+        /// </summary>
+        /// <returns></returns>
+        public KernelPlugin[] GetKernels() => Kernels.ToArray();
+
+        /// <summary>
+        /// Get all available filesystems
+        /// </summary>
+        /// <returns></returns>
+        public FilesystemPlugin[] GetFilesystems() => Filesystems.ToArray();
+
+        /// <summary>
+        /// Get all available compressors
+        /// </summary>
+        /// <returns></returns>
+        public CompressorPlugin[] GetCompressors() => Compressors.ToArray();
 
         /// <summary>
         /// Get compressor plugin by name
         /// </summary>
         /// <param name="Name"></param>
         /// <returns></returns>
-        public CompressorPlugin GetCompressors(string Name)
+        public CompressorPlugin GetCompressor(string Name)
         {
             foreach (var S in Compressors)
+            {
+                if (S.Name == Name)
+                    return S;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Get kernel plugin by name
+        /// </summary>
+        /// <param name="Name"></param>
+        /// <returns></returns>
+        public KernelPlugin GetKernel(string Name)
+        {
+            foreach (var S in Kernels)
             {
                 if (S.Name == Name)
                     return S;
@@ -39,6 +81,22 @@ namespace NyaFs.Processor.Scripting
         public FilesystemPlugin GetFilesystem(string Name)
         {
             foreach (var S in Filesystems)
+            {
+                if (S.Name == Name)
+                    return S;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Get image plugin by name
+        /// </summary>
+        /// <param name="Name"></param>
+        /// <returns></returns>
+        public CompositeImagePlugin GetImage(string Name)
+        {
+            foreach (var S in Images)
             {
                 if (S.Name == Name)
                     return S;
@@ -83,6 +141,14 @@ namespace NyaFs.Processor.Scripting
                 return true;
             }
 
+            var Kernel = Plugin as KernelPlugin;
+            if (Kernel != null)
+            {
+                Kernels.Add(Kernel);
+                return true;
+            }
+
+
             var Filesystem = Plugin as FilesystemPlugin;
             if (Filesystem != null)
             {
@@ -101,6 +167,13 @@ namespace NyaFs.Processor.Scripting
             if (Command != null)
             {
                 Commands.Add(Command);
+                return true;
+            }
+
+            var Image = Plugin as CompositeImagePlugin;
+            if (Image != null)
+            {
+                Images.Add(Image);
                 return true;
             }
 

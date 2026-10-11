@@ -15,9 +15,9 @@ namespace NyaFs.Filesystem.Universal.Items
 
         public override string ToString()
         {
-            return $"FILE {Filename} {User}:{Group} {Mode:x03} {Content.Length} bytes";
+            return $"FILE {Filename} {User}:{Group} {Mode:x03} {Size} bytes";
         }
 
-        public override long Size => Content.Length;
+        public override long Size => Content?.Length ?? 0;
     }
 }

@@ -19,6 +19,24 @@ namespace NyaFs.ImageFormat.Helper
             return null;
         }
 
+        /// <summary>
+        /// Resolve the configuration node name for a FIT image.
+        /// Falls back to the first configuration when the requested name and the
+        /// 'default' property are both absent (valid for partial/device FIT images).
+        /// </summary>
+        public static string GetDefaultConfigNode(FlattenedDeviceTree.Types.Node Configurations, string RequestedConfig)
+        {
+            var Cfg = (RequestedConfig != null) ? RequestedConfig : Configurations.GetStringValue("default");
+
+            if ((Cfg == null) && (Configurations.Nodes.Count > 0))
+            {
+                Cfg = Configurations.Nodes[0].Name;
+                Log.Warning(0, $"No 'default' configuration; using '{Cfg}'.");
+            }
+
+            return Cfg;
+        }
+
         public static string GetFilesystemType(Types.FsType Fs)
         {
             switch(Fs)
@@ -58,7 +76,7 @@ namespace NyaFs.ImageFormat.Helper
                 case 0x005d: return Types.CompressionType.IH_COMP_LZMA;
                 case 0x2204: return Types.CompressionType.IH_COMP_LZ4;
                 case 0xb528: return Types.CompressionType.IH_COMP_ZSTD;
-                case 0xfd37: return Types.CompressionType.IH_COMP_XZ;
+                case 0x37fd: return Types.CompressionType.IH_COMP_XZ;
                 default: return Types.CompressionType.IH_COMP_NONE;
             }
         }
@@ -358,6 +376,7 @@ namespace NyaFs.ImageFormat.Helper
                 case "zstd": return Types.CompressionType.IH_COMP_ZSTD;
                 case "bzip2": return Types.CompressionType.IH_COMP_BZIP2;
                 case "lzo": return Types.CompressionType.IH_COMP_LZO;
+                case "xz": return Types.CompressionType.IH_COMP_XZ;
                 default:
                     Log.Error(0, $"Unsupported compression type: {Compression}");
                     throw new ArgumentException($"Unsupported compression type: {Compression}");
@@ -434,7 +453,7 @@ namespace NyaFs.ImageFormat.Helper
 
         public static byte[] CalcSHA1Hash(byte[] Data)
         {
-            using (SHA1Managed sha1 = new SHA1Managed())
+            using (var sha1 = SHA1.Create())
             {
                 return sha1.ComputeHash(Data);
             }
@@ -442,7 +461,7 @@ namespace NyaFs.ImageFormat.Helper
 
         public static byte[] CalcSHA256Hash(byte[] Data)
         {
-            using (SHA256Managed sha256 = new SHA256Managed())
+            using (var sha256 = SHA256.Create())
             {
                 return sha256.ComputeHash(Data);
             }

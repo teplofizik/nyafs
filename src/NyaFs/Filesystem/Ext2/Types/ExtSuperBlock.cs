@@ -162,8 +162,8 @@ namespace NyaFs.Filesystem.Ext2.Types
         /// </summary>
         public uint WTime
         {
-            get { return ReadUInt32(0x2C); }
-            set { WriteUInt32(0x2C, value); }
+            get { return ReadUInt32(0x30); }
+            set { WriteUInt32(0x30, value); }
         }
 
         /// <summary>

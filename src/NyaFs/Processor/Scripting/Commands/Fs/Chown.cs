@@ -26,7 +26,7 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
             if(Args.ArgConfig == 0)
                 return new ChownScriptStepUser(Args.RawArgs[0], Convert.ToUInt32(Args.RawArgs[1]));
             else
-                return new ChownScriptStepUserGroup(Args.RawArgs[0], Convert.ToUInt32(Args.RawArgs[1]), Convert.ToUInt32(Args.RawArgs[1]));
+                return new ChownScriptStepUserGroup(Args.RawArgs[0], Convert.ToUInt32(Args.RawArgs[1]), Convert.ToUInt32(Args.RawArgs[2]));
         }
 
         public class ChownScriptStepUser : ScriptStep

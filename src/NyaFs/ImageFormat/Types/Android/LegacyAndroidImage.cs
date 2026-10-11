@@ -14,6 +14,13 @@ namespace NyaFs.ImageFormat.Types.Android
 
         }
 
+        public static bool IsAndroidImage(byte[] Raw)
+        {
+            var Temp = Raw.ReadString(0, 8);
+
+            return (Temp == "ANDROID!");
+        }
+
         public string Magic
         {
             get { return ReadString(0, 8); }

@@ -12,6 +12,7 @@ namespace NyaFs.ImageFormat.Plugins.Base
         public NyaPlugin(string Name, string Type) 
         {
             this.Name = Name;
+            this.PluginType = Type;
         }
     }
 }

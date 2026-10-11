@@ -6,11 +6,16 @@ using System.Text;
 
 namespace NyaFs.Filesystem.Cpio
 {
-    class CpioFsReader : RawPacket, Universal.IFilesystemReader
+    public class CpioFsReader : RawPacket, Universal.IFilesystemReader
     {
+        private readonly string ExpectedMagic;
         private List<Types.CpioNode> Nodes = new List<Types.CpioNode>();
 
-        public CpioFsReader(byte[] Data) : base(Data) { Init(); }
+        public CpioFsReader(byte[] Data, string expectedMagic = "070701") : base(Data)
+        {
+            ExpectedMagic = expectedMagic;
+            Init(); 
+        }
 
         public CpioFsReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename)) { }
 
@@ -19,7 +24,7 @@ namespace NyaFs.Filesystem.Cpio
             long Offset = 0;
             while (Offset < Raw.Length)
             {
-                var FI = new Types.CpioFileInfo(Raw, Offset);
+                var FI = new Types.CpioFileInfo(Raw, Offset, ExpectedMagic);
 
                 if (FI.IsCorrectMagic)
                 {

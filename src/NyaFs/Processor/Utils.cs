@@ -81,11 +81,11 @@ namespace NyaFs.Processor
             var Res = "";
             for (int i = 0; i < 3; i++)
             {
-                UInt32 Part = (Mode >> (2 - i) * 4) & 0x7;
+                UInt32 Part = (Mode >> (2 - i) * 3) & 0x7;
 
                 Res += ((Part & 0x04) != 0) ? "r" : "-";
                 Res += ((Part & 0x02) != 0) ? "w" : "-";
-                Res += ((Part & 0x01) != 0) ? ((((Mode >> 12 >> (2 - i)) & 0x1) != 1) ? "x" : "s") : "-";
+                Res += ((Part & 0x01) != 0) ? ((((Mode >> 9 >> (2 - i)) & 0x1) != 1) ? "x" : "s") : "-";
             }
             return Res;
         }

@@ -4,30 +4,33 @@ using System.Text;
 
 namespace NyaFs.Processor.Scripting.Configs
 {
-    class AnyConfig : ScriptArgsConfig
+    class ErrorConfig : ScriptArgsConfig
     {
-        Func<string, bool> ArgChecker;
+        private string Message = "";
 
-        public AnyConfig(int Index) : base(Index, null)
+        public ErrorConfig() : base(-1, new ScriptArgsParam[] { })
         {
-            ArgChecker = (A => true);
+
         }
 
-        public AnyConfig(int Index, Func<string,bool> argchecker) : base(Index, null)
+        public ErrorConfig(string Message) : base(-1, new ScriptArgsParam[] { })
         {
-            ArgChecker = argchecker;
+            this.Message = Message;
         }
 
         public override bool IsMyConfig(string[] Args) => true;
 
         public override bool CheckArgs(string[] Args)
         {
-            foreach(var A in Args)
+            var M = Message + "";
+
+            for(int i = 1; i < Args.Length; i++)
             {
-                if(!ArgChecker(A))
-                    return false;
+                M = M.Replace($"%{i}%", Args[i]);
             }
-            return true;
+
+            Log.Error(0, M);
+            return false;
         }
     }
 }

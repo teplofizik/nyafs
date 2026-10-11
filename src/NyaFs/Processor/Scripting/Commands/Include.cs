@@ -57,7 +57,7 @@ namespace NyaFs.Processor.Scripting.Commands
                     return new ScriptStepResult(ScriptStepStatus.Error, $"{Path} not found");
                 else
                 {
-                    var Script = Processor.Parser.Parse(Path, System.IO.Path.GetFileName(Path), System.IO.File.ReadAllLines(Path));
+                    var Script = Processor.Parser.Parse(IncludePath, System.IO.Path.GetFileName(IncludePath), System.IO.File.ReadAllLines(IncludePath));
                     if(Script.HasErrors)
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Errors in script");
                     else

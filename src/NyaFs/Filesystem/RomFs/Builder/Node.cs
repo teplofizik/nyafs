@@ -29,9 +29,11 @@ namespace NyaFs.Filesystem.RomFs.Builder
 
         protected virtual uint SpecInfo => 0;
 
+        protected virtual uint StoredSize => Convert.ToUInt32(Content?.Length ?? 0);
+
         private uint ContentSize => Convert.ToUInt32(Content?.Length ?? 0);
 
-        public Types.RmNode GetHeader() => new Types.RmNode(Filename, Type, Executable, ContentSize, SpecInfo);
+        public Types.RmNode GetHeader() => new Types.RmNode(Filename, Type, Executable, StoredSize, SpecInfo);
         
         public byte[] GetContent()
         {

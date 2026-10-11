@@ -299,7 +299,7 @@ namespace NyaFs.Filesystem.SquashFs
             var Raw = ReadMetadata(Convert.ToInt64(Superblock.DirectoryTableStart) + Dir.DirBlockStart, Dir.BlockOffset, Dir.FileSize);
             long Offset = 0;
             var DirEntries = new List<Types.SqDirectoryEntry>();
-            while (Offset < Dir.FileSize - 3)
+            while (Offset < Dir.FileSize - 6)
             {
                 var DirHeader = new Types.SqDirectoryHeader(Raw, Offset);
                 //if (DebugReader) Debug.WriteLine($"INode header read from DIR {INode}: start {DirHeader.Start:X08} node: {DirHeader.INodeNumber:X08} count:{DirHeader.Count:X08} at address {Offset:X08}");

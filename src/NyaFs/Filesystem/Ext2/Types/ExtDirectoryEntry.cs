@@ -90,5 +90,7 @@ namespace NyaFs.Filesystem.Ext2.Types
 
         public string Name => ReadString(8, NameLength);
 
+        // ext4_extended_dir_entry_2 for INCOMPAT_FILETYPE
+
     }
 }

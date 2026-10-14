@@ -25,6 +25,10 @@ namespace NyaFs.ImageFormat.Plugins.Base
             Compression = InternalCompression;
         }
 
+        public ImageKind Kind => ImageKind.Kernel;
+
+        public string Format => ImageName;
+
         /// <summary>
         /// Is filesystem need compression in target image
         /// </summary>
@@ -41,11 +45,9 @@ namespace NyaFs.ImageFormat.Plugins.Base
         public virtual bool SupportWrite => Write;
 
         /// <summary>
-        /// Is image contain this kernel
+        /// Detect whether the data contains this kernel image
         /// </summary>
-        /// <param name="Image"></param>
-        /// <returns></returns>
-        public virtual bool DetectKernel(byte[] Image) => false;
+        public virtual bool DetectKernel(ImageData Image) => false;
 
         /// <summary>
         /// Get reader

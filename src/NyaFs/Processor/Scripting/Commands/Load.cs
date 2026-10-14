@@ -60,14 +60,15 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (!System.IO.File.Exists(Path))
                     return new ScriptStepResult(ScriptStepStatus.Error, $"{Path} not found!");
 
-                if(Type == "detect")
+                if (Type == "detect")
                 {
-                    var Detected = Helper.ArchiveHelper.DetectImageFormat(Path);
-                    if(Detected != null)
-                    {
-                        Type = Detected.Item1;
-                        Format = Detected.Item2;
-                    }
+                    var Data = System.IO.File.ReadAllBytes(Path);
+                    var Pipeline = new ImageFormat.ImagePipeline(Processor.Plugins, Processor.GetBlob());
+
+                    if (Pipeline.Load(Data))
+                        return new ScriptStepResult(ScriptStepStatus.Ok, "Images are loaded (auto-detected).");
+                    else
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot detect or load image!");
                 }
 
                 switch (Type)
@@ -295,145 +296,6 @@ namespace NyaFs.Processor.Scripting.Commands
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown fs format!");
             }
 
-
-            private void AssumeAutoKernelParams(ImageFormat.Elements.Kernel.LinuxKernel Kernel)
-            {
-                if(Kernel.Info.Architecture == ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                {
-                    var Type = Helper.KernelHelper.DetectImageArch(Kernel.Image);
-
-                    if(Type != ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                    {
-                        Log.Write(0, $"Assumed kernel architecture: {ImageFormat.Helper.FitHelper.GetCPUArchitecture(Type)}");
-                        Kernel.Info.Architecture = Type;
-                    }
-                }
-
-                if(Kernel.Info.OperatingSystem == ImageFormat.Types.OS.IH_OS_INVALID)
-                {
-                    var Os = Helper.KernelHelper.DetectImageOs(Kernel.Image);
-
-                    if (Os != ImageFormat.Types.OS.IH_OS_INVALID)
-                    {
-                        Log.Write(0, $"Assumed kernel OS: {ImageFormat.Helper.FitHelper.GetOperatingSystem(Os)}");
-                        Kernel.Info.OperatingSystem = Os;
-                    }
-                }
-            }
-
-            private void AssumeAutoImageParams(ImageProcessor Processor)
-            {
-                var Blob = Processor.GetBlob();
-                var Arch = FindExistArch(Blob);
-                if(Arch != ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                {
-                    var K = Processor.GetKernel();
-                    if(K != null)
-                    {
-                        if (K.Info.Architecture == ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                            K.Info.Architecture = Arch;
-                    }
-                    var Fs = Processor.GetFs();
-                    if (Fs != null)
-                    {
-                        if (Fs.Info.Architecture == ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                            Fs.Info.Architecture = Arch;
-                    }
-                    var Dtb = Processor.GetDevTree();
-                    if (Dtb != null)
-                    {
-                        if (Dtb.Info.Architecture == ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                            Dtb.Info.Architecture = Arch;
-                    }
-                }
-                var Os = FindExistOS(Blob);
-                if(Os != ImageFormat.Types.OS.IH_OS_INVALID)
-                {
-                    var K = Processor.GetKernel();
-                    if (K != null)
-                    {
-                        if (K.Info.OperatingSystem == ImageFormat.Types.OS.IH_OS_INVALID)
-                            K.Info.OperatingSystem = Os;
-                    }
-                    var Fs = Processor.GetFs();
-                    if (Fs != null)
-                    {
-                        if (Fs.Info.OperatingSystem == ImageFormat.Types.OS.IH_OS_INVALID)
-                            Fs.Info.OperatingSystem = Os;
-                    }
-                }
-            }
-
-            ImageFormat.Types.CPU FindExistArch(ImageFormat.BaseImageBlob Blob)
-            {
-                ImageFormat.Types.CPU arch = ImageFormat.Types.CPU.IH_ARCH_INVALID;
-                if (Blob.IsProvidedKernel)
-                {
-                    var K = Blob.GetKernel();
-                    if (K.Info.Architecture != ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                        arch = K.Info.Architecture;
-                }
-                if (Blob.IsProvidedFs)
-                {
-                    var Fs = Blob.GetFilesystem();
-                    if (Fs.Info.Architecture != ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                    {
-                        if (arch != ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                        {
-                            // Is detected os info differs to kernel
-                            if (arch != Fs.Info.Architecture)
-                                return ImageFormat.Types.CPU.IH_ARCH_INVALID;
-                        }
-                        else
-                            arch = Fs.Info.Architecture;
-                    }
-                }
-                if (Blob.IsProvidedDTB)
-                {
-                    var Dtb = Blob.GetDevTree();
-                    if (Dtb.Info.Architecture != ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                    {
-                        if (arch != ImageFormat.Types.CPU.IH_ARCH_INVALID)
-                        {
-                            // Is detected os info differs to dtb
-                            if (arch != Dtb.Info.Architecture)
-                                return ImageFormat.Types.CPU.IH_ARCH_INVALID;
-                        }
-                        else
-                            arch = Dtb.Info.Architecture;
-                    }
-                }
-
-                return arch;
-            }
-
-            ImageFormat.Types.OS FindExistOS(ImageFormat.BaseImageBlob Blob)
-            {
-                ImageFormat.Types.OS os = ImageFormat.Types.OS.IH_OS_INVALID;
-                if (Blob.IsProvidedKernel)
-                {
-                    var K = Blob.GetKernel();
-                    if (K.Info.OperatingSystem != ImageFormat.Types.OS.IH_OS_INVALID)
-                        os = K.Info.OperatingSystem;
-                }
-                if(Blob.IsProvidedFs)
-                {
-                    var Fs = Blob.GetFilesystem();
-                    if (Fs.Info.OperatingSystem != ImageFormat.Types.OS.IH_OS_INVALID)
-                    {
-                        if (os != ImageFormat.Types.OS.IH_OS_INVALID)
-                        {
-                            // Is FS os info differs to kernel
-                            if (os != Fs.Info.OperatingSystem)
-                                return ImageFormat.Types.OS.IH_OS_INVALID;
-                        }
-                        else
-                            os = Fs.Info.OperatingSystem;
-                    }
-                }
-
-                return os;
-            }
         }
     }
 }

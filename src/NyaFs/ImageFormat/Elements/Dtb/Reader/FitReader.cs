@@ -18,6 +18,7 @@ namespace NyaFs.ImageFormat.Elements.Dtb.Reader
         {
 
         }
+
         public FitReader(byte[] Data, string Filename, string Config)
         {
             Fit = new NyaFs.FlattenedDeviceTree.Reader.FDTReader(Data).Read();

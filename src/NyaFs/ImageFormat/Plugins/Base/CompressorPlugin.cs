@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using NyaFs.ImageFormat.Types;
 
 namespace NyaFs.ImageFormat.Plugins.Base
 {
@@ -8,23 +9,37 @@ namespace NyaFs.ImageFormat.Plugins.Base
     {
         public readonly string CompressorName;
 
+        /// <summary>
+        /// Compression type this plugin implements (uboot CompressionType id)
+        /// </summary>
+        public readonly CompressionType Compression;
+
         private bool Write;
         private bool Read;
 
-        public CompressorPlugin(string Name, string CompressorName, bool Read, bool Write) : base(Name, "compressor")
+        public CompressorPlugin(string Name, string CompressorName, CompressionType Compression, bool Read, bool Write) : base(Name, "compressor")
         {
             this.CompressorName = CompressorName;
+            this.Compression = Compression;
 
             this.Read = Read;
             this.Write = Write;
         }
 
         /// <summary>
-        /// Is image contain this filesystem
+        /// Is read supported
         /// </summary>
-        /// <param name="Image"></param>
-        /// <returns></returns>
-        public virtual bool DetectCompressor(byte[] Image) => false;
+        public virtual bool SupportRead => Read;
+
+        /// <summary>
+        /// Is write supported
+        /// </summary>
+        public virtual bool SupportWrite => Write;
+
+        /// <summary>
+        /// Detect whether the data starts with this compression stream (magic/header).
+        /// </summary>
+        public virtual bool DetectCompressor(ImageData Data) => false;
 
         /// <summary>
         /// Decompress

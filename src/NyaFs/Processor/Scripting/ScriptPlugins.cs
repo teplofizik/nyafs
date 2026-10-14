@@ -1,4 +1,6 @@
-﻿using NyaFs.ImageFormat.Plugins.Base;
+﻿using NyaFs.ImageFormat;
+using NyaFs.ImageFormat.Plugins.Base;
+using NyaFs.ImageFormat.Types;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -40,6 +42,69 @@ namespace NyaFs.Processor.Scripting
         /// </summary>
         /// <returns></returns>
         public CompressorPlugin[] GetCompressors() => Compressors.ToArray();
+
+        /// <summary>
+        /// Detect compression type of the data by asking every registered compressor plugin.
+        /// </summary>
+        public CompressionType DetectCompression(ImageData Data)
+        {
+            foreach (var C in Compressors)
+            {
+                if (C.DetectCompressor(Data))
+                    return C.Compression;
+            }
+
+            return CompressionType.IH_COMP_NONE;
+        }
+
+        /// <summary>
+        /// Find the composite container plugin that matches the data (or null).
+        /// </summary>
+        public CompositeImagePlugin DetectComposite(ImageData Data)
+        {
+            foreach (var I in Images)
+            {
+                if (I.DetectImage(Data))
+                    return I;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Find the compressor plugin that matches the data (or null).
+        /// </summary>
+        public CompressorPlugin DetectCompressor(ImageData Data)
+        {
+            foreach (var C in Compressors)
+            {
+                if (C.DetectCompressor(Data))
+                    return C;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Detect image element kind/format by asking registered kernel/filesystem plugins.
+        /// (Composite containers are probed separately by the loading pipeline.)
+        /// </summary>
+        public DetectedImage DetectImage(ImageData Data)
+        {
+            foreach (var K in Kernels)
+            {
+                if (K.DetectKernel(Data))
+                    return new DetectedImage(K.Kind, K.Format);
+            }
+
+            foreach (var F in Filesystems)
+            {
+                if (F.DetectFilesystem(Data))
+                    return new DetectedImage(F.Kind, F.Format);
+            }
+
+            return DetectedImage.Unknown;
+        }
 
         /// <summary>
         /// Get compressor plugin by name

@@ -14,12 +14,20 @@ namespace NyaFs.ImageFormat.Plugins.Base
             this.ImageName = ImageName;
         }
 
+        public string Format => ImageName;
+
         /// <summary>
         /// Is image contain this image
         /// </summary>
         /// <param name="Image"></param>
         /// <returns></returns>
-        public virtual bool DetectImage(byte[] Image) => false;
+        public virtual bool DetectImage(ImageData Image) => false;
+
+        /// <summary>
+        /// Enumerate the elements contained in this composite image (with declared kind/format).
+        /// Used for reporting/metadata and to re-run detection on elements whose type is unknown.
+        /// </summary>
+        public virtual ContainedImage[] GetImages(ImageData Image) => new ContainedImage[0];
 
         /// <summary>
         /// Get kernel reader

@@ -36,10 +36,12 @@ namespace NyaFs.Processor.Scripting
 
             Add(new Commands.Load());
             Add(new Commands.LoadP());
+            Add(new Commands.LoadSub());
             Add(new Commands.Store());
             Add(new Commands.Set());
             Add(new Commands.Export());
             Add(new Commands.Info());
+            Add(new Commands.Inspect());
             Add(new Commands.Reset());
             Add(new Commands.Var());
             Add(new Commands.Service()); 

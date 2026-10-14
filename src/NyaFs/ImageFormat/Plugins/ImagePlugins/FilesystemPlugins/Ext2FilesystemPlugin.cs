@@ -17,7 +17,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         /// </summary>
         /// <param name="Image"></param>
         /// <returns></returns>
-        public override bool DetectFilesystem(byte[] Image) => (Image.ReadUInt16(0x438) == 0xEF53);
+        public override bool DetectFilesystem(ImageData Image) => (Image.Length >= 0x43A) && (Image.ReadUInt16(0x438) == 0xEF53);
 
         /// <summary>
         /// Get reader

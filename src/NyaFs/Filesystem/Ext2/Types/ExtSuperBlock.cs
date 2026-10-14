@@ -361,11 +361,6 @@ namespace NyaFs.Filesystem.Ext2.Types
         }
 
         /// <summary>
-        /// Is FS supports extended attributes (COMPAT_EXT_ATTR).
-        /// </summary>
-        public bool HasExtraAttr => (FeatureCompatible & 0x08) != 0;
-
-        /// <summary>
         /// Compatible feature set flags. Kernel can still read/write this fs even if it doesn't understand a flag; 
         /// e2fsck will not attempt to fix a filesystem with any unknown COMPAT flags. Any of:
         ///   0x1	Directory preallocation (COMPAT_DIR_PREALLOC).
@@ -490,22 +485,6 @@ namespace NyaFs.Filesystem.Ext2.Types
         {
             get { return ReadUInt32(0xC8); }
             set { WriteUInt32(0xC8, value); }
-        }
-
-        public bool FlexibleGroups => (FeatureIncompatible & 0x200) != 0;  // INCOMPAT_FLEX_BG
-
-        public ExtType ExtType
-        {
-            get
-            {
-                // COMPAT_HAS_JOURNAL
-                if ((FeatureCompatible & 0x4) != 0)
-                {
-                    return ExtType.Ext4;
-                }
-                else
-                    return ExtType.Ext2;
-            }
         }
     }
 }

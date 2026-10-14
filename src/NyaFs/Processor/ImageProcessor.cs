@@ -36,13 +36,24 @@ namespace NyaFs.Processor
         {
             this.Parser = Parser;
             LoadInternalPlugins();
+
+            var Loaded = new HashSet<string>();
             foreach (string Dir in PluginsDirs)
             {
-                if (System.IO.Directory.Exists(Dir))
+                if (string.IsNullOrEmpty(Dir))
+                    continue;
+
+                string Full;
+                try { Full = System.IO.Path.GetFullPath(Dir); } catch { continue; }
+
+                if (!Loaded.Add(Full))
+                    continue;
+
+                if (System.IO.Directory.Exists(Full))
                 {
-                    LoadPlugins(Dir);
-                    
-                    if(!LoadAll)
+                    LoadPlugins(Full);
+
+                    if (!LoadAll)
                         break;
                 }
             }
@@ -156,29 +167,14 @@ namespace NyaFs.Processor
 
         public void LoadInternalPlugins()
         {
-            var PluginList = new NyaPlugin[]
-            {
-                // Images
-                new ImageFormat.Plugins.ImagePlugins.CompositePlugins.AndroidPlugin(),
+            var PluginList = new List<NyaPlugin>();
 
-                // FS
-                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.CpioFilesystemPlugin(),
-                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.CramFsFilesystemPlugin(),
-                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.Ext2FilesystemPlugin(),
-                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.RomFsFilesystemPlugin(),
-                new ImageFormat.Plugins.ImagePlugins.FilesystemPlugins.SquashFsFilesystemPlugin(),
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Images);
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Filesystems);
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Kernels);
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Compressors);
 
-                // Compressors
-                new ImageFormat.Plugins.CompressorPlugins.GzipCompressorPlugin(),
-                new ImageFormat.Plugins.CompressorPlugins.Bz2CompressorPlugin(),
-                new ImageFormat.Plugins.CompressorPlugins.Lz4CompressorPlugin(),
-                new ImageFormat.Plugins.CompressorPlugins.LzmaCompressorPlugin(),
-                new ImageFormat.Plugins.CompressorPlugins.LzoCompressorPlugin(),
-                new ImageFormat.Plugins.CompressorPlugins.XzCompressorPlugin(),
-                new ImageFormat.Plugins.CompressorPlugins.ZStdCompressorPlugin()
-            };
-
-            ProcessPluginList(PluginList);
+            ProcessPluginList(PluginList.ToArray());
         }
 
         public void LoadPlugins(string Path)

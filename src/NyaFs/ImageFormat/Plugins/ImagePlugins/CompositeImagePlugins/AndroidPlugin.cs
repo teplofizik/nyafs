@@ -20,9 +20,41 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
         /// </summary>
         /// <param name="Image"></param>
         /// <returns></returns>
-        public override bool DetectImage(byte[] Image)
+        public override bool DetectImage(ImageData Image)
         {
-            return LegacyAndroidImage.IsAndroidImage(Image);
+            if (Image.Length < 8) return false;
+
+            for (int i = 0; i < 8; i++)
+                if (Image.ReadByte(i) != "ANDROID!"[i])
+                    return false;
+
+            return true;
+        }
+
+        public override ContainedImage[] GetImages(ImageData Image)
+        {
+            if (Image.Length < 0x670)
+                return new ContainedImage[0];
+
+            var Img = new LegacyAndroidImage(Image.ReadArray(0, Image.Length));
+            if (!Img.IsMagicCorrect || (Img.HeaderVersion >= 3))
+                return new ContainedImage[0];
+
+            var Res = new List<ContainedImage>();
+
+            var Kernel = Img.Kernel;
+            if ((Kernel != null) && (Kernel.Length > 0))
+                Res.Add(new ContainedImage("kernel", ImageKind.Kernel, "android", -1, Kernel.Length, Kernel));
+
+            var Ramdisk = Img.Ramdisk;
+            if ((Ramdisk != null) && (Ramdisk.Length > 0))
+                Res.Add(new ContainedImage("ramdisk", ImageKind.Filesystem, "android", -1, Ramdisk.Length, Ramdisk));
+
+            var Second = Img.Second;
+            if ((Second != null) && (Second.Length > 0))
+                Res.Add(new ContainedImage("second", ImageKind.Unknown, null, -1, Second.Length, Second));
+
+            return Res.ToArray();
         }
 
         /// <summary>

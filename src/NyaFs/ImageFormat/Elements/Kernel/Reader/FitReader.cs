@@ -107,18 +107,7 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
             }
 
             var Load = KernelNode.GetValue("load");
-            if (Load == null)
-            {
-                Log.Error(0, $"Invalid FIT image: no 'load' parameter in loaded ramdisk node.");
-                return;
-            }
-
             var Entry = KernelNode.GetValue("entry");
-            if (Entry == null)
-            {
-                Log.Error(0, $"Invalid FIT image: no 'data' parameter in kernel node.");
-                return;
-            }
 
             UInt64 EntryAddress = (Entry == null) ? 0 : (Entry.Length == 8) ? Entry.ReadUInt64BE(0) : Entry.ReadUInt32BE(0);
             UInt64 LoadAddress = (Load == null) ? 0 : (Load.Length == 8) ? Load.ReadUInt64BE(0) : Load.ReadUInt32BE(0);

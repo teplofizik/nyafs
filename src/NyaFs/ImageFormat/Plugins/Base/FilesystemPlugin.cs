@@ -25,6 +25,10 @@ namespace NyaFs.ImageFormat.Plugins.Base
             Compression = InternalCompression;
         }
 
+        public ImageKind Kind => ImageKind.Filesystem;
+
+        public string Format => FilesystemName;
+
         /// <summary>
         /// Is filesystem need compression in target image
         /// </summary>
@@ -45,7 +49,7 @@ namespace NyaFs.ImageFormat.Plugins.Base
         /// </summary>
         /// <param name="Image"></param>
         /// <returns></returns>
-        public virtual bool DetectFilesystem(byte[] Image) => false;
+        public virtual bool DetectFilesystem(ImageData Image) => false;
 
         /// <summary>
         /// Get reader

@@ -81,8 +81,33 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
         {
             if (!Loaded) return;
 
-            Dst.Image = Helper.FitHelper.GetDecompressedData(Image.ImageData, Image.Compression);
-            Dst.Info.Compression = Image.Compression;
+            var Data = Image.ImageData;
+            var Compression = Image.Compression;
+
+            // Some vendor uImages declare a wrong compression; prefer content detection when the
+            // header says NONE, and fall back to detection if the declared codec fails.
+            if (Compression == Types.CompressionType.IH_COMP_NONE)
+            {
+                var Detected = Helper.FitHelper.DetectCompression(Data);
+                if (Detected != Types.CompressionType.IH_COMP_NONE)
+                    Compression = Detected;
+            }
+
+            byte[] Raw;
+            try
+            {
+                Raw = Helper.FitHelper.GetDecompressedData(Data, Compression);
+            }
+            catch
+            {
+                var Detected = Helper.FitHelper.DetectCompression(Data);
+                Log.Warning(0, $"Legacy kernel header declares {Compression} but content is {Detected}; using {Detected}.");
+                Raw = Helper.FitHelper.GetDecompressedData(Data, Detected);
+                Compression = Detected;
+            }
+
+            Dst.Image = Raw;
+            Dst.Info.Compression = Compression;
             UpdateImageInfo(Dst);
         }
 

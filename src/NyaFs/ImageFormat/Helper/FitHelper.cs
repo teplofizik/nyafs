@@ -65,20 +65,21 @@ namespace NyaFs.ImageFormat.Helper
             }
         }
 
-        public static Types.CompressionType DetectCompression(byte[] Raw)
+        public static Types.CompressionType DetectCompression(byte[] Raw) =>
+            DetectCompression(new ImageFormat.ImageData(Raw));
+
+        /// <summary>
+        /// Detect compression by asking the built-in compressor plugins (single source of truth).
+        /// </summary>
+        public static Types.CompressionType DetectCompression(ImageFormat.ImageData Raw)
         {
-            var Header16 = Raw.ReadUInt16(0);
-            switch (Header16)
+            foreach (var C in Plugins.BuiltinPlugins.Compressors)
             {
-                case 0x5a42: return Types.CompressionType.IH_COMP_BZIP2;
-                case 0x4C89: return Types.CompressionType.IH_COMP_LZO;
-                case 0x8b1f: return Types.CompressionType.IH_COMP_GZIP;
-                case 0x005d: return Types.CompressionType.IH_COMP_LZMA;
-                case 0x2204: return Types.CompressionType.IH_COMP_LZ4;
-                case 0xb528: return Types.CompressionType.IH_COMP_ZSTD;
-                case 0x37fd: return Types.CompressionType.IH_COMP_XZ;
-                default: return Types.CompressionType.IH_COMP_NONE;
+                if (C.DetectCompressor(Raw))
+                    return C.Compression;
             }
+
+            return Types.CompressionType.IH_COMP_NONE;
         }
 
         public static bool Is64BitArchitecture(Types.CPU Arch)

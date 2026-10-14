@@ -1,7 +1,6 @@
 ﻿using NyaIO.Data;
 using System;
 using System.Collections.Generic;
-using System.Reflection.PortableExecutable;
 using System.Text;
 
 namespace NyaFs.Filesystem.UbiFs.Types

@@ -45,7 +45,9 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Reset());
             Add(new Commands.Var());
             Add(new Commands.Service()); 
+#if !NETSTANDARD2_0
             Add(new Commands.SystemCmd());
+#endif
             Add(new Commands.LoadPlugin());
 
             Add(new Commands.Fs.Dir());

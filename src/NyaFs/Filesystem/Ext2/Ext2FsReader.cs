@@ -128,7 +128,7 @@ namespace NyaFs.Filesystem.Ext2
 
             if (Path[0] == '/') Path = Path.Substring(1);
 
-            var Parts = Path.Split("/");
+            var Parts = Path.Split('/');
 
             var Entries = GetDirEntries(GetRootDir());
 

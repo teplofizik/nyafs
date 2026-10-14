@@ -286,6 +286,11 @@ namespace NyaFs.Processor.Scripting
 
         public NyaPlugin[] LoadFromFile(string Filename)
         {
+#if NETSTANDARD2_0
+            // Dynamic assembly loading is not available on netstandard2.0.
+            Log.Warning(0, "Dynamic plugin loading is not supported on netstandard2.0.");
+            return new NyaPlugin[0];
+#else
             var Res = new List<NyaPlugin>();
             var PluginAssembly = Plugins.PluginLoader.LoadPlugin(Filename);
 
@@ -304,6 +309,7 @@ namespace NyaFs.Processor.Scripting
                 }
             }
             return Res.ToArray();
+#endif
         }
 
         private bool CheckPlugin(NyaPlugin Plugin)

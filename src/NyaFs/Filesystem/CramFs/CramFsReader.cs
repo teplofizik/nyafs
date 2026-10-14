@@ -60,7 +60,7 @@ namespace NyaFs.Filesystem.CramFs
             if ((Path == ".") || (Path == "/")) return Root;
 
             if (Path[0] == '/') Path = Path.Substring(1);
-            var Parts = Path.Split("/");
+            var Parts = Path.Split('/');
 
             var Entries = GetDirEntries(Root);
 

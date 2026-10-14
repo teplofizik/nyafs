@@ -116,7 +116,7 @@ namespace NyaFs.Processor.Scripting
             for (int i = 0; i < Lines.Length; i++)
             {
                 var TCmd = Lines[i].Trim();
-                if (TCmd.StartsWith('#')) continue;
+                if (TCmd.StartsWith("#")) continue;
                 if (TCmd.Length == 0) continue;
 
                 string Cond = ExtractCondition(TCmd);

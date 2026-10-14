@@ -21,7 +21,7 @@ namespace NyaFs.FlattenedDeviceTree
             if (Path == ".") return Root;
 
             if (Path[0] == '/') Path = Path.Substring(1);
-            var Parts = Path.Split("/");
+            var Parts = Path.Split('/');
 
             Types.Node Base = Root;
             for(int i = 0; i < Parts.Length; i++)

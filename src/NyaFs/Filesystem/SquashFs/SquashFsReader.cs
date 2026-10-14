@@ -3,10 +3,7 @@ using SharpCompress.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
-using System.Net;
 using System.Text;
-using System.Xml.Linq;
 using NyaIO.Data;
 
 namespace NyaFs.Filesystem.SquashFs
@@ -328,7 +325,7 @@ namespace NyaFs.Filesystem.SquashFs
             if ((Path == ".") || (Path == "/")) return Root;
 
             if (Path[0] == '/') Path = Path.Substring(1);
-            var Parts = Path.Split("/");
+            var Parts = Path.Split('/');
 
             var Entries = GetDirEntries(Root, "/", 1);
             for (int i = 0; i < Parts.Length; i++)

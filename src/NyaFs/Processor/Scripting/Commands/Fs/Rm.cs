@@ -59,7 +59,7 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
             {
                 foreach (var path in ExcludeMask)
                 {
-                    if (path.Contains('*'))
+                    if (path.Contains("*"))
                     {
                         if (path.StartsWith("/"))
                         {
@@ -116,7 +116,7 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
 
             private void ProcessPath(ImageProcessor processor, ImageFormat.Elements.Fs.LinuxFilesystem fs, string path)
             {
-                if (path.Contains('*'))
+                if (path.Contains("*"))
                 {
                     if (path.StartsWith("/"))
                     {

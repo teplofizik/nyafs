@@ -42,24 +42,16 @@ namespace NyaFs.Filesystem.SquashFs.Compression
             set { WriteUInt32(4, Convert.ToUInt32(value)); }
         }
 
-        internal override byte[] Compress(byte[] data)
-        {
-            throw new NotImplementedException();
-        }
+        internal override byte[] Compress(byte[] data) => NyaXZ.XzCompressor.Compress(data);
 
         internal override byte[] Decompress(byte[] data)
         {
             using (MemoryStream input = new MemoryStream(data))
+            using (XZStream xz = new XZStream(input))
+            using (var output = new MemoryStream())
             {
-                using (XZStream xz = new XZStream(input))
-                {
-                    using (var output = new MemoryStream())
-                    {
-                        xz.CopyTo(output);
-
-                        return output.ToArray();
-                    }
-                }
+                xz.CopyTo(output);
+                return output.ToArray();
             }
         }
 

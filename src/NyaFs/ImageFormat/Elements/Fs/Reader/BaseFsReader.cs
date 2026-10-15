@@ -8,11 +8,13 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
     {
         protected Filesystem.Universal.IFilesystemReader FsReader;
         Types.FsType FsType;
+        long FsSize;
 
-        public BaseFsReader(Types.FsType FsType, Filesystem.Universal.IFilesystemReader FsReader)
+        public BaseFsReader(Types.FsType FsType, Filesystem.Universal.IFilesystemReader FsReader, long FsSize = 0)
         {
             this.FsType = FsType;
             this.FsReader = FsReader;
+            this.FsSize = FsSize;
         }
 
         /// <summary>
@@ -27,6 +29,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                 Dst.Info.Type = Types.ImageType.IH_TYPE_RAMDISK;
 
             Dst.FilesystemType = FsType;
+            Dst.FsSize = FsSize;
         }
 
         private void ImportDir(Filesystem.Universal.Items.Dir Dir, string Path)

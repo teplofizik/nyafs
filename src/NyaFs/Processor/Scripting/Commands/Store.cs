@@ -12,7 +12,8 @@ namespace NyaFs.Processor.Scripting.Commands
                 new string[] { "raw", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "legacy" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(1, "ramfs",
-                new string[] { "cpio", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "legacy", "ext2", "squashfs", "cramfs", "romfs" }));
+                new string[] { "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd", "legacy", "ext2", "squashfs", "cramfs", "romfs",
+                    "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(2, "devtree",
                 new string[] { "dtb" }));
@@ -187,12 +188,23 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "squashfs": return new ImageFormat.Elements.Fs.Writer.SquashFsWriter(Fs.SquashFsCompression, Path);
                     case "cramfs": return new ImageFormat.Elements.Fs.Writer.CramFsWriter(Path);
                     case "romfs": return new ImageFormat.Elements.Fs.Writer.RomFsWriter(Path);
+                    case "tar": return new ImageFormat.Elements.Fs.Writer.TarFsWriter(Path);
+                    case "tar.gz":
+                    case "tar.xz":
+                    case "tar.bz2":
+                    case "tar.zstd":
+                    case "tar.lz4":
+                    case "tar.lzma":
+                        var TarCompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format.Substring(4));
+                        return new ImageFormat.Elements.Fs.Writer.ArchiveTarWriter(Path, TarCompressionType);
                     case "lz4":
                     case "lzma":
                     case "gz":
                     case "gzip":
                     case "bz2":
                     case "bzip2":
+                    case "xz":
+                    case "zstd":
                         var CompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format);
                         return new ImageFormat.Elements.Fs.Writer.ArchiveCpioWriter(Path, CompressionType);
                     default:

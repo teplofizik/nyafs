@@ -12,6 +12,8 @@ namespace NyaFs.ImageFormat.Types
         SquashFs,
         CramFs,
         RomFs,
-        Tar
+        Tar,
+        LittleFs,
+        Spiffs
     }
 }

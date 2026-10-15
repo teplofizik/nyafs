@@ -24,6 +24,12 @@ namespace NyaFs.ImageFormat.Elements.Fs
         public Types.FsType FilesystemType = Types.FsType.Unknown;
 
         /// <summary>
+        /// Total filesystem size in bytes (e.g. block_size * block_count for MCU filesystems),
+        /// or 0 if unknown. Used as the target size when writing back.
+        /// </summary>
+        public long FsSize = 0;
+
+        /// <summary>
         /// Image information, arch or supported os
         /// </summary>
         public Types.ImageInfo Info = new Types.ImageInfo();

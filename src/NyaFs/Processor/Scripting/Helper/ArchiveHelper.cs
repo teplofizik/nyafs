@@ -30,6 +30,8 @@ namespace NyaFs.Processor.Scripting.Helper
                     return ImageFormat.Types.CompressionType.IH_COMP_ZSTD;
                 case "lzo":
                     return ImageFormat.Types.CompressionType.IH_COMP_LZO;
+                case "xz":
+                    return ImageFormat.Types.CompressionType.IH_COMP_XZ;
                 default: throw new ArgumentException($"Invalid compression format: {Format}");
             }
         }

@@ -27,7 +27,8 @@ namespace NyaFs.ImageFormat.Plugins
             new Ext2FilesystemPlugin(),
             new RomFsFilesystemPlugin(),
             new SquashFsFilesystemPlugin(),
-            new CImgFilesystemPlugin()
+            new CImgFilesystemPlugin(),
+            new TarFilesystemPlugin()
         };
 
         public static readonly Base.KernelPlugin[] Kernels = new Base.KernelPlugin[]

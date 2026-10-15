@@ -46,6 +46,13 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
 
                         return true;
                     }
+                case Types.FsType.Tar:
+                    {
+                        var Reader = new BaseFsReader(Types.FsType.Tar, new NyaFs.Filesystem.Tar.TarFsReader(Raw));
+                        Reader.ReadToFs(Dst);
+
+                        return true;
+                    }
                 default:
                     //throw new NotImplementedException($"Unknown filesystem");
                     return false;

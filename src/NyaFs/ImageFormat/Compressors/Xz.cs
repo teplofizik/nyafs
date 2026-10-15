@@ -1,27 +1,11 @@
-﻿using SharpCompress.Compressors.Xz;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Text;
+﻿using System;
 
 namespace NyaFs.ImageFormat.Compressors
 {
     public static class Xz
     {
-        public static byte[] Decompress(byte[] Data)
-        {
-            using (MemoryStream input = new MemoryStream(Data))
-            {
-                using (XZStream xz = new XZStream(input))
-                {
-                    using (var output = new MemoryStream())
-                    {
-                        xz.CopyTo(output);
+        public static byte[] CompressWithHeader(byte[] Data) => NyaXZ.XzCompressor.Compress(Data);
 
-                        return output.ToArray();
-                    }
-                }
-            }
-        }
+        public static byte[] Decompress(byte[] Data) => NyaXZ.XzDecompressor.Decompress(Data);
     }
 }

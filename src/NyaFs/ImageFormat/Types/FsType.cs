@@ -11,6 +11,7 @@ namespace NyaFs.ImageFormat.Types
         Ext2,
         SquashFs,
         CramFs,
-        RomFs
+        RomFs,
+        Tar
     }
 }

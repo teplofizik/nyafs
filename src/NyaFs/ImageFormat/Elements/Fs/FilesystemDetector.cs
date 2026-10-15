@@ -40,6 +40,12 @@ namespace NyaFs.ImageFormat.Elements.Fs
             if (IsExt4(Raw))
                 return Types.FsType.Ext2;
 
+            // tar: ustar magic at offset 257
+            if ((Raw.Length >= 263) &&
+                (Raw[257] == (byte)'u') && (Raw[258] == (byte)'s') && (Raw[259] == (byte)'t') &&
+                (Raw[260] == (byte)'a') && (Raw[261] == (byte)'r'))
+                return Types.FsType.Tar;
+
             return Types.FsType.Unknown;
         }
 
@@ -52,6 +58,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                 case Types.FsType.SquashFs: return "SquashFs";
                 case Types.FsType.CramFs: return "CramFs";
                 case Types.FsType.RomFs: return "RomFs";
+                case Types.FsType.Tar: return "Tar";
                 default: return "Unknown";
             }
         }

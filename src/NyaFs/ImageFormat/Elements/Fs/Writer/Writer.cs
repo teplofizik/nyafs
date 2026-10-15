@@ -32,6 +32,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
                 case Types.FsType.SquashFs:
                 case Types.FsType.CramFs:
                 case Types.FsType.RomFs:
+                case Types.FsType.Tar:
                     return true;
                 default:
                     return false;
@@ -49,6 +50,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
                 case Types.FsType.SquashFs: return new SquashFsWriter(Fs.SquashFsCompression);
                 case Types.FsType.CramFs: return new CramFsWriter();
                 case Types.FsType.RomFs: return new RomFsWriter();
+                case Types.FsType.Tar: return new BaseFsWriter(new NyaFs.Filesystem.Tar.TarFsBuilder());
 
                 default: throw new InvalidOperationException($"Unsupported filesystem: {Fs.FilesystemType}");
             }

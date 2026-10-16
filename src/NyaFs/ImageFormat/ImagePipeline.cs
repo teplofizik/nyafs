@@ -150,15 +150,22 @@ namespace NyaFs.ImageFormat
                 }
             }
 
-            // 5) Device tree (plain DTB).
-            if ((Data.Length >= 4) && (Data.ReadUInt32(0) == 0xedfe0dd0u))
+            // 5) Device tree.
+            foreach (var DtbPlugin in Plugins.GetDtbs())
             {
-                var Dst = GetDtb();
-                try { new Elements.Dtb.Reader.DtbReader(Raw).ReadToDevTree(Dst); } catch { }
-                if (Dst.Loaded)
+                if (!DtbPlugin.DetectDevtree(Data))
+                    continue;
+
+                var Reader = DtbPlugin.GetDevtreeReader(Raw);
+                if (Reader != null)
                 {
-                    Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, "dtb", CompressionType.IH_COMP_NONE, Container, "dtb"));
-                    return true;
+                    var Dst = GetDtb();
+                    try { Reader.ReadToDevTree(Dst); } catch { }
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, DtbPlugin.Format, Dst.Info.Compression, Container, DtbPlugin.Format));
+                        return true;
+                    }
                 }
             }
 
@@ -201,12 +208,19 @@ namespace NyaFs.ImageFormat
 
             if (HintKind == ImageKind.Devtree)
             {
-                var Dst = GetDtb();
-                try { new Elements.Dtb.Reader.DtbReader(Raw).ReadToDevTree(Dst); } catch { }
-                if (Dst.Loaded)
+                var Plugin = ((HintFormat != null) ? Plugins.GetDtbByFormat(HintFormat) : null)
+                          ?? Plugins.GetDtbByFormat("dtb");
+
+                var Reader = Plugin?.GetDevtreeReader(Raw);
+                if (Reader != null)
                 {
-                    Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, HintFormat ?? "dtb", CompressionType.IH_COMP_NONE, Container, HintFormat ?? "dtb"));
-                    return true;
+                    var Dst = GetDtb();
+                    try { Reader.ReadToDevTree(Dst); } catch { }
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
+                        return true;
+                    }
                 }
             }
 

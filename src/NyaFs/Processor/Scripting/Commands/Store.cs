@@ -98,83 +98,76 @@ namespace NyaFs.Processor.Scripting.Commands
 
             private ScriptStepResult StoreKernel(ImageProcessor Processor)
             {
+                var Kernel = Processor.GetKernel();
+                if ((Kernel == null) || !Kernel.Loaded)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Kernel is not loaded!");
+
+                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
+
+                if (Format == "legacy")
+                {
+                    var Exporter = new ImageFormat.Elements.Kernel.Writer.LegacyWriter(Path);
+                    Exporter.WriteKernel(Kernel);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as legacy image!");
+                }
+
+                // Raw kernel bytes are provided by the kernel plugins (no hardcoded writer here).
+                var Plugin = Processor.Plugins.GetKernelByFormat("raw");
+                var Writer = ((Plugin != null) && Plugin.SupportWrite) ? Plugin.GetKernelWriter(Kernel) : null;
+                if (Writer == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown kernel format '{Format}'!");
+
+                Writer.WriteKernel(Kernel);
+                if (!Writer.HasRawStreamData)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build kernel image!");
+
+                if (Format == "raw")
+                {
+                    System.IO.File.WriteAllBytes(Path, Writer.RawStream);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as raw image!");
+                }
+
                 switch (Format)
                 {
-                    case "raw":
-                        {
-                            var Kernel = Processor.GetKernel();
-                            if ((Kernel != null) && Kernel.Loaded)
-                            {
-                                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
-                                var Exporter = new NyaFs.ImageFormat.Elements.Kernel.Writer.ArchiveWriter(Path, ImageFormat.Types.CompressionType.IH_COMP_NONE);
-                                Exporter.WriteKernel(Kernel);
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as raw image!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Kernel is not loaded!");
-                        }
                     case "lz4":
                     case "lzma":
                     case "gz":
                     case "gzip":
                     case "bz2":
                     case "bzip2":
+                    case "xz":
+                    case "zstd":
                         {
-                            var Kernel = Processor.GetKernel();
-                            if ((Kernel != null) && Kernel.Loaded)
-                            {
-                                var CompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format);
-
-                                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
-                                var Exporter = new NyaFs.ImageFormat.Elements.Kernel.Writer.ArchiveWriter(Path, CompressionType);
-                                Exporter.WriteKernel(Kernel);
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as {Format} compressed image!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Kernel is not loaded!");
-                        }
-                    case "legacy":
-                        {
-                            var Kernel = Processor.GetKernel();
-                            if ((Kernel != null) && Kernel.Loaded)
-                            {
-                                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
-                                var Exporter = new ImageFormat.Elements.Kernel.Writer.LegacyWriter(Path);
-                                Exporter.WriteKernel(Kernel);
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as legacy image!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Kernel is not loaded!");
+                            var CompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format);
+                            System.IO.File.WriteAllBytes(Path, ImageFormat.Helper.FitHelper.GetCompressedData(Writer.RawStream, CompressionType));
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as {Format} compressed image!");
                         }
                     default:
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown kernel image format!");
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown kernel format '{Format}'!");
                 }
             }
 
             private ScriptStepResult StoreDtb(ImageProcessor Processor)
             {
-                switch (Format)
-                {
-                    case "dtb":
-                        {
-                            var Dtb = Processor.GetDevTree();
-                            if (Dtb != null)
-                            {
-                                ImageFormat.Helper.LogHelper.DevtreeInfo(Dtb);
+                var Dtb = Processor.GetDevTree();
+                if (Dtb == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Device tree is not loaded!");
 
-                                var data = new NyaFs.FlattenedDeviceTree.Writer.FDTWriter(Dtb.DevTree);
-                                System.IO.File.WriteAllBytes(Path, data.GetBinary());
+                var Plugin = Processor.Plugins.GetDtbByFormat(Format);
+                if ((Plugin == null) || !Plugin.SupportWrite)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format '{Format}'!");
 
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Dtb is stored to file {Path}!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Device tree is not loaded!");
-                        }
-                    case "dts":
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Dts is not supported now!");
-                    default:
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format!");
-                }
+                ImageFormat.Helper.LogHelper.DevtreeInfo(Dtb);
+
+                var Writer = Plugin.GetDevtreeWriter(Dtb);
+                if (Writer == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format '{Format}'!");
+
+                Writer.WriteDevtree(Dtb);
+                if (Writer.HasRawStreamData)
+                    System.IO.File.WriteAllBytes(Path, Writer.RawStream);
+
+                return new ScriptStepResult(ScriptStepStatus.Ok, $"Dtb is stored to file {Path}!");
             }
 
 

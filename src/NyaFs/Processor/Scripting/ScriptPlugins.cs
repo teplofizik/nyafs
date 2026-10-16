@@ -16,6 +16,7 @@ namespace NyaFs.Processor.Scripting
         private List<CompressorPlugin> Compressors = new List<CompressorPlugin>();
         private List<FilesystemPlugin> Filesystems = new List<FilesystemPlugin>();
         private List<KernelPlugin> Kernels = new List<KernelPlugin>();
+        private List<DevtreePlugin> Dtbs = new List<DevtreePlugin>();
         private List<ServicePlugin> Services = new List<ServicePlugin>();
         private List<Plugins.CommandPlugin> Commands = new List<Plugins.CommandPlugin>();
 
@@ -36,6 +37,12 @@ namespace NyaFs.Processor.Scripting
         /// </summary>
         /// <returns></returns>
         public FilesystemPlugin[] GetFilesystems() => Filesystems.ToArray();
+
+        /// <summary>
+        /// Get all available device tree plugins
+        /// </summary>
+        /// <returns></returns>
+        public DevtreePlugin[] GetDtbs() => Dtbs.ToArray();
 
         /// <summary>
         /// Get all available compressors
@@ -101,6 +108,12 @@ namespace NyaFs.Processor.Scripting
             {
                 if (F.DetectFilesystem(Data))
                     return new DetectedImage(F.Kind, F.Format);
+            }
+
+            foreach (var D in Dtbs)
+            {
+                if (D.DetectDevtree(Data))
+                    return new DetectedImage(D.Kind, D.Format);
             }
 
             return DetectedImage.Unknown;
@@ -183,6 +196,20 @@ namespace NyaFs.Processor.Scripting
         }
 
         /// <summary>
+        /// Find a device tree plugin by its format name (e.g. "dtb").
+        /// </summary>
+        public DevtreePlugin GetDtbByFormat(string Format)
+        {
+            foreach (var S in Dtbs)
+            {
+                if (S.Format == Format)
+                    return S;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Get image plugin by name
         /// </summary>
         /// <param name="Name"></param>
@@ -249,6 +276,13 @@ namespace NyaFs.Processor.Scripting
             if (Kernel != null)
             {
                 Insert(Kernels, Kernel);
+                return true;
+            }
+
+            var Dtb = Plugin as DevtreePlugin;
+            if (Dtb != null)
+            {
+                Insert(Dtbs, Dtb);
                 return true;
             }
 

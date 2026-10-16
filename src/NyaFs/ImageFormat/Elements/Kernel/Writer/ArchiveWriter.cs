@@ -34,5 +34,7 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Writer
             else
                 PackedData = Data;
         }
+
+        public override byte[] RawStream => PackedData;
     }
 }

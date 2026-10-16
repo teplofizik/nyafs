@@ -5,7 +5,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.KernelPlugins
     /// </summary>
     class RawKernelPlugin : Base.KernelPlugin
     {
-        public RawKernelPlugin() : base("kernel.raw", "raw", true, false, true) { }
+        public RawKernelPlugin() : base("kernel.raw", "raw", true, true, true) { }
 
         public override bool DetectKernel(ImageData Image)
         {
@@ -22,5 +22,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.KernelPlugins
 
         public override Elements.Kernel.Reader.Reader GetKernelReader(byte[] Data) =>
             new Elements.Kernel.Reader.ArchiveReader(Data);
+
+        public override Elements.Kernel.Writer.Writer GetKernelWriter(Elements.Kernel.LinuxKernel Kernel) =>
+            new Elements.Kernel.Writer.ArchiveWriter(Types.CompressionType.IH_COMP_NONE);
     }
 }

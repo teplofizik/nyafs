@@ -37,6 +37,11 @@ namespace NyaFs.ImageFormat.Plugins
             new RawKernelPlugin()
         };
 
+        public static readonly Base.DevtreePlugin[] Dtbs = new Base.DevtreePlugin[]
+        {
+            new ImagePlugins.DtbPlugins.DtbPlugin()
+        };
+
         public static readonly Base.CompressorPlugin[] Compressors = new Base.CompressorPlugin[]
         {
             new GzipCompressorPlugin(),

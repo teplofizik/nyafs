@@ -172,6 +172,7 @@ namespace NyaFs.Processor
             PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Images);
             PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Filesystems);
             PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Kernels);
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Dtbs);
             PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Compressors);
 
             ProcessPluginList(PluginList.ToArray());

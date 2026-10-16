@@ -197,19 +197,30 @@ namespace NyaFs.Processor.Scripting
             return false;
         }
 
+        /// <summary>
+        /// Insert a plugin keeping the list ordered by descending <see cref="NyaPlugin.Priority"/>
+        /// (stable: equal priorities keep their registration order).
+        /// </summary>
+        private static void Insert<T>(List<T> List, T Plugin) where T : NyaPlugin
+        {
+            int i = 0;
+            while ((i < List.Count) && (List[i].Priority >= Plugin.Priority)) i++;
+            List.Insert(i, Plugin);
+        }
+
         private bool AddPlugin(NyaPlugin Plugin)
         {
             var Compressor = Plugin as CompressorPlugin;
             if (Compressor != null)
             {
-                Compressors.Add(Compressor);
+                Insert(Compressors, Compressor);
                 return true;
             }
 
             var Kernel = Plugin as KernelPlugin;
             if (Kernel != null)
             {
-                Kernels.Add(Kernel);
+                Insert(Kernels, Kernel);
                 return true;
             }
 
@@ -217,28 +228,28 @@ namespace NyaFs.Processor.Scripting
             var Filesystem = Plugin as FilesystemPlugin;
             if (Filesystem != null)
             {
-                Filesystems.Add(Filesystem);
+                Insert(Filesystems, Filesystem);
                 return true;
             }
 
             var Service = Plugin as ServicePlugin;
             if (Service != null)
             {
-                Services.Add(Service);
+                Insert(Services, Service);
                 return true;
             }
 
             var Command = Plugin as Plugins.CommandPlugin;
             if (Command != null)
             {
-                Commands.Add(Command);
+                Insert(Commands, Command);
                 return true;
             }
 
             var Image = Plugin as CompositeImagePlugin;
             if (Image != null)
             {
-                Images.Add(Image);
+                Insert(Images, Image);
                 return true;
             }
 

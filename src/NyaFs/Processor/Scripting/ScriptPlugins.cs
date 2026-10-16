@@ -155,6 +155,34 @@ namespace NyaFs.Processor.Scripting
         }
 
         /// <summary>
+        /// Find a filesystem plugin by its format name (e.g. "cpio", "squashfs", "littlefs").
+        /// </summary>
+        public FilesystemPlugin GetFilesystemByFormat(string Format)
+        {
+            foreach (var S in Filesystems)
+            {
+                if (S.Format == Format)
+                    return S;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Find a kernel plugin by its format name (e.g. "raw", "zimage").
+        /// </summary>
+        public KernelPlugin GetKernelByFormat(string Format)
+        {
+            foreach (var S in Kernels)
+            {
+                if (S.Format == Format)
+                    return S;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Get image plugin by name
         /// </summary>
         /// <param name="Name"></param>

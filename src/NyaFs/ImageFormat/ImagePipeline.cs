@@ -163,13 +163,49 @@ namespace NyaFs.ImageFormat
             }
 
             // 6) Forced load by declared kind (content detection failed but the type is known).
+            // The reader is provided by the plugins (no hardcoded format switches here).
             if (HintKind == ImageKind.Kernel)
             {
-                var Dst = GetKernel();
-                try { new Elements.Kernel.Reader.ArchiveReader(Raw).ReadToKernel(Dst); } catch { }
+                var Plugin = ((HintFormat != null) ? Plugins.GetKernelByFormat(HintFormat) : null)
+                          ?? Plugins.GetKernelByFormat("raw");
+
+                var Reader = Plugin?.GetKernelReader(Raw);
+                if (Reader != null)
+                {
+                    var Dst = GetKernel();
+                    try { Reader.ReadToKernel(Dst); } catch { }
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
+                        return true;
+                    }
+                }
+            }
+
+            if (HintKind == ImageKind.Filesystem)
+            {
+                var Plugin = (HintFormat != null) ? Plugins.GetFilesystemByFormat(HintFormat) : null;
+
+                var Reader = Plugin?.GetFilesystemReader(Raw);
+                if (Reader != null)
+                {
+                    var Dst = GetFs();
+                    try { Reader.ReadToFs(Dst); } catch { }
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Filesystem, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
+                        return true;
+                    }
+                }
+            }
+
+            if (HintKind == ImageKind.Devtree)
+            {
+                var Dst = GetDtb();
+                try { new Elements.Dtb.Reader.DtbReader(Raw).ReadToDevTree(Dst); } catch { }
                 if (Dst.Loaded)
                 {
-                    Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, HintFormat ?? "raw", CompressionType.IH_COMP_NONE, Container, HintFormat ?? "raw"));
+                    Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, HintFormat ?? "dtb", CompressionType.IH_COMP_NONE, Container, HintFormat ?? "dtb"));
                     return true;
                 }
             }

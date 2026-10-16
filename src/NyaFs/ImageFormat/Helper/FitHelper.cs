@@ -43,6 +43,8 @@ namespace NyaFs.ImageFormat.Helper
             {
                 case Types.FsType.Cpio: return "cpio";
                 case Types.FsType.Ext2: return "ext2";
+                case Types.FsType.Ext3: return "ext3";
+                case Types.FsType.Ext4: return "ext4";
                 case Types.FsType.SquashFs: return "squashfs";
                 case Types.FsType.CramFs: return "cramfs";
                 case Types.FsType.RomFs: return "romfs";
@@ -58,6 +60,8 @@ namespace NyaFs.ImageFormat.Helper
             {
                 case "cpio": return Types.FsType.Cpio;
                 case "ext2": return Types.FsType.Ext2;
+                case "ext3": return Types.FsType.Ext3;
+                case "ext4": return Types.FsType.Ext4;
                 case "squashfs": return Types.FsType.SquashFs;
                 case "cramfs": return Types.FsType.CramFs;
                 case "romfs": return Types.FsType.RomFs;

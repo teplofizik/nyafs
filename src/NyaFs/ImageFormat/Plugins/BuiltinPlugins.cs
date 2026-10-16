@@ -24,6 +24,8 @@ namespace NyaFs.ImageFormat.Plugins
         {
             new CpioFilesystemPlugin(),
             new CramFsFilesystemPlugin(),
+            new Ext4FilesystemPlugin(),
+            new Ext3FilesystemPlugin(),
             new Ext2FilesystemPlugin(),
             new RomFsFilesystemPlugin(),
             new SquashFsFilesystemPlugin(),

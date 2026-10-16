@@ -486,5 +486,16 @@ namespace NyaFs.Filesystem.Ext2.Types
             get { return ReadUInt32(0xC8); }
             set { WriteUInt32(0xC8, value); }
         }
+
+        /// <summary>
+        /// Size of each group descriptor, in bytes. Only present if INCOMPAT_64BIT is set; otherwise
+        /// the descriptors are 32 bytes (0x20).
+        /// u16 s_desc_size (0xFE)
+        /// </summary>
+        public uint GroupDescSize
+        {
+            get { return ReadUInt16(0xFE); }
+            set { WriteUInt16(0xFE, value); }
+        }
     }
 }

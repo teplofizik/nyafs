@@ -13,11 +13,11 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         }
 
         /// <summary>
-        /// Is image contain this filesystem
+        /// Is image contain this filesystem (ext without a journal and without ext4-only features)
         /// </summary>
         /// <param name="Image"></param>
         /// <returns></returns>
-        public override bool DetectFilesystem(ImageData Image) => (Image.Length >= 0x43A) && (Image.ReadUInt16(0x438) == 0xEF53);
+        public override bool DetectFilesystem(ImageData Image) => ExtDetector.IsExt2(Image);
 
         /// <summary>
         /// Get reader

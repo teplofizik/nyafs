@@ -9,7 +9,21 @@ namespace NyaFs.Filesystem.Ext2
     {
         internal Types.ExtSuperBlock Superblock;
 
-        protected uint INodeSize => 128;
+        /// <summary>
+        /// Inode structure size. ext2/ext3 => 128, ext4 (EXTRA_ISIZE) => 256 (taken from the superblock).
+        /// </summary>
+        protected uint INodeSize => ((Superblock.RevLevel >= 1) && (Superblock.INodeSize != 0)) ? Superblock.INodeSize : 128;
+
+        /// <summary>
+        /// Offset of the group descriptor table: the block right after the superblock block
+        /// (block 2 for 1k-block filesystems, block 1 otherwise).
+        /// </summary>
+        protected uint GdtOffset => (Superblock.FirstDataBlock + 1) * Superblock.BlockSize;
+
+        /// <summary>
+        /// Group descriptor size (0x20 for 32-bit, 0x40 for 64-bit feature).
+        /// </summary>
+        protected uint GroupDescSize => (Superblock.GroupDescSize != 0) ? Superblock.GroupDescSize : 0x20;
 
         public Ext2FsBase(byte[] Data) : base(Data)
         {
@@ -17,11 +31,11 @@ namespace NyaFs.Filesystem.Ext2
         }
 
         /// <summary>
-        /// TODO: BlockSize is 0x40 in 64bit extension...
+        /// Block group descriptor (the table location/size depends on the block size and 64bit feature).
         /// </summary>
         /// <param name="Id"></param>
         /// <returns></returns>
-        internal Types.ExtBlockGroup GetBlockGroup(uint Id) => new Types.ExtBlockGroup(Raw, Id, 0x800 + Id * 0x20);
+        internal Types.ExtBlockGroup GetBlockGroup(uint Id) => new Types.ExtBlockGroup(Raw, Id, GdtOffset + Id * GroupDescSize);
 
         internal Types.ExtBlockGroup GetBlockGroupByNodeId(uint Id) => GetBlockGroup(Id / Superblock.InodesPerGroup);
         internal Types.ExtBlockGroup GetBlockGroupByBlockId(uint Id) => GetBlockGroup(Id / Superblock.BlocksPerGroup);
@@ -35,7 +49,11 @@ namespace NyaFs.Filesystem.Ext2
             return new Types.ExtINode(Id, Raw, (BG.INodeTableLo * Superblock.BlockSize + INodeSize * INIndex), INodeSize);
         }
 
-        internal byte[] GetINodeBlockContent(Types.ExtINode Node)
+        /// <summary>
+        /// Read the data blocks of an inode. Default implementation is the classic ext2/ext3 block map
+        /// (direct + single/double/triple indirect); ext4 overrides it to walk the extent tree.
+        /// </summary>
+        internal virtual byte[] GetINodeBlockContent(Types.ExtINode Node)
         {
             byte[] Res = new byte[Node.SizeLo];
             var Blocks = Node.Block;

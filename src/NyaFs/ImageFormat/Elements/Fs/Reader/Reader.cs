@@ -34,8 +34,10 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                         return true;
                     }
                 case Types.FsType.Ext2:
+                case Types.FsType.Ext3:
+                case Types.FsType.Ext4:
                     {
-                        var Reader = new ExtReader(Raw);
+                        var Reader = new ExtReader(Fs, Raw);
                         Reader.ReadToFs(Dst);
                         return true;
                     }

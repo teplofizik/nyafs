@@ -257,6 +257,11 @@ namespace NyaFs.Filesystem.Ext2.Types
         }
 
         /// <summary>
+        /// Raw i_block area (60 bytes, 0x28..0x64): the classic block map or, for ext4, the extent tree root.
+        /// </summary>
+        public byte[] INodeBlockArea => ReadArray(0x28, 60);
+
+        /// <summary>
         /// i_block[EXT4_N_BLOCKS=15] (0x28)
         /// </summary>
         public uint[] Block

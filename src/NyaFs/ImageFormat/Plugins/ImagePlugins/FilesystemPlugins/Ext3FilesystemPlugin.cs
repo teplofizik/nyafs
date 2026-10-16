@@ -7,7 +7,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class Ext3FilesystemPlugin : Base.FilesystemPlugin
     {
-        public Ext3FilesystemPlugin() : base("fs.ext3", "ext3", true, false, false)
+        public Ext3FilesystemPlugin() : base("fs.ext3", "ext3", true, true, false)
         {
 
         }
@@ -22,5 +22,14 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         /// </summary>
         public override Elements.Fs.Reader.Reader GetFilesystemReader(byte[] Data) =>
             new Elements.Fs.Reader.BaseFsReader(Types.FsType.Ext3, new Filesystem.Ext2.Ext3FsReader(Data));
+
+        /// <summary>
+        /// Get writer (ext2 layout + a journal generated from scratch)
+        /// </summary>
+        public override Elements.Fs.Writer.Writer GetFilesystemWriter(Elements.Fs.LinuxFilesystem Fs) =>
+            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Ext2.Ext3FsBuilder(DetectFixDiskSize(Fs)));
+
+        private uint DetectFixDiskSize(Elements.Fs.LinuxFilesystem Fs) =>
+            Convert.ToUInt32(Fs.GetContentSize() * 2 + 0x100000).GetAligned(0x800000);
     }
 }

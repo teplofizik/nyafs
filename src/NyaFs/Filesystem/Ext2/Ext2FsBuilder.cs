@@ -10,7 +10,7 @@ namespace NyaFs.Filesystem.Ext2
     public class Ext2FsBuilder : Ext2FsBase, IFilesystemBuilder
     {
         uint DiskBlockSize;
-        uint INodeIndex = 2;
+        internal uint INodeIndex = 2;
         uint MaxBlockGroupCount = 0;
         uint DataBlockIndex = 0x1;
 
@@ -43,7 +43,7 @@ namespace NyaFs.Filesystem.Ext2
             return (BlockMap[MapIndex] & (1u << MapBit)) == 0;
         }
 
-        private void MarkBlockBusy(uint Block, bool MarkInBG = true)
+        internal void MarkBlockBusy(uint Block, bool MarkInBG = true)
         {
             Block = Block - 1;
             uint MapIndex = Block / 32;
@@ -213,7 +213,7 @@ namespace NyaFs.Filesystem.Ext2
             return null;
         }
 
-        private void MarkINodeAsUsed(uint Index)
+        internal void MarkINodeAsUsed(uint Index)
         {
             Index = Index - 1;
             var BG = GetBlockGroupByNodeId(Index);
@@ -236,7 +236,7 @@ namespace NyaFs.Filesystem.Ext2
             }
         }
 
-        private Types.ExtINode CreateNewINode(Types.ExtINodeType Type, uint User, uint Group, uint Mode)
+        internal Types.ExtINode CreateNewINode(Types.ExtINodeType Type, uint User, uint Group, uint Mode)
         {
             var Index = INodeIndex++;
             var INode = GetINode(Index);
@@ -457,7 +457,7 @@ namespace NyaFs.Filesystem.Ext2
             }
         }
 
-        uint GetNewBlock()
+        internal uint GetNewBlock()
         {
             var Index = DataBlockIndex++;
             while (!IsBlockFree(Index)) { Index = DataBlockIndex++; }
@@ -468,7 +468,7 @@ namespace NyaFs.Filesystem.Ext2
         }
 
 
-        void AddBlockToNode(Types.ExtINode Node, uint Block)
+        internal void AddBlockToNode(Types.ExtINode Node, uint Block)
         {
             var Index = Node.BlocksCount;
             if (Index < 12)
@@ -561,10 +561,12 @@ namespace NyaFs.Filesystem.Ext2
             WriteUInt32(BlockOffset + Offset * 4, Block);
         }
 
-        void SetNodeBlockContent(Types.ExtINode Node, byte[] Content)
+        internal virtual void SetNodeBlockContent(Types.ExtINode Node, byte[] Content)
         {
             long Offset = 0;
             Node.SizeLo = Convert.ToUInt32(Content.Length);
+
+            var Blocks = new List<uint>();
 
             while (Offset < Content.Length)
             {
@@ -576,10 +578,22 @@ namespace NyaFs.Filesystem.Ext2
                 var ToWrite = Content.ReadArray(Offset, BlockSize);
                 WriteArray(BlockOffset, ToWrite, ToWrite.Length);
 
-                AddBlockToNode(Node, Block);
+                Blocks.Add(Block);
 
                 Offset += BlockSize;
             }
+
+            StoreBlocks(Node, Blocks);
+        }
+
+        /// <summary>
+        /// Record the allocated data blocks in the inode. The default implementation writes the
+        /// classic ext2/ext3 block map (direct + indirect); ext4 overrides it to write an extent tree.
+        /// </summary>
+        internal virtual void StoreBlocks(Types.ExtINode Node, List<uint> Blocks)
+        {
+            foreach (var Block in Blocks)
+                AddBlockToNode(Node, Block);
         }
 
         class BuilderDirectory

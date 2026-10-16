@@ -262,6 +262,15 @@ namespace NyaFs.Filesystem.Ext2.Types
         public byte[] INodeBlockArea => ReadArray(0x28, 60);
 
         /// <summary>
+        /// Overwrite the raw i_block area (60 bytes, 0x28..0x64), e.g. with an extent tree root.
+        /// </summary>
+        public void SetINodeBlockArea(byte[] Data)
+        {
+            if ((Data == null) || (Data.Length != 60)) throw new ArgumentException("i_block area must be 60 bytes");
+            WriteArray(0x28, Data, 60);
+        }
+
+        /// <summary>
         /// i_block[EXT4_N_BLOCKS=15] (0x28)
         /// </summary>
         public uint[] Block

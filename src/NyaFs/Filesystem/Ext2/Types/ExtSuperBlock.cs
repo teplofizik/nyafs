@@ -497,5 +497,25 @@ namespace NyaFs.Filesystem.Ext2.Types
             get { return ReadUInt16(0xFE); }
             set { WriteUInt16(0xFE, value); }
         }
+
+        /// <summary>
+        /// Inode number of the journal file. If the filesystem has an external journal, this is 0.
+        /// u32 s_journal_inum (0xE0)
+        /// </summary>
+        public uint JournalINode
+        {
+            get { return ReadUInt32(0xE0); }
+            set { WriteUInt32(0xE0, value); }
+        }
+
+        /// <summary>
+        /// Device number of the external journal (0 if the journal is internal).
+        /// u32 s_journal_dev (0xE4)
+        /// </summary>
+        public uint JournalDevice
+        {
+            get { return ReadUInt32(0xE4); }
+            set { WriteUInt32(0xE4, value); }
+        }
     }
 }

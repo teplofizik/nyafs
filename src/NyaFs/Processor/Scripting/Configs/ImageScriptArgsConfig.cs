@@ -8,43 +8,40 @@ namespace NyaFs.Processor.Scripting.Configs
     internal class ImageScriptArgsConfig : ScriptArgsConfig
     {
         private string ImgType;
-        private string[] SupportedFormats;
 
-        public ImageScriptArgsConfig(int Id, string ImgType, string[] SupportedFormats) : base(Id, new ScriptArgsParam[] {
+        /// <summary>
+        /// Well-known formats, used only as a hint in the error message. The actual format is
+        /// free-form and is validated at execution time against the built-in writers and the
+        /// registered filesystem/kernel/devtree plugins (so plugin-provided formats work
+        /// without touching this list).
+        /// </summary>
+        private string[] KnownFormats;
+
+        public ImageScriptArgsConfig(int Id, string ImgType, string[] KnownFormats) : base(Id, new ScriptArgsParam[] {
                     new Params.FsPathScriptArgsParam(),
                     new Params.EnumScriptArgsParam("type", new string[] { ImgType }),
-                    new Params.EnumScriptArgsParam("format", SupportedFormats)
+                    new Params.StringScriptArgsParam("format")
                 })
         {
             this.ImgType = ImgType;
-            this.SupportedFormats = SupportedFormats;
+            this.KnownFormats = KnownFormats;
         }
 
         public override bool IsMyConfig(string[] Args) => (Args.Length > 1) && (ImgType == Args[1]);
 
         public override bool CheckArgs(string[] Args)
         {
-            if (!base.IsMyConfig(Args))
+            if (Args.Length != 3)
             {
-                // Check path... TODO
-                if(Args.Length != 3)
-                {
-                    if(Args.Length < 3)
-                        Log.Error(0, $"Please specify format of image to load. Must be one of: {String.Join(", ", SupportedFormats)}");
-                    if(Args.Length > 3)
-                        Log.Error(0, $"There are many arguments. Must be <filename> <imagetype> <format>");
-
-                    return false;
-                }
-                // Check format
-                var Format = Args[2];
-                if (!SupportedFormats.Contains(Format))
-                    Log.Error(0, $"Invalid format: {Format}. Must be one of: {String.Join(", ", SupportedFormats)}");
+                if (Args.Length < 3)
+                    Log.Error(0, $"Please specify image format. Known formats: {String.Join(", ", KnownFormats)}");
+                if (Args.Length > 3)
+                    Log.Error(0, $"There are many arguments. Must be <filename> <imagetype> <format>");
 
                 return false;
             }
-            else
-                return true;
+
+            return true;
         }
     }
 }

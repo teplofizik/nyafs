@@ -178,6 +178,25 @@ namespace NyaFs.Processor.Scripting.Commands
             }
 
 
+            /// <summary>
+            /// Formats the built-in writers handle plus the writable filesystem plugins.
+            /// Used only to make the "unknown format" error helpful.
+            /// </summary>
+            private static string AvailableFsFormats(ImageProcessor Processor)
+            {
+                var Res = new List<string> {
+                    "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd",
+                    "legacy", "ext2", "squashfs", "cramfs", "romfs",
+                    "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma"
+                };
+
+                foreach (var P in Processor.Plugins.GetFilesystems())
+                    if (P.SupportWrite && !Res.Contains(P.Format))
+                        Res.Add(P.Format);
+
+                return string.Join(", ", Res);
+            }
+
             private ImageFormat.Elements.Fs.Writer.Writer GetFsWriter(ImageProcessor Processor, ImageFormat.Elements.Fs.LinuxFilesystem Fs)
             {
                 switch (Format)
@@ -221,7 +240,7 @@ namespace NyaFs.Processor.Scripting.Commands
             private ScriptStepResult StoreFs(ImageProcessor Processor)
             {
                 var Fs = Processor.GetFs();
-                if((Fs == null) || (Fs.Loaded == false))
+                if (Fs == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Filesystem is not loaded!");
 
                 var Writer = GetFsWriter(Processor, Fs);
@@ -242,7 +261,7 @@ namespace NyaFs.Processor.Scripting.Commands
                         return new ScriptStepResult(ScriptStepStatus.Ok, $"Cannot store as {Format} image: no enough info about target system!");
                 }
                 else
-                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown fs format!");
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown fs format '{Format}'. Available: {AvailableFsFormats(Processor)}");
             }
         }
     }

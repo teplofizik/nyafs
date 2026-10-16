@@ -16,7 +16,7 @@ namespace NyaFs.Processor.Scripting.Commands
                     "littlefs", "spiffs", "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(2, "devtree",
-                new string[] { "dtb" }));
+                new string[] { "dtb", "dts" }));
 
             AddConfig(new ScriptArgsConfig(3, new ScriptArgsParam[] {
                     new Params.FsPathScriptArgsParam()

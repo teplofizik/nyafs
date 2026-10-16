@@ -39,7 +39,8 @@ namespace NyaFs.ImageFormat.Plugins
 
         public static readonly Base.DevtreePlugin[] Dtbs = new Base.DevtreePlugin[]
         {
-            new ImagePlugins.DtbPlugins.DtbPlugin()
+            new ImagePlugins.DtbPlugins.DtbPlugin(),
+            new ImagePlugins.DtbPlugins.DtsPlugin()
         };
 
         public static readonly Base.CompressorPlugin[] Compressors = new Base.CompressorPlugin[]

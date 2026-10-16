@@ -8,7 +8,7 @@
 		<RepositoryUrl>https://github.com/teplofizik/NyaFS.git</RepositoryUrl>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<LangVersion>latest</LangVersion>
-    <Version>1.0.20</Version>
+    <Version>1.0.21</Version>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">

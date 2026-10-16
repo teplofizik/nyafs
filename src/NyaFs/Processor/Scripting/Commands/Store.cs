@@ -13,7 +13,7 @@ namespace NyaFs.Processor.Scripting.Commands
 
             AddConfig(new Configs.ImageScriptArgsConfig(1, "ramfs",
                 new string[] { "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd", "legacy", "ext2", "squashfs", "cramfs", "romfs",
-                    "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma" }));
+                    "littlefs", "spiffs", "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(2, "devtree",
                 new string[] { "dtb" }));
@@ -178,7 +178,7 @@ namespace NyaFs.Processor.Scripting.Commands
             }
 
 
-            private ImageFormat.Elements.Fs.Writer.Writer GetFsWriter(ImageFormat.Elements.Fs.LinuxFilesystem Fs)
+            private ImageFormat.Elements.Fs.Writer.Writer GetFsWriter(ImageProcessor Processor, ImageFormat.Elements.Fs.LinuxFilesystem Fs)
             {
                 switch (Format)
                 {
@@ -208,6 +208,12 @@ namespace NyaFs.Processor.Scripting.Commands
                         var CompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format);
                         return new ImageFormat.Elements.Fs.Writer.ArchiveCpioWriter(Path, CompressionType);
                     default:
+                        // Formats provided by filesystem plugins (e.g. littlefs, spiffs).
+                        foreach (var Plugin in Processor.Plugins.GetFilesystems())
+                        {
+                            if ((Plugin.Format == Format) && Plugin.SupportWrite)
+                                return Plugin.GetFilesystemWriter(Fs);
+                        }
                         return null;
                 }
             }
@@ -218,12 +224,18 @@ namespace NyaFs.Processor.Scripting.Commands
                 if((Fs == null) || (Fs.Loaded == false))
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Filesystem is not loaded!");
 
-                var Writer = GetFsWriter(Fs);
+                var Writer = GetFsWriter(Processor, Fs);
                 if(Writer != null)
                 {
                     if (Writer.CheckFilesystem(Fs))
                     {
                         Writer.WriteFs(Fs);
+
+                        // Built-in writers take the file name and write it themselves; plugin
+                        // writers (e.g. littlefs/spiffs) only expose the built bytes as RawStream.
+                        if (Writer.HasRawStreamData)
+                            System.IO.File.WriteAllBytes(Path, Writer.RawStream);
+
                         return new ScriptStepResult(ScriptStepStatus.Ok, $"Filesystem is stored to file {Path} as {Format} image!");
                     }
                     else

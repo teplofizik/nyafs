@@ -17,7 +17,7 @@ namespace NyaFs.Processor.Scripting.Commands
         {
             public SetScriptArgsConfig() : base(0, new ScriptArgsParam[] {
                     new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all" }),
-                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem" }),
+                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "size" }),
                     new Params.StringScriptArgsParam("value")
                 })
             {
@@ -42,10 +42,10 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "size" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
-                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression");
+                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, size");
                         return false;
                     }
                 }
@@ -165,6 +165,25 @@ namespace NyaFs.Processor.Scripting.Commands
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
                         }
+                    case "size":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set filesystem size to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            try
+                            {
+                                Fs.FsSize = ParseSize(Value);
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem size ok: {Fs.FsSize} bytes!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid size: {Value}!");
+                            }
+                        }
                     case "squashfs.compression":
                         {
                             if (Type != "ramfs")
@@ -281,6 +300,18 @@ namespace NyaFs.Processor.Scripting.Commands
                     default:
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown parameter {Param}!");
                 }
+            }
+
+            long ParseSize(string Value)
+            {
+                var V = Value.Trim();
+                if (V.StartsWith("0x") || V.StartsWith("0X"))
+                    return Convert.ToInt64(V.Substring(2), 16);
+                if (V.EndsWith("K") || V.EndsWith("k"))
+                    return Convert.ToInt64(V.Substring(0, V.Length - 1)) * 1024;
+                if (V.EndsWith("M") || V.EndsWith("m"))
+                    return Convert.ToInt64(V.Substring(0, V.Length - 1)) * 1024 * 1024;
+                return Convert.ToInt64(V);
             }
 
             ImageFormat.Types.CPU ParseArch(string Arch)

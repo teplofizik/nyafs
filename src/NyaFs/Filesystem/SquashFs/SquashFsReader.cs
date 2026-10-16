@@ -163,34 +163,36 @@ namespace NyaFs.Filesystem.SquashFs
                         Metadata = ReadINodeMetadata(Ref, N.INodeSize);
                         return new Types.Nodes.BasicDirectory(Metadata);
                     }
-                case Types.SqInodeType.BasicFile:
-                    {
-                        Metadata = ReadINodeMetadata(Ref, 0x20);
-                        var N = new Types.Nodes.BasicFile(Metadata, Superblock.BlockSize);
-                        Metadata = ReadINodeMetadata(Ref, N.INodeSize);
-                        return new Types.Nodes.BasicFile(Metadata, Superblock.BlockSize);
-                    }
                 case Types.SqInodeType.BasicSymlink:
+                case Types.SqInodeType.ExtendedSymlink:
                     {
+                        // Extended symlinks share the basic header + target_path layout (xattr fields follow).
                         Metadata = ReadINodeMetadata(Ref, 0x18);
                         var N = new Types.Nodes.BasicSymLink(Metadata);
                         Metadata = ReadINodeMetadata(Ref, N.INodeSize);
                         return new Types.Nodes.BasicSymLink(Metadata);
                     }
 
+                case Types.SqInodeType.BasicFile:
+                case Types.SqInodeType.ExtendedFile:
+                    {
+                        Metadata = ReadINodeMetadata(Ref, 0x20);
+                        var N = new Types.Nodes.BasicFile(Metadata, Superblock.BlockSize);
+                        Metadata = ReadINodeMetadata(Ref, N.INodeSize);
+                        return new Types.Nodes.BasicFile(Metadata, Superblock.BlockSize);
+                    }
+
                 case Types.SqInodeType.BasicBlockDevice:
-                    Metadata = ReadINodeMetadata(Ref, 0x18);
-                    return new Types.Nodes.BasicDevice(Metadata);
-
                 case Types.SqInodeType.BasicCharDevice:
-                    Metadata = ReadINodeMetadata(Ref, 0x18);
-                    return new Types.Nodes.BasicDevice(Metadata);
-
                 case Types.SqInodeType.BasicFifo:
+                case Types.SqInodeType.ExtendedBlockDevice:
+                case Types.SqInodeType.ExtendedCharDevice:
+                case Types.SqInodeType.ExtendedFifo:
                     Metadata = ReadINodeMetadata(Ref, 0x18);
                     return new Types.Nodes.BasicDevice(Metadata);
 
                 case Types.SqInodeType.BasicSocket:
+                case Types.SqInodeType.ExtendedSocket:
                     Metadata = ReadINodeMetadata(Ref, 0x18);
                     return new Types.Nodes.BasicIPC(Metadata);
 
@@ -458,9 +460,8 @@ namespace NyaFs.Filesystem.SquashFs
                 switch (Node.InodeType)
                 {
                     case Types.SqInodeType.BasicFile:
-                        return GetINodeContent(Node as Types.Nodes.BasicFile, Path);
                     case Types.SqInodeType.ExtendedFile:
-                        return null; // TODO
+                        return GetINodeContent(Node as Types.Nodes.BasicFile, Path);
                     default:
                         return null;
                 }
@@ -484,13 +485,12 @@ namespace NyaFs.Filesystem.SquashFs
                 {
                     case Types.SqInodeType.BasicBlockDevice:
                     case Types.SqInodeType.BasicCharDevice:
+                    case Types.SqInodeType.ExtendedBlockDevice:
+                    case Types.SqInodeType.ExtendedCharDevice:
                         {
                             var Block = Node as Types.Nodes.BasicDevice;
                             return new Universal.Types.DeviceInfo(Block.Major, Block.Minor);
                         }
-                    case Types.SqInodeType.ExtendedBlockDevice:
-                    case Types.SqInodeType.ExtendedCharDevice:
-                        return null; // TODO
                     default:
                         return null;
                 }
@@ -513,6 +513,7 @@ namespace NyaFs.Filesystem.SquashFs
                 switch (Node.InodeType)
                 {
                     case Types.SqInodeType.BasicSymlink:
+                    case Types.SqInodeType.ExtendedSymlink:
                         return (Node as Types.Nodes.BasicSymLink).Target;
                     default:
                         return null;
@@ -554,9 +555,11 @@ namespace NyaFs.Filesystem.SquashFs
                     switch (N.InodeType)
                     {
                         case Types.SqInodeType.BasicFile:
+                        case Types.SqInodeType.ExtendedFile:
                             Res.Add(new FilesystemEntry(E.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), U, G, N.Permissions, (N as Types.Nodes.BasicFile).FileSize));
                             break;
                         case Types.SqInodeType.BasicSymlink:
+                        case Types.SqInodeType.ExtendedSymlink:
                             Res.Add(new FilesystemEntry(E.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), U, G, N.Permissions, (N as Types.Nodes.BasicSymLink).TargetSize));
                             break;
                         default:

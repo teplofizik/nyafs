@@ -11,7 +11,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         const uint UBIFS_NODE_MAGIC = 0x06101831;
         const byte UBIFS_SB_NODE = 6;
 
-        public UbifsFilesystemPlugin() : base("fs.ubifs", "ubifs", true, false, false)
+        public UbifsFilesystemPlugin() : base("fs.ubifs", "ubifs", true, true, true)
         {
 
         }
@@ -49,6 +49,21 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Get writer: builds a UBIFS volume and wraps it into a UBI container.
+        /// Default NAND geometry matches the common 128KiB PEB / 2KiB page layout
+        /// (leb_size = 126976, min_io = 2048); the LEB count is derived from the content.
+        /// </summary>
+        public override Elements.Fs.Writer.Writer GetFilesystemWriter(Elements.Fs.LinuxFilesystem Fs)
+        {
+            const int PebSize = 0x20000;
+            const int PageSize = 0x800;
+
+            var Ubifs = new Filesystem.UbiFs.Ubifs.UbifsBuilder(PebSize - 2 * PageSize, 10, PageSize);
+            var Ubi = new Filesystem.UbiFs.UbiFsBuilder(Ubifs, PebSize, PageSize) { VolumeName = "rootfs" };
+            return new Elements.Fs.Writer.BaseFsWriter(Ubi);
         }
     }
 }

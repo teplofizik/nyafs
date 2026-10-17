@@ -5,13 +5,13 @@ using System.Text;
 
 namespace NyaFs.Filesystem.UbiFs.Types
 {
-    enum VolumeType
+    public enum VolumeType
     {
         UBI_VID_DYNAMIC = 1,
         UBI_VID_STATIC = 2
     }
 
-    enum VolumeCompat
+    public enum VolumeCompat
     {
         UBI_COMPAT_NONE = 0,
         UBI_COMPAT_DELETE = 1,   // delete this internal volume before anything is written to the flash

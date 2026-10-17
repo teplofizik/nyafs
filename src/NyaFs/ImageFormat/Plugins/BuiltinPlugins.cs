@@ -30,7 +30,8 @@ namespace NyaFs.ImageFormat.Plugins
             new RomFsFilesystemPlugin(),
             new SquashFsFilesystemPlugin(),
             new CImgFilesystemPlugin(),
-            new TarFilesystemPlugin()
+            new TarFilesystemPlugin(),
+            new UbifsFilesystemPlugin()
         };
 
         public static readonly Base.KernelPlugin[] Kernels = new Base.KernelPlugin[]

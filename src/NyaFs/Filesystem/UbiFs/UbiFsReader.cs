@@ -1,166 +1,166 @@
-﻿using NyaFs.Filesystem.Universal;
+﻿using NyaIO.Data;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Text;
-using NyaIO.Data;
 using NyaFs.Filesystem.UbiFs.Types;
-using NyaFs.Processor.Scripting.Commands;
-using SharpCompress.Common;
-using System.Collections;
 
 namespace NyaFs.Filesystem.UbiFs
 {
-    public class UbiFsReader : RawPacket, Universal.IFilesystemReader
+    /// <summary>
+    /// A UBI volume and the physical eraseblock holding each of its logical eraseblocks.
+    /// </summary>
+    public class UbiVolume
     {
-        bool DebugReader = true;
-        int BlockSize = 0x40;
-        int PhysicalBlockSize = 0x100;
+        public uint Id;
+        public string Name;
+        public VolumeType Type;
+        public uint ReservedPebs;
 
-        private List<PhysicalBlock> Blocks = new List<PhysicalBlock>();
+        /// <summary>lnum -> physical offset of the PEB</summary>
+        public Dictionary<uint, long> LebToPeb = new Dictionary<uint, long>();
 
-        const uint UBI_EC_HDR_MAGIC = 0x55424923;
-        const uint UBI_VID_HDR_MAGIC = 0x55424921;
+        public override string ToString() => $"VOL {Id:x8} '{Name}' type={Type} pebs={ReservedPebs} lebs={LebToPeb.Count}";
+    }
+
+    /// <summary>
+    /// UBI (Unsorted Block Images) container reader: parses the erase-counter and volume
+    /// identifier headers of every PEB, the volume table and the per-volume LEB mapping.
+    /// </summary>
+    public class UbiFsReader : RawPacket
+    {
+        public const uint UBI_EC_HDR_MAGIC = 0x55424923;   // "UBI#"
+        public const uint UBI_VID_HDR_MAGIC = 0x55424921;  // "UBI!"
+        public const uint UBI_LAYOUT_VOLUME_ID = 0x7FFFEFFF;
+
+        public int PebSize { get; private set; }
+        public int VidHdrOffset { get; private set; }
+        public int DataOffset { get; private set; }
+        public int LebSize => PebSize - DataOffset;
+
+        public List<UbiVolume> Volumes { get; private set; } = new List<UbiVolume>();
 
         public UbiFsReader(byte[] Data) : base(Data)
         {
             Init();
         }
 
-        public UbiFsReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename))
-        {
+        public UbiFsReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename)) { }
 
-        }
-
-        protected virtual void Init()
+        private void Init()
         {
-            if (CheckMagic())
+            if (!CheckMagic(0, UBI_EC_HDR_MAGIC))
+                throw new InvalidOperationException("Invalid UBI image: no UBI# at offset 0");
+
+            var Ec = new EraseCounterHeader(Raw, 0, 0x40);
+            VidHdrOffset = Convert.ToInt32(Ec.VidHeaderOffset);
+            DataOffset = Convert.ToInt32(Ec.DataSize);
+            PebSize = DetectPebSize();
+
+            if ((PebSize <= DataOffset) || (DataOffset <= 0x40))
+                throw new InvalidOperationException($"Invalid UBI geometry: peb={PebSize} data_offset={DataOffset}");
+
+            for (long Off = 0; Off + PebSize <= Raw.Length; Off += PebSize)
             {
-                DetectBlocksSize();
+                if (!CheckMagic(Off, UBI_EC_HDR_MAGIC))
+                    continue;
 
-                LoadBlocks();
-            }
-            else
-                throw new InvalidOperationException("Invalid UBI image: no UBI_EC_HDR_MAGIC");
-        }
+                long VidOff = Off + VidHdrOffset;
+                if (!CheckMagic(VidOff, UBI_VID_HDR_MAGIC))
+                    continue;
 
-        private bool CheckMagic()
-        {
-            return (ReadUInt32BE(0) == UBI_EC_HDR_MAGIC);
-        }
-        private void DetectBlocksSize()
-        {
-            DetectSmallBlockSize();
-            DetectEraseBlockSize();
-        }
+                var Vid = new VolumeIdentifierHeader(Raw, VidOff, 0x40);
 
-        // UBI uses some amount of flash space for its own purposes, thus reducing the amount of flash space available for UBI users.Namely:
-
-        //  2 PEBs are used to store the volume table;
-        //  1 PEB is reserved for wear-leveling purposes;
-        //  1 PEB is reserved for the atomic LEB change operation;
-        //  some amount of PEBs are reserved for bad PEB handling; this is applicable for NAND flash but not for NOR flash; the amount of reserved PEBs is configurable and is equal to 20 blocks per 1024 blocks by default;
-        //  UBI stores the EC and VID headers at the beginning of each PEB; the number of bytes used for these purposes depends on the flash type and is explained below.
-
-        private void LoadBlocks()
-        {
-            int Offset = 0;
-            while(Offset < getLength())
-            {
-                var B = new Types.PhysicalBlock(Raw, Offset, PhysicalBlockSize, BlockSize);
-
-                if (B.Correct)
+                if (Vid.VolumeId == UBI_LAYOUT_VOLUME_ID)
+                    ReadVolumeTable(Off);
+                else
                 {
-                    if(DebugReader)
-                        B.Dump();
-
-
-                    Blocks.Add(B);
+                    var Vol = GetOrCreateVolume(Vid.VolumeId);
+                    if (!Vol.LebToPeb.ContainsKey(Vid.LNum))
+                        Vol.LebToPeb[Vid.LNum] = Off;
                 }
-
-                Offset += PhysicalBlockSize;
             }
         }
 
-        private void DetectSmallBlockSize()
+        private bool CheckMagic(long Offset, uint Magic) =>
+            (Offset + 4 <= Raw.Length) && (Raw.ReadUInt32BE(Offset) == Magic);
+
+        private int DetectPebSize()
         {
-            // TODO
-            BlockSize = 0x800;
-
-            // Scan: 0x80 0x100 0x200 0x400 0x800 0x1000 0x2000 for UBI! signature
-            int Offset = 0x80;
-
-            while((Offset < 0x10000) || (Offset < getLength()))
+            // The next erase-counter header starts at the PEB boundary.
+            for (int Size = 0x2000; Size <= 0x1000000; Size <<= 1)
             {
-                if(ReadUInt32BE(Offset) == UBI_VID_HDR_MAGIC)
-                {
-                    BlockSize = Offset;
-                    return;
-                }
+                if (Size >= Raw.Length)
+                    break;
 
-                Offset <<= 1;
+                if (CheckMagic(Size, UBI_EC_HDR_MAGIC))
+                    return Size;
             }
-            throw new InvalidOperationException("Invalid UBI image: cannot detect block size");
+
+            throw new InvalidOperationException("Invalid UBI image: cannot detect PEB size");
         }
 
-        private void DetectEraseBlockSize()
+        private UbiVolume GetOrCreateVolume(uint Id)
         {
-            // TODO
-            PhysicalBlockSize = 0x1000;
+            foreach (var V in Volumes)
+                if (V.Id == Id)
+                    return V;
 
-            // Scan: 0x80 0x100 0x200 0x400 0x800 0x1000 0x2000 for UBI# signature
-            int Offset = 0x80;
-
-            while ((Offset < 0x1000000) || (Offset < getLength()))
-            {
-                if (ReadUInt32BE(Offset) == UBI_EC_HDR_MAGIC)
-                {
-                    PhysicalBlockSize = Offset;
-                    return;
-                }
-
-                Offset <<= 1;
-            }
-            throw new InvalidOperationException("Invalid UBI image: cannot detect erase block size");
+            var Vol = new UbiVolume { Id = Id };
+            Volumes.Add(Vol);
+            return Vol;
         }
 
         /// <summary>
-        /// Read file by path
+        /// Read the volume table from a layout-volume PEB (records start at data_offset).
         /// </summary>
-        /// <param name="Path">Path to file</param>
-        /// <returns>Content of file or null if file is not exists</returns>
-        public byte[] Read(string Path)
+        private void ReadVolumeTable(long PebOffset)
         {
+            long Base = PebOffset + DataOffset;
+
+            for (int i = 0; i < 128; i++)
+            {
+                long Off = Base + i * VolumeTableRecord.Size;
+                if (Off + VolumeTableRecord.Size > Raw.Length)
+                    break;
+
+                var Rec = new VolumeTableRecord(Raw, Off);
+                if (!Rec.IsCorrect || (Rec.NameLength == 0))
+                    break;
+
+                var Vol = GetOrCreateVolume(Convert.ToUInt32(i));
+                Vol.Name = Rec.Name;
+                Vol.Type = (VolumeType)Rec.VolumeType;
+                Vol.ReservedPebs = Rec.ReservedPebs;
+            }
+        }
+
+        /// <summary>
+        /// Read a whole logical eraseblock (user data only, without the UBI headers).
+        /// </summary>
+        public byte[] ReadLeb(uint VolumeId, uint LNum)
+        {
+            var Vol = FindVolume(VolumeId);
+            if ((Vol == null) || !Vol.LebToPeb.TryGetValue(LNum, out long Peb))
+                return null;
+
+            return ReadArray(Peb + DataOffset, LebSize);
+        }
+
+        public UbiVolume FindVolume(uint VolumeId)
+        {
+            foreach (var V in Volumes)
+                if (V.Id == VolumeId)
+                    return V;
+
             return null;
         }
 
-        /// <summary>
-        /// Read device information
-        /// </summary>
-        /// <param name="Path">Path to device</param>
-        /// <returns>Device numbers (major/minor)</returns>
-        public Universal.Types.DeviceInfo ReadDevice(string Path)
+        public UbiVolume FindVolume(string Name)
         {
-            return null;
-        }
+            foreach (var V in Volumes)
+                if (V.Name == Name)
+                    return V;
 
-        /// <summary>
-        /// Read link content by path
-        /// </summary>
-        /// <param name="Path">Path to symlink</param>
-        /// <returns>Link</returns>
-        public string ReadLink(string Path)
-        {
-            return null;
-        }
-
-        /// <summary>
-        /// Read directory content
-        /// </summary>
-        /// <param name="Path">Path to directory</param>
-        /// <returns>Array of entries</returns>
-        public FilesystemEntry[] ReadDir(string Path)
-        {
             return null;
         }
     }

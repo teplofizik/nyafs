@@ -20,6 +20,13 @@ namespace NyaFs.Filesystem.UbiFs
         public string VolumeName = "rootfs";
         public bool AutoResize = true;
 
+        /// <summary>Compression for regular file data nodes (delegated to the UBIFS builder).</summary>
+        public Ubifs.UbifsCompression Compression
+        {
+            get { return Ubifs.Compression; }
+            set { Ubifs.Compression = value; }
+        }
+
         public UbiFsBuilder(Ubifs.UbifsBuilder Ubifs, int PebSize = 0x20000, int PageSize = 0x800)
         {
             this.Ubifs = Ubifs;

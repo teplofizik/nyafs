@@ -113,16 +113,16 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             return N;
         }
 
-        public static byte[] Data(uint Inum, uint Block, byte[] Content, ushort ComprType, ulong Sqnum)
+        public static byte[] Data(uint Inum, uint Block, byte[] Stored, uint UncompressedSize, ushort ComprType, ulong Sqnum)
         {
-            int Len = DataNodeSize + Content.Length;
+            int Len = DataNodeSize + Stored.Length;
             var N = new byte[Len];
 
             WriteKey(N, 0x18, Inum, UbifsKeyType.Data, Block);
-            WriteLE32(N, 0x28, (uint)Content.Length);  // size (uncompressed)
+            WriteLE32(N, 0x28, UncompressedSize);      // size (uncompressed)
             WriteLE16(N, 0x2C, ComprType);
-            WriteLE16(N, 0x2E, (ushort)Content.Length); // compr_size (same for none)
-            Array.Copy(Content, 0, N, DataNodeSize, Content.Length);
+            WriteLE16(N, 0x2E, (ushort)Stored.Length); // compr_size (== size when not compressed)
+            Array.Copy(Stored, 0, N, DataNodeSize, Stored.Length);
 
             WriteCommonHeader(N, UbifsNodeType.Data, Sqnum, (uint)Len);
             return N;

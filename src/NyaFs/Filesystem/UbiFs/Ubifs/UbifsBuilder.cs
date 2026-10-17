@@ -37,7 +37,9 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         public uint JheadCnt = 1;
         public uint Fanout = 8;
         public uint LsaveCnt = 256;
-        public ushort DefaultCompr = 1;
+
+        /// <summary>Compression applied to regular file data nodes (and the superblock default).</summary>
+        public UbifsCompression Compression = UbifsCompression.None;
 
         public byte[] Uuid = new byte[16];
 
@@ -224,8 +226,57 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                 var Chunk = new byte[Len];
                 Array.Copy(N.Content, Pos, Chunk, 0, Len);
 
-                var D = UbifsNodeWriter.Data(N.Inum, (uint)Block, Chunk, 0, Sqnum++);
+                var (Stored, Compr) = Compress(Chunk);
+                var D = UbifsNodeWriter.Data(N.Inum, (uint)Block, Stored, (uint)Len, Compr, Sqnum++);
                 Emit(Out, N.Inum, UbifsKeyType.Data, (uint)Block, D);
+            }
+        }
+
+        /// <summary>
+        /// Compress one data block. Falls back to the raw bytes (compr = None) when the
+        /// selected compressor is disabled or does not shrink the block, mirroring mkfs.ubifs.
+        /// </summary>
+        private (byte[], ushort) Compress(byte[] Data)
+        {
+            switch (Compression)
+            {
+                case UbifsCompression.Lzo:
+                    {
+                        var C = NyaLZO.LZO1xCompressor.Compress(Data);
+                        if (C.Length < Data.Length)
+                            return (C, (ushort)UbifsCompression.Lzo);
+                    }
+                    break;
+
+                case UbifsCompression.Zlib:
+                    {
+                        var C = Deflate(Data);
+                        if (C.Length < Data.Length)
+                            return (C, (ushort)UbifsCompression.Zlib);
+                    }
+                    break;
+
+                case UbifsCompression.Zstd:
+                    {
+                        var C = ImageFormat.Compressors.ZStd.CompressWithHeader(Data);
+                        if (C.Length < Data.Length)
+                            return (C, (ushort)UbifsCompression.Zstd);
+                    }
+                    break;
+            }
+
+            return (Data, (ushort)UbifsCompression.None);
+        }
+
+        /// <summary>UBIFS zlib = raw deflate stream (no zlib/gzip wrapper).</summary>
+        private static byte[] Deflate(byte[] Data)
+        {
+            using (var Output = new System.IO.MemoryStream())
+            {
+                using (var Deflate = new System.IO.Compression.DeflateStream(Output, System.IO.Compression.CompressionLevel.Optimal, true))
+                    Deflate.Write(Data, 0, Data.Length);
+
+                return Output.ToArray();
             }
         }
 
@@ -404,7 +455,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
 
             var Sb = UbifsNodeWriter.Superblock((uint)MinIoSize, (uint)LebSize, (uint)LebCnt, (uint)LebCnt,
                 (ulong)LebSize * (ulong)Math.Min(15, MainLebs), LogLebs, LptLebs, OrphLebs, JheadCnt, Fanout, LsaveCnt,
-                DefaultCompr, Uuid, Sqnum++);
+                (ushort)Compression, Uuid, Sqnum++);
             Array.Copy(Sb, 0, Lebs[0], 0, Sb.Length);
 
             // log head: a commit start node (the log is otherwise empty)

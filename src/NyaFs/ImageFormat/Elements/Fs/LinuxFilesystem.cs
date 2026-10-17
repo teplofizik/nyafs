@@ -19,6 +19,11 @@ namespace NyaFs.ImageFormat.Elements.Fs
         public Filesystem.SquashFs.Types.SqCompressionType SquashFsCompression = Filesystem.SquashFs.Types.SqCompressionType.Gzip;
 
         /// <summary>
+        /// Compression for regular file data nodes when writing a UBIFS image.
+        /// </summary>
+        public Filesystem.UbiFs.Ubifs.UbifsCompression UbiFsCompression = Filesystem.UbiFs.Ubifs.UbifsCompression.None;
+
+        /// <summary>
         /// Filesystem type
         /// </summary>
         public Types.FsType FilesystemType = Types.FsType.Unknown;

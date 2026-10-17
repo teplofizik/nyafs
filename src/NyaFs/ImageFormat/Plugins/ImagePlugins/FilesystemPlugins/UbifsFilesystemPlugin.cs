@@ -61,7 +61,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             const int PebSize = 0x20000;
             const int PageSize = 0x800;
 
-            var Ubifs = new Filesystem.UbiFs.Ubifs.UbifsBuilder(PebSize - 2 * PageSize, 10, PageSize);
+            var Ubifs = new Filesystem.UbiFs.Ubifs.UbifsBuilder(PebSize - 2 * PageSize, 10, PageSize) { Compression = Fs.UbiFsCompression };
             var Ubi = new Filesystem.UbiFs.UbiFsBuilder(Ubifs, PebSize, PageSize) { VolumeName = "rootfs" };
             return new Elements.Fs.Writer.BaseFsWriter(Ubi);
         }

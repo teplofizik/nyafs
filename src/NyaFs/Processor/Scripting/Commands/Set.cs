@@ -42,10 +42,10 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "size" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "ubifs.compression", "size" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
-                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, size");
+                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, ubifs.compression, size");
                         return false;
                     }
                 }
@@ -193,6 +193,23 @@ namespace NyaFs.Processor.Scripting.Commands
                             {
                                 var Fs = Processor.GetFs();
                                 Fs.SquashFsCompression = ParseSqCompression(Value);
+
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set compression ok: {Value}!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown compression: {Value}!");
+                            }
+                        }
+                    case "ubifs.compression":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set ubifs compression type to non-ramfs image!");
+
+                            try
+                            {
+                                var Fs = Processor.GetFs();
+                                Fs.UbiFsCompression = ParseUbifsCompression(Value);
 
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Set compression ok: {Value}!");
                             }
@@ -363,6 +380,19 @@ namespace NyaFs.Processor.Scripting.Commands
                     //case "xz": return Filesystem.SquashFs.Types.SqCompressionType.Xz;
                     //case "lzo": return Filesystem.SquashFs.Types.SqCompressionType.Lzo;
                     case "zstd": return Filesystem.SquashFs.Types.SqCompressionType.Zstd;
+                    default:
+                        throw new ArgumentException("Unsupported compression type");
+                }
+            }
+
+            Filesystem.UbiFs.Ubifs.UbifsCompression ParseUbifsCompression(string Compression)
+            {
+                switch (Compression.ToLower())
+                {
+                    case "none": return Filesystem.UbiFs.Ubifs.UbifsCompression.None;
+                    case "lzo": return Filesystem.UbiFs.Ubifs.UbifsCompression.Lzo;
+                    case "zlib": return Filesystem.UbiFs.Ubifs.UbifsCompression.Zlib;
+                    case "zstd": return Filesystem.UbiFs.Ubifs.UbifsCompression.Zstd;
                     default:
                         throw new ArgumentException("Unsupported compression type");
                 }

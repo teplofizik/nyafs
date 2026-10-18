@@ -25,6 +25,15 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
         {
             ImportDir(Dst.Fs.Root, "/");
 
+            // Preserve the root directory's own owner/permissions when the reader can report them.
+            if ((FsReader is Filesystem.Universal.IRootFsInfo RootInfo) &&
+                RootInfo.TryGetRootFsItem(out uint RootUser, out uint RootGroup, out uint RootMode))
+            {
+                Dst.Fs.Root.User = RootUser;
+                Dst.Fs.Root.Group = RootGroup;
+                Dst.Fs.Root.Mode = RootMode;
+            }
+
             if (Dst.Info.Type == Types.ImageType.IH_TYPE_INVALID)
                 Dst.Info.Type = Types.ImageType.IH_TYPE_RAMDISK;
 

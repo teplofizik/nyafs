@@ -239,6 +239,12 @@ namespace NyaFs.Processor.Scripting.Commands
                 var Writer = GetFsWriter(Processor, Fs);
                 if(Writer != null)
                 {
+                    // Filesystem plugins may declare limits of the target format (uid/gid/mode/name);
+                    // honour them before writing when the format is backed by a plugin.
+                    var FsPlugin = Processor.Plugins.GetFilesystemByFormat(Format);
+                    if ((FsPlugin != null) && FsPlugin.SupportWrite && !FsPlugin.CheckFilesystem(Fs))
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot store as {Format} image: filesystem contains data the format cannot represent!");
+
                     if (Writer.CheckFilesystem(Fs))
                     {
                         Writer.WriteFs(Fs);

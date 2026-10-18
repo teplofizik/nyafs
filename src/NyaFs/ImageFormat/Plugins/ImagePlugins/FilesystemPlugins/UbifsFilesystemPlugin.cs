@@ -65,5 +65,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             var Ubi = new Filesystem.UbiFs.UbiFsBuilder(Ubifs, PebSize, PageSize) { VolumeName = "rootfs" };
             return new Elements.Fs.Writer.BaseFsWriter(Ubi);
         }
+
+        /// <summary>UBIFS stores dent names up to 255 bytes.</summary>
+        public override bool CheckFilesystem(Elements.Fs.LinuxFilesystem Fs) => CheckNameLength(Fs, 255);
     }
 }

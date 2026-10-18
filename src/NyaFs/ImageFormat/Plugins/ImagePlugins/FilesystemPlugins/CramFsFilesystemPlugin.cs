@@ -36,21 +36,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 
         public override bool CheckFilesystem(LinuxFilesystem Fs)
         {
-            List<uint> InvalidGid = new List<uint>();
-
-            IterateAllFilesystem(Fs, I =>
-            {
-                if (I.Group > 255)
-                    InvalidGid.Add(I.Group);
-            });
-
-            if (InvalidGid.Count > 0)
-            {
-                Log.Error(0, $"Filesystem containg group id which cannot be saved in cramfs image: {string.Join(", ", Array.ConvertAll(InvalidGid.ToArray(), G => $"{G}"))}");
-                return false;
-            }
-            else
-                return true;
+            // cramfs: gid is 8-bit, uid is 16-bit, dirent name length is 6 bits in 4-byte units (<= 252).
+            return CheckUidGid(Fs, 0xFFFF, 0xFF) && CheckNameLength(Fs, 252);
         }
     }
 }

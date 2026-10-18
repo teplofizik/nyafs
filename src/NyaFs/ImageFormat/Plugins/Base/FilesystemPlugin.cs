@@ -71,6 +71,54 @@ namespace NyaFs.ImageFormat.Plugins.Base
 
         public virtual bool CheckFilesystem(Elements.Fs.LinuxFilesystem Fs) => true;
 
+        /// <summary>
+        /// Verify that every item's uid/gid fits the target format; log the first violation.
+        /// </summary>
+        protected bool CheckUidGid(Elements.Fs.LinuxFilesystem Fs, uint MaxUid, uint MaxGid)
+        {
+            string Bad = null;
+
+            IterateAllFilesystem(Fs, I =>
+            {
+                if ((Bad == null) && (I.User > MaxUid)) Bad = $"user id {I.User}";
+                if ((Bad == null) && (I.Group > MaxGid)) Bad = $"group id {I.Group}";
+            });
+
+            if (Bad != null)
+            {
+                Log.Error(0, $"{Bad} cannot be saved in {Format} image");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Verify that every item's name (single path component) fits the target format.
+        /// </summary>
+        protected bool CheckNameLength(Elements.Fs.LinuxFilesystem Fs, int MaxLen)
+        {
+            string Bad = null;
+
+            IterateAllFilesystem(Fs, I =>
+            {
+                if (Bad == null)
+                {
+                    var Name = I.ShortFilename;
+                    if ((Name != "/") && (Encoding.UTF8.GetByteCount(Name) > MaxLen))
+                        Bad = Name;
+                }
+            });
+
+            if (Bad != null)
+            {
+                Log.Error(0, $"name '{Bad}' is too long for {Format} image (max {MaxLen} bytes)");
+                return false;
+            }
+
+            return true;
+        }
+
         protected void IterateAllFilesystem(Elements.Fs.LinuxFilesystem Fs, Action<Filesystem.Universal.FilesystemItem> OnItem)
         {
             IterateDirectory(Fs.Fs.Root, OnItem);

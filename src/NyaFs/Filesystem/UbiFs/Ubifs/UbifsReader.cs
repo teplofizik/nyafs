@@ -11,7 +11,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
     /// UBIFS reader: reads the superblock and master node, walks the indexing B-tree,
     /// collects inode / dent / data nodes and exposes them as a filesystem.
     /// </summary>
-    public class UbifsReader : IFilesystemReader
+    public class UbifsReader : IFilesystemReader, IRootFsInfo
     {
         public readonly UbiFsReader Ubi;
         public readonly UbiVolume Volume;
@@ -144,6 +144,21 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         };
 
         private UbifsNode Inode(uint Inum) => InodeByInum.TryGetValue(Inum, out var N) ? N : null;
+
+        public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
+        {
+            var N = Inode(RootInum);
+            if (N == null)
+            {
+                User = Group = Mode = 0;
+                return false;
+            }
+
+            User = InoUid(N);
+            Group = InoGid(N);
+            Mode = InoMode(N) & 0xFFF;
+            return true;
+        }
 
         // ---- path resolution ----
 

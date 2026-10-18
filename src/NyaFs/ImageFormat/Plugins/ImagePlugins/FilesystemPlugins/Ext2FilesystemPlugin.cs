@@ -34,5 +34,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Ext2.Ext2FsBuilder(DetectFixDiskSize(Fs)));
 
         private uint DetectFixDiskSize(Elements.Fs.LinuxFilesystem Fs) => Convert.ToUInt32(Fs.GetContentSize() * 1.5).GetAligned(0x800000);
+
+        /// <summary>ext2/3 store uid/gid in 16-bit fields (ext4 high bits are not written here).</summary>
+        public override bool CheckFilesystem(Elements.Fs.LinuxFilesystem Fs) => CheckUidGid(Fs, 0xFFFF, 0xFFFF);
     }
 }

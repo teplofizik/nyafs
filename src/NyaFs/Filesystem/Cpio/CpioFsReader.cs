@@ -6,7 +6,7 @@ using System.Text;
 
 namespace NyaFs.Filesystem.Cpio
 {
-    public class CpioFsReader : RawPacket, Universal.IFilesystemReader
+    public class CpioFsReader : RawPacket, Universal.IFilesystemReader, Universal.IRootFsInfo
     {
         private readonly string ExpectedMagic;
         private List<Types.CpioNode> Nodes = new List<Types.CpioNode>();
@@ -49,6 +49,24 @@ namespace NyaFs.Filesystem.Cpio
                 return (Path[0] == '/') ? Path.Substring(1) : Path;
             else
                 return Path;
+        }
+
+        public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
+        {
+            foreach (var N in Nodes)
+            {
+                var P = UnifyPath(N.Path);
+                if ((P.Length == 0) || (P == "."))
+                {
+                    User = N.UserId;
+                    Group = N.GroupId;
+                    Mode = N.Mode & 0xFFF;
+                    return true;
+                }
+            }
+
+            User = Group = Mode = 0;
+            return false;
         }
 
         /// <summary>

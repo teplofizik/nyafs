@@ -31,5 +31,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 
         private uint DetectFixDiskSize(Elements.Fs.LinuxFilesystem Fs) =>
             Convert.ToUInt32(Fs.GetContentSize() * 2 + 0x100000).GetAligned(0x800000);
+
+        /// <summary>ext4 high uid/gid bits are not written by the builder, so 16-bit limit applies.</summary>
+        public override bool CheckFilesystem(Elements.Fs.LinuxFilesystem Fs) => CheckUidGid(Fs, 0xFFFF, 0xFFFF);
     }
 }

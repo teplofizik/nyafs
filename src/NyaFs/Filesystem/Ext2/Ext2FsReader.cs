@@ -7,7 +7,7 @@ using NyaIO.Data;
 
 namespace NyaFs.Filesystem.Ext2
 {
-    public class Ext2FsReader : Ext2FsBase, Universal.IFilesystemReader
+    public class Ext2FsReader : Ext2FsBase, Universal.IFilesystemReader, Universal.IRootFsInfo
     {
         public Ext2FsReader(byte[] Data) : base(Data) { }
 
@@ -206,8 +206,22 @@ namespace NyaFs.Filesystem.Ext2
                 if (N.NodeType == Types.ExtINodeType.DIR)
                     return N;
             }
-
             return null;
+        }
+
+        public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
+        {
+            var N = GetRootDir();
+            if (N == null)
+            {
+                User = Group = Mode = 0;
+                return false;
+            }
+
+            User = N.UID;
+            Group = N.GID;
+            Mode = N.Mode & 0xFFF;
+            return true;
         }
     }
 }

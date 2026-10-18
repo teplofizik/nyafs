@@ -7,7 +7,7 @@ using System.Text;
 
 namespace NyaFs.Filesystem.CramFs
 {
-    class CramFsReader : RawPacket, IFilesystemReader
+    class CramFsReader : RawPacket, IFilesystemReader, IRootFsInfo
     {
         private int BlockSize = 4096;
         private Types.CrSuperblock Superblock;
@@ -29,6 +29,21 @@ namespace NyaFs.Filesystem.CramFs
         }
 
         private Types.CrNode GetRootNode() => new Types.CrNode(Raw, 0x40);
+
+        public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
+        {
+            var N = GetRootNode();
+            if (N == null)
+            {
+                User = Group = Mode = 0;
+                return false;
+            }
+
+            User = N.UId;
+            Group = N.GId;
+            Mode = N.Mode & 0xFFF;
+            return true;
+        }
 
         public CramFsReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename))
         {

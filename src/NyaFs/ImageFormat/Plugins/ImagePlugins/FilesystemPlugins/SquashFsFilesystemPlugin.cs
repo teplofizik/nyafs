@@ -32,5 +32,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         /// <returns></returns>
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(Elements.Fs.LinuxFilesystem Fs) =>
             new Elements.Fs.Writer.BaseFsWriter(new Filesystem.SquashFs.SquashFsBuilder(Fs.SquashFsCompression));
+
+        /// <summary>squashfs stores names up to 255 bytes.</summary>
+        public override bool CheckFilesystem(Elements.Fs.LinuxFilesystem Fs) => CheckNameLength(Fs, 255);
     }
 }

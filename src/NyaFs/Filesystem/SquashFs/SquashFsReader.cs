@@ -8,7 +8,7 @@ using NyaIO.Data;
 
 namespace NyaFs.Filesystem.SquashFs
 {
-    public class SquashFsReader : RawPacket, Universal.IFilesystemReader
+    public class SquashFsReader : RawPacket, Universal.IFilesystemReader, Universal.IRootFsInfo
     {
         private Compression.BaseCompressor Comp;
         private Dictionary<long, byte[]> MetadataTable = new Dictionary<long, byte[]>();
@@ -148,6 +148,21 @@ namespace NyaFs.Filesystem.SquashFs
         }
 
         private Types.Nodes.BasicDirectory GetRootDir() => GetNode(Superblock.RootINodeRef) as Types.Nodes.BasicDirectory;
+
+        public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
+        {
+            var R = GetRootDir();
+            if (R == null)
+            {
+                User = Group = Mode = 0;
+                return false;
+            }
+
+            User = GetUID(R.UidIndex);
+            Group = GetGID(R.GidIndex);
+            Mode = R.Permissions & 0xFFF;
+            return true;
+        }
 
         private Types.SqInode GetNode(Types.SqMetadataRef Ref)
         {

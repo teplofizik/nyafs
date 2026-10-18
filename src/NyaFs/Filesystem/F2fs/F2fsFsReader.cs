@@ -21,6 +21,7 @@ namespace NyaFs.Filesystem.F2fs
 
         // f2fs_dentry_block geometry (4K page, f2fs constants)
         private const int NR_DENTRY = 214;
+        private const int NR_INLINE_DENTRY = 182;
         private const int DENTRY_SIZE = 11;
         private const int SLOT_LEN = 8;
         private const int DENTRY_BITMAP = 27;
@@ -33,8 +34,9 @@ namespace NyaFs.Filesystem.F2fs
         private const int INO_ADDR = 0x168;      // i_addr[]
         private const int INO_NID = 0xFD4;       // i_nid[]
 
-        private const byte INLINE_DATA = 0x01;
-        private const byte INLINE_DENTRY = 0x02;
+        private const byte INLINE_XATTR = 0x01;
+        private const byte INLINE_DATA = 0x02;
+        private const byte INLINE_DENTRY = 0x04;
 
         public F2fsFsReader(byte[] Data)
         {
@@ -103,6 +105,38 @@ namespace NyaFs.Filesystem.F2fs
             public FilesystemItemType Type;
         }
 
+        private List<DEntry> ParseDentries(byte[] Data, int BitmapBase, int EntryBase, int NameBase, int Count)
+        {
+            var Res = new List<DEntry>();
+            for (int i = 0; i < Count; i++)
+            {
+                if (((Data[BitmapBase + i / 8] >> (i % 8)) & 1) == 0)
+                    continue;
+
+                int Off = EntryBase + i * DENTRY_SIZE;
+                if (Off + DENTRY_SIZE > Data.Length)
+                    break;
+
+                uint Ino = U32(Data, Off + 4);
+                int NameLen = (int)U16(Data, Off + 8);
+                byte Ft = Data[Off + 10];
+                if ((NameLen <= 0) || (NameLen > 255))
+                    continue;
+
+                int NameOff = NameBase + i * SLOT_LEN;
+                if (NameOff + NameLen > Data.Length)
+                    continue;
+
+                var Name = Encoding.UTF8.GetString(Data, NameOff, NameLen);
+                if ((Name == ".") || (Name == ".."))
+                    continue;
+
+                Res.Add(new DEntry { Name = Name, Ino = Ino, Type = TypeOf(Ft) });
+            }
+
+            return Res;
+        }
+
         private List<DEntry> ReadDentries(uint Inum)
         {
             var Node = ReadNode(Inum);
@@ -115,7 +149,13 @@ namespace NyaFs.Filesystem.F2fs
 
             byte Inline = Node[INO_INLINE];
             if ((Inline & INLINE_DENTRY) != 0)
-                return new List<DEntry>();      // inline dentry not parsed yet
+            {
+                // inline dentry lives at i_addr+4, normal dentry layout but with NR_INLINE_DENTRY slots
+                int BitmapBase = INO_ADDR + 4;
+                int EntryBase = BitmapBase + DENTRY_BASE;
+                int NameBase = EntryBase + NR_INLINE_DENTRY * DENTRY_SIZE;
+                return ParseDentries(Node, BitmapBase, EntryBase, NameBase, NR_INLINE_DENTRY);
+            }
 
             uint Addr0 = U32(Node, INO_ADDR);
             if (Addr0 < Superblock.MainBlkaddr)
@@ -125,31 +165,7 @@ namespace NyaFs.Filesystem.F2fs
             if (Data == null)
                 return new List<DEntry>();
 
-            var Res = new List<DEntry>();
-            for (int i = 0; i < NR_DENTRY; i++)
-            {
-                if (((Data[i / 8] >> (i % 8)) & 1) == 0)
-                    continue;
-
-                int Off = DENTRY_BASE + i * DENTRY_SIZE;
-                uint Ino = U32(Data, Off + 4);
-                int NameLen = (int)U16(Data, Off + 8);
-                byte Ft = Data[Off + 10];
-                if ((NameLen <= 0) || (NameLen > 255))
-                    continue;
-
-                int NameOff = DENTRY_BASE + NR_DENTRY * DENTRY_SIZE + i * SLOT_LEN;
-                if (NameOff + NameLen > Data.Length)
-                    continue;
-
-                var Name = Encoding.UTF8.GetString(Data, NameOff, NameLen);
-                if ((Name == ".") || (Name == ".."))
-                    continue;
-
-                Res.Add(new DEntry { Name = Name, Ino = Ino, Type = TypeOf(Ft) });
-            }
-
-            return Res;
+            return ParseDentries(Data, 0, DENTRY_BASE, DENTRY_BASE + NR_DENTRY * DENTRY_SIZE, NR_DENTRY);
         }
 
         private bool Resolve(string Path, out uint Inum)
@@ -226,22 +242,47 @@ namespace NyaFs.Filesystem.F2fs
                 return null;
             if ((U16(Node, INO_MODE) & 0xF000) != 0x8000)
                 return null;
-            if ((Node[INO_INLINE] & INLINE_DATA) != 0)
-                return null;                    // inline data not parsed yet
 
             long Size = Convert.ToInt64(U64(Node, INO_SIZE));
             if (Size <= 0)
                 return new byte[0];
 
+            byte Inline = Node[INO_INLINE];
+            if ((Inline & INLINE_DATA) != 0)
+            {
+                int DataOff = INO_ADDR + (((Inline & INLINE_XATTR) != 0) ? 4 : 0);
+                int Len = (int)Math.Min(Size, Node.Length - DataOff);
+                var Inl = new byte[Len];
+                Array.Copy(Node, DataOff, Inl, 0, Len);
+                return Inl;
+            }
+
+            var All = new List<uint>();
+            int AddrPerInode = (BlockSize - INO_ADDR) / 4;
+            for (int i = 0; i < AddrPerInode; i++)
+                All.Add(U32(Node, INO_ADDR + i * 4));
+
+            uint DNid = U32(Node, INO_NID);
+            if (DNid != 0)
+            {
+                var DN = ReadNode(DNid);
+                if (DN != null)
+                {
+                    int AddrPerBlock = (BlockSize - 24) / 4;
+                    for (int i = 0; i < AddrPerBlock; i++)
+                        All.Add(U32(DN, i * 4));
+                }
+            }
+
             var Res = new byte[Size];
             long Done = 0;
-            int AddrPerBlock = (BlockSize - 24) / 4;
-
-            for (int i = 0; (i < 923) && (Done < Size); i++)
+            foreach (var Blk in All)
             {
-                uint Blk = U32(Node, INO_ADDR + i * 4);
+                if (Done >= Size)
+                    break;
                 if (Blk < Superblock.MainBlkaddr)
                     continue;
+
                 var Data = ReadBlockRaw(Blk);
                 if (Data == null)
                     continue;
@@ -254,7 +295,30 @@ namespace NyaFs.Filesystem.F2fs
             return Res;
         }
 
-        public string ReadLink(string Path) => null;
+        public string ReadLink(string Path)
+        {
+            if (!Resolve(Path, out uint Inum))
+                return null;
+
+            var Node = ReadNode(Inum);
+            if (Node == null)
+                return null;
+            if ((U16(Node, INO_MODE) & 0xF000) != 0xA000)
+                return null;
+
+            long Size = Convert.ToInt64(U64(Node, INO_SIZE));
+            byte Inline = Node[INO_INLINE];
+
+            if ((Inline & INLINE_DATA) != 0)
+            {
+                int DataOff = INO_ADDR + (((Inline & INLINE_XATTR) != 0) ? 4 : 0);
+                int Len = (int)Math.Min(Size, Node.Length - DataOff);
+                return Encoding.UTF8.GetString(Node, DataOff, Len);
+            }
+
+            var Data = Read(Path);
+            return (Data == null) ? null : Encoding.UTF8.GetString(Data);
+        }
 
         public DeviceInfo ReadDevice(string Path) => null;
     }

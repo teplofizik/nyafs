@@ -50,8 +50,12 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             public int PnodeSz;
             public int NnodeSz;
             public int LtabSz;
+            public int LsaveSz;
 
-            public static Geometry Calc(int LebSize, int LebCnt, int MaxLebCnt, int MainLebs, int MainFirst, int LptLebs, int LptFirst, bool BigLpt)
+            /// <summary>Estimated LPT size in bytes incl. per-LEB wastage (mbifs do_calc_lpt_geom).</summary>
+            public long LptSz;
+
+            public static Geometry Calc(int LebSize, int LebCnt, int MaxLebCnt, int MainLebs, int MainFirst, int LptLebs, int LptFirst, bool BigLpt, int LsaveCnt, int MinIo)
             {
                 var G = new Geometry
                 {
@@ -88,8 +92,44 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                 bits = CRC_BITS + TYPE_BITS + LptLebs * G.LptSpcBits * 2;
                 G.LtabSz = (bits + 7) / 8;
 
+                bits = CRC_BITS + TYPE_BITS + G.LnumBits * LsaveCnt;
+                G.LsaveSz = (bits + 7) / 8;
+
+                // do_calc_lpt_geom: minimum LPT size plus per-LEB wastage estimate
+                long sz = (long)G.PnodeCnt * G.PnodeSz + (long)G.NnodeCnt * G.NnodeSz + G.LtabSz;
+                if (BigLpt)
+                    sz += G.LsaveSz;
+
+                int perLebWastage = Math.Max(G.PnodeSz, G.NnodeSz);
+                long cur = sz + perLebWastage;
+                long totWastage = perLebWastage;
+                while (cur > LebSize)
+                {
+                    cur += perLebWastage;
+                    cur -= LebSize;
+                    totWastage += perLebWastage;
+                }
+                totWastage += ((cur + MinIo - 1) / MinIo) * MinIo - cur;
+                G.LptSz = sz + totWastage;
+
                 return G;
             }
+        }
+
+        /// <summary>ubifs_calc_nnode_num: node number from (row, col), root = 1.</summary>
+        public static int CalcNnodeNum(int Row, int Col)
+        {
+            int num = 1;
+
+            while (Row-- > 0)
+            {
+                int bits = Col & (FANOUT - 1);
+                Col >>= FANOUT_SHIFT;
+                num <<= FANOUT_SHIFT;
+                num |= bits;
+            }
+
+            return num;
         }
 
         public static int DivRoundUp(int a, int b) => (a + b - 1) / b;
@@ -163,6 +203,18 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             }
             W.Flush();
             return Finish(Buf, G.LtabSz);
+        }
+
+        /// <summary>Pack the LPT save table (big model): lsave_cnt LEB numbers of lnum_bits each.</summary>
+        public static byte[] PackLsave(Geometry G, int[] Lsave)
+        {
+            var Buf = new byte[G.LsaveSz];
+            var W = new BitWriter(Buf, CRC_BYTES);
+            W.Put(LSAVE, TYPE_BITS);
+            for (int i = 0; i < Lsave.Length; i++)
+                W.Put(Lsave[i], G.LnumBits);
+            W.Flush();
+            return Finish(Buf, G.LsaveSz);
         }
 
         /// <summary>Compute crc16 over bytes [2..len) and store it as the first 2 bytes (LE).</summary>

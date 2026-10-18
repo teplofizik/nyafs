@@ -41,6 +41,12 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         /// <summary>Compression applied to regular file data nodes (and the superblock default).</summary>
         public UbifsCompression Compression = UbifsCompression.None;
 
+        /// <summary>Was the image built with the big LPT model (set by GetFilesystemImage).</summary>
+        public bool BigLptBuilt { get; private set; }
+
+        /// <summary>Number of LPT LEBs used (set by GetFilesystemImage).</summary>
+        public int LptLebsBuilt { get; private set; }
+
         public byte[] Uuid = new byte[16];
 
         /// <summary>Fixed timestamp (unix seconds) written into every node.</summary>
@@ -341,6 +347,9 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             if (Root == null)
                 throw new InvalidOperationException("No root directory: call Directory(\"/\", ...) first");
 
+            if (LebSize <= 0x30 + 0x1000)
+                throw new InvalidOperationException("UBIFS: LEB size must exceed the maximum data node size (0x30 + 4096)");
+
             // 1. assign inode numbers and generate the real nodes
             uint Next = FirstIno;
             AssignInums(Root, ref Next);
@@ -351,21 +360,36 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
 
             Real.Sort((A, B) => (A.W0 != B.W0) ? A.W0.CompareTo(B.W0) : A.W1.CompareTo(B.W1));
 
-            // 2. compute the index tree node sizes and how many index LEBs are needed
-            uint MainFirst = 1 + 2 + LogLebs + LptLebs + OrphLebs;
+            // 2. index tree sizes, then select the LPT geometry (small/big model + LPT LEB count)
             uint LptFirst = 1 + 2 + LogLebs;
+
             int IndexLebs = CountIndexLebs(Real.Count);
             int RealLebs = CountRealLebs(Real);
+            int FixedMain = RealLebs + 1 + IndexLebs;                  // real data + gc + index
+            int BaseLebs = 1 + 2 + (int)LogLebs + (int)OrphLebs;       // SB + MST + log + orph
 
-            int Required = (int)MainFirst + RealLebs + 1 + IndexLebs;
+            int Total = Math.Max(LebCnt, BaseLebs + (int)LptLebs + FixedMain);
+            int LptLebsSelected = (int)LptLebs;
+            bool BigLpt = false;
+            UbifsLpt.Geometry Geom = null;
 
-            // kernel validate_sb: min_leb_cnt = SB + MST + log + lpt + orph + (jhead + NONDATA_JHEADS_CNT) + 6
-            int MinLebCnt = 1 + 2 + (int)LogLebs + (int)LptLebs + (int)OrphLebs + ((int)JheadCnt + 2) + 6;
-            if (Required < MinLebCnt)
-                Required = MinLebCnt;
+            for (int Iter = 0; Iter < 16; Iter++)
+            {
+                SelectLpt(Total, (int)LptFirst, out LptLebsSelected, out BigLpt, out Geom);
 
-            if (LebCnt < Required)
-                LebCnt = Required;
+                int MinForJheads = 1 + 2 + (int)LogLebs + LptLebsSelected + (int)OrphLebs + ((int)JheadCnt + 2) + 6;
+                int MinForMain = BaseLebs + LptLebsSelected + 9;       // UBIFS_MIN_MAIN_LEBS
+                int Min = Math.Max(BaseLebs + LptLebsSelected + FixedMain, Math.Max(MinForJheads, MinForMain));
+
+                if (Total < Min) { Total = Min; continue; }
+                if (Total < LebCnt) { Total = LebCnt; continue; }
+                break;
+            }
+
+            LebCnt = Total;
+            BigLptBuilt = BigLpt;
+            LptLebsBuilt = LptLebsSelected;
+            uint MainFirst = (uint)(BaseLebs + LptLebsSelected);
 
             int IndexFirst = LebCnt - IndexLebs;
             int GcLnum = IndexFirst - 1;
@@ -449,13 +473,13 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             // 5. superblock / master / LPT
             var Props = ComputeLprops(Lebs, Ends, (int)MainFirst, IndexFirst, IndexLebs);
 
-            var Lpt = BuildLpt(Lebs, (int)LptFirst, (int)MainFirst, Props);
+            var Lpt = BuildLpt(Lebs, Geom, Props);
 
             int MainLebs = LebCnt - (int)MainFirst;
 
             var Sb = UbifsNodeWriter.Superblock((uint)MinIoSize, (uint)LebSize, (uint)LebCnt, (uint)LebCnt,
-                (ulong)LebSize * (ulong)Math.Min(15, MainLebs), LogLebs, LptLebs, OrphLebs, JheadCnt, Fanout, LsaveCnt,
-                (ushort)Compression, Uuid, Sqnum++);
+                (ulong)LebSize * (ulong)Math.Min(15, MainLebs), LogLebs, (uint)LptLebsSelected, OrphLebs, JheadCnt, Fanout, LsaveCnt,
+                (ushort)Compression, BigLpt ? 0x02u /*UBIFS_FLG_BIGLPT*/ : 0u, Uuid, Sqnum++);
             Array.Copy(Sb, 0, Lebs[0], 0, Sb.Length);
 
             // log head: a commit start node (the log is otherwise empty)
@@ -484,10 +508,10 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                 (uint)RootIdx.Lnum, (uint)RootIdx.Offs, (uint)RootIdx.Data.Length, (uint)GcLnum,
                 (uint)RootIdx.Lnum, (uint)IheadOffs, IndexSize,
                 TotalFree, TotalDirty, TotalUsed, TotalDead, 0,
-                (uint)LptFirst, (uint)Lpt.LptOffs,
-                (uint)LptFirst, (uint)Lpt.NheadOffs,
-                (uint)LptFirst, (uint)Lpt.LtabOffs,
-                0xFFFFFFFF, 0xFFFFFFFF,
+                (uint)Lpt.LptLnum, (uint)Lpt.LptOffs,
+                (uint)Lpt.NheadLnum, (uint)Lpt.NheadOffs,
+                (uint)Lpt.LtabLnum, (uint)Lpt.LtabOffs,
+                (uint)Lpt.LsaveLnum, (uint)Lpt.LsaveOffs,
                 (uint)MainFirst,
                 (uint)EmptyLebs, (uint)IndexLebs, (uint)LebCnt, Sqnum++);
 
@@ -624,94 +648,187 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
 
         private class LptResult
         {
-            public int LptOffs;
-            public int NheadOffs;
-            public int LtabOffs;
+            public int LptLnum, LptOffs;
+            public int NheadLnum, NheadOffs;
+            public int LtabLnum, LtabOffs;
+            public int LsaveLnum, LsaveOffs;
         }
 
-        private LptResult BuildLpt(byte[][] Lebs, int LptFirst, int MainFirst, List<Lp> Props)
+        /// <summary>
+        /// ubifs_calc_dflt_lpt_geom: pick the LPT model (small/big) and the number of LPT LEBs.
+        /// </summary>
+        private void SelectLpt(int TotalLebCnt, int LptFirst, out int LptLebsOut, out bool BigLptOut, out UbifsLpt.Geometry G)
         {
-            int MainLebs = LebCnt - MainFirst;
-            var G = UbifsLpt.Geometry.Calc(LebSize, LebCnt, LebCnt, MainLebs, MainFirst, (int)LptLebs, LptFirst, false);
+            int MainTotal = TotalLebCnt - (1 + 2 + (int)LogLebs + (int)OrphLebs);   // main + lpt
+            int lptLebs = (int)LptLebs;
+            int mainLebs = MainTotal - lptLebs;
+            if (mainLebs <= 0)
+                throw new InvalidOperationException("UBIFS: not enough LEBs for the LPT area");
 
-            int PnodeCnt = G.PnodeCnt;
-            int Height = G.LptHght;
+            bool big = false;
+            int mainFirst = 1 + 2 + (int)LogLebs + lptLebs + (int)OrphLebs;
+            G = UbifsLpt.Geometry.Calc(LebSize, TotalLebCnt, TotalLebCnt, mainLebs, mainFirst, lptLebs, LptFirst, big, (int)LsaveCnt, MinIoSize);
 
-            // node counts/offsets per nnode level (1 = directly above pnodes, Height = root)
-            var LevelCnt = new int[Height + 1];
-            var LevelOff = new int[Height + 1];
-            int Off = PnodeCnt * G.PnodeSz;
-            int Prev = PnodeCnt;
-
-            for (int L = 1; L <= Height; L++)
+            // Small LPT model must have lpt_sz < leb_size, otherwise switch to the big model
+            if (G.LptSz > LebSize)
             {
-                int Cnt = UbifsLpt.DivRoundUp(Prev, UbifsLpt.FANOUT);
-                LevelCnt[L] = Cnt;
-                LevelOff[L] = Off;
-                Off += Cnt * G.NnodeSz;
-                Prev = Cnt;
+                big = true;
+                G = UbifsLpt.Geometry.Calc(LebSize, TotalLebCnt, TotalLebCnt, mainLebs, mainFirst, lptLebs, LptFirst, big, (int)LsaveCnt, MinIoSize);
             }
 
-            if (Off + G.LtabSz > LebSize)
-                throw new InvalidOperationException("UBIFS LPT does not fit into a single LPT LEB");
+            for (int i = 0; i < 64; i++)
+            {
+                long sz = G.LptSz * 4;                 // allow 4x the size
+                int Needed = (int)((sz + LebSize - 1) / LebSize);
+                if (Needed > lptLebs)
+                {
+                    lptLebs = Needed;
+                    mainLebs = MainTotal - lptLebs;
+                    if (mainLebs <= 0)
+                        throw new InvalidOperationException("UBIFS: not enough LEBs for the LPT area");
+                    mainFirst = 1 + 2 + (int)LogLebs + lptLebs + (int)OrphLebs;
+                    G = UbifsLpt.Geometry.Calc(LebSize, TotalLebCnt, TotalLebCnt, mainLebs, mainFirst, lptLebs, LptFirst, big, (int)LsaveCnt, MinIoSize);
+                    continue;
+                }
+                break;
+            }
 
-            var Area = Lebs[LptFirst];
+            if (G.LtabSz > LebSize)
+                throw new InvalidOperationException("UBIFS: LPT ltab too big");
+
+            LptLebsOut = lptLebs;
+            BigLptOut = big;
+        }
+
+        /// <summary>
+        /// Lay out the LPT area: pnodes, nnodes (bottom-up), root, [lsave], ltab - packed
+        /// contiguously across the LPT LEBs, flushing to the next LEB when a node does not fit.
+        /// </summary>
+        private LptResult BuildLpt(byte[][] Lebs, UbifsLpt.Geometry G, List<Lp> Props)
+        {
+            int LptFirst = G.LptFirst;
+            int LptLebs = G.LptLebs;
+
+            var Result = new LptResult();
+            var Ltab = new (int Free, int Dirty)[LptLebs];
+            for (int i = 0; i < LptLebs; i++)
+                Ltab[i] = (LebSize, 0);
+
+            int lnum = LptFirst;
+            int off = 0;
+
+            void CloseLeb()
+            {
+                int A = Align(off, MinIoSize);
+                Ltab[lnum - LptFirst] = (LebSize - A, A - off);
+            }
+
+            void Ensure(int Size)
+            {
+                if (off + Size > LebSize)
+                {
+                    CloseLeb();
+                    lnum++;
+                    off = 0;
+                }
+                if (lnum >= LptFirst + LptLebs)
+                    throw new InvalidOperationException("UBIFS: LPT area overflow");
+            }
 
             // pnodes
-            var PnodeOff = new int[PnodeCnt];
-            for (int p = 0; p < PnodeCnt; p++)
+            var PnodePos = new (int Lnum, int Offs)[G.PnodeCnt];
+            for (int p = 0; p < G.PnodeCnt; p++)
             {
-                PnodeOff[p] = p * G.PnodeSz;
+                Ensure(G.PnodeSz);
+
                 var Group = new UbifsLpt.Lprops[UbifsLpt.FANOUT];
                 for (int i = 0; i < UbifsLpt.FANOUT; i++)
                 {
                     int idx = p * UbifsLpt.FANOUT + i;
-                    if (idx < Props.Count)
-                        Group[i] = new UbifsLpt.Lprops { Free = Props[idx].Free, Dirty = Props[idx].Dirty, Flags = Props[idx].Index ? UbifsLpt.LPROPS_INDEX : 0 };
-                    else
-                        Group[i] = new UbifsLpt.Lprops { Free = LebSize, Dirty = 0, Flags = 0 };
+                    Group[i] = (idx < Props.Count)
+                        ? new UbifsLpt.Lprops { Free = Props[idx].Free, Dirty = Props[idx].Dirty, Flags = Props[idx].Index ? UbifsLpt.LPROPS_INDEX : 0 }
+                        : new UbifsLpt.Lprops { Free = LebSize, Dirty = 0, Flags = 0 };
                 }
+
                 var Node = UbifsLpt.PackPnode(G, p, Group);
-                Array.Copy(Node, 0, Area, PnodeOff[p], Node.Length);
+                Array.Copy(Node, 0, Lebs[lnum], off, Node.Length);
+                PnodePos[p] = (lnum, off);
+                off += G.PnodeSz;
             }
 
-            // nnodes, bottom-up levels, root is the single node of the last level
-            for (int L = 1; L <= Height; L++)
-            {
-                int Cnt = LevelCnt[L];
-                int ChildBase = (L == 1) ? 0 : LevelOff[L - 1];
-                int ChildCnt = (L == 1) ? PnodeCnt : LevelCnt[L - 1];
-                int ChildSz = (L == 1) ? G.PnodeSz : G.NnodeSz;
+            // nnodes, one level at a time, bottom-up; the last level is the root
+            var Below = PnodePos;
+            int BelowCnt = G.PnodeCnt;
 
+            for (int Row = G.LptHght - 1; Row >= 0; Row--)
+            {
+                int Cnt = UbifsLpt.DivRoundUp(BelowCnt, UbifsLpt.FANOUT);
+                if (Cnt == 0)
+                    Cnt = 1;
+
+                var Cur = new (int Lnum, int Offs)[Cnt];
                 for (int k = 0; k < Cnt; k++)
                 {
+                    Ensure(G.NnodeSz);
+
+                    if (Row == 0)
+                    {
+                        Result.LptLnum = lnum;
+                        Result.LptOffs = off;
+                    }
+
                     var Br = new (int, int)[UbifsLpt.FANOUT];
                     for (int i = 0; i < UbifsLpt.FANOUT; i++)
                     {
                         int c = k * UbifsLpt.FANOUT + i;
-                        Br[i] = (c < ChildCnt) ? (LptFirst, ChildBase + c * ChildSz) : (0, 0);
+                        Br[i] = (c < BelowCnt) ? Below[c] : (0, 0);
                     }
 
-                    var Node = UbifsLpt.PackNnode(G, k, Br);
-                    Array.Copy(Node, 0, Area, LevelOff[L] + k * G.NnodeSz, Node.Length);
+                    var Node = UbifsLpt.PackNnode(G, UbifsLpt.CalcNnodeNum(Row, k), Br);
+                    Array.Copy(Node, 0, Lebs[lnum], off, Node.Length);
+                    Cur[k] = (lnum, off);
+                    off += G.NnodeSz;
                 }
+
+                Below = Cur;
+                BelowCnt = Cnt;
             }
 
-            int RootOff = LevelOff[Height];
+            // lsave (big model only)
+            if (G.BigLpt)
+            {
+                Ensure(G.LsaveSz);
 
-            // ltab: properties of the LPT LEBs themselves
-            int LtabOff = RootOff + G.NnodeSz;
-            int Used = LtabOff + G.LtabSz;
-            var Ltab = new (int Free, int Dirty)[(int)LptLebs];
-            int LFree = LebSize - Align(Used, MinIoSize);
-            Ltab[0] = (LFree, Align(Used, MinIoSize) - Used);
-            for (int i = 1; i < (int)LptLebs; i++)
-                Ltab[i] = (LebSize, 0);
+                Result.LsaveLnum = lnum;
+                Result.LsaveOffs = off;
+
+                var Lsave = new int[(int)LsaveCnt];
+                int i = 0;
+                for (; (i < (int)LsaveCnt) && (i < G.MainLebs); i++)
+                    Lsave[i] = G.MainFirst + i;
+                for (; i < (int)LsaveCnt; i++)
+                    Lsave[i] = G.MainFirst;
+
+                var Node = UbifsLpt.PackLsave(G, Lsave);
+                Array.Copy(Node, 0, Lebs[lnum], off, Node.Length);
+                off += G.LsaveSz;
+            }
+
+            // ltab (packed after its own LEB entry is finalised)
+            Ensure(G.LtabSz);
+
+            Result.LtabLnum = lnum;
+            Result.LtabOffs = off;
+            off += G.LtabSz;
+            CloseLeb();
 
             var LtabBytes = UbifsLpt.PackLtab(G, Ltab);
-            Array.Copy(LtabBytes, 0, Area, LtabOff, LtabBytes.Length);
+            Array.Copy(LtabBytes, 0, Lebs[Result.LtabLnum], Result.LtabOffs, LtabBytes.Length);
 
-            return new LptResult { LptOffs = RootOff, NheadOffs = Align(Used, MinIoSize), LtabOffs = LtabOff };
+            Result.NheadLnum = lnum;
+            Result.NheadOffs = Align(off, MinIoSize);
+
+            return Result;
         }
     }
 }

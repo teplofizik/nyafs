@@ -168,13 +168,13 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         public static byte[] Superblock(uint MinIoSize, uint LebSize, uint LebCnt, uint MaxLebCnt,
                                         ulong MaxBudBytes, uint LogLebs, uint LptLebs, uint OrphLebs,
                                         uint JheadCnt, uint Fanout, uint LsaveCnt, ushort DefaultCompr,
-                                        byte[] Uuid, ulong Sqnum)
+                                        uint Flags, byte[] Uuid, ulong Sqnum)
         {
             var N = new byte[SbNodeSize];
 
             N[0x1A] = 0;                              // key_hash = R5
             N[0x1B] = 0;                              // key_fmt = simple
-            WriteLE32(N, 0x1C, 0);                    // flags
+            WriteLE32(N, 0x1C, Flags);               // sup_flags
             WriteLE32(N, 0x20, MinIoSize);
             WriteLE32(N, 0x24, LebSize);
             WriteLE32(N, 0x28, LebCnt);

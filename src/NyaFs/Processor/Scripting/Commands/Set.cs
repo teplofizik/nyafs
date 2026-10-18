@@ -42,7 +42,7 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "ubifs.compression", "size" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "ubifs.compression", "fat.type", "size" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
                         Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, ubifs.compression, size");
@@ -182,6 +182,23 @@ namespace NyaFs.Processor.Scripting.Commands
                             catch (Exception)
                             {
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid size: {Value}!");
+                            }
+                        }
+                    case "fat.type":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set fat type to non-ramfs image!");
+
+                            try
+                            {
+                                var Fs = Processor.GetFs();
+                                Fs.FatType = ParseFatType(Value);
+
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set fat type ok: {Value}!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown fat type: {Value}!");
                             }
                         }
                     case "squashfs.compression":
@@ -382,6 +399,19 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "zstd": return Filesystem.SquashFs.Types.SqCompressionType.Zstd;
                     default:
                         throw new ArgumentException("Unsupported compression type");
+                }
+            }
+
+            int ParseFatType(string FatType)
+            {
+                switch (FatType.ToLower())
+                {
+                    case "auto": return 0;
+                    case "fat12": return 12;
+                    case "fat16": return 16;
+                    case "fat32": return 32;
+                    default:
+                        throw new ArgumentException("Unsupported fat type");
                 }
             }
 

@@ -17,6 +17,7 @@ namespace NyaFs.ImageFormat.Types
         Tar,
         LittleFs,
         Spiffs,
-        UbiFs
+        UbiFs,
+        Fat
     }
 }

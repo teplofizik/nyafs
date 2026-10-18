@@ -31,7 +31,8 @@ namespace NyaFs.ImageFormat.Plugins
             new SquashFsFilesystemPlugin(),
             new CImgFilesystemPlugin(),
             new TarFilesystemPlugin(),
-            new UbifsFilesystemPlugin()
+            new UbifsFilesystemPlugin(),
+            new FatFilesystemPlugin()
         };
 
         public static readonly Base.KernelPlugin[] Kernels = new Base.KernelPlugin[]

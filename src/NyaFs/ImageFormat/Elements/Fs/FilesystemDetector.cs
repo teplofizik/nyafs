@@ -51,6 +51,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
                 (Raw[260] == (byte)'a') && (Raw[261] == (byte)'r'))
                 return Types.FsType.Tar;
 
+            if (Filesystem.Fat.FatDetector.IsFat(Raw))
+                return Types.FsType.Fat;
+
             return Types.FsType.Unknown;
         }
 
@@ -66,6 +69,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                 case Types.FsType.CramFs: return "CramFs";
                 case Types.FsType.RomFs: return "RomFs";
                 case Types.FsType.Tar: return "Tar";
+                case Types.FsType.Fat: return "Fat";
                 default: return "Unknown";
             }
         }

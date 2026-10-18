@@ -54,6 +54,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
             if (Filesystem.Fat.FatDetector.IsFat(Raw))
                 return Types.FsType.Fat;
 
+            if (Filesystem.F2fs.F2fsDetector.IsF2fs(Raw))
+                return Types.FsType.F2fs;
+
             return Types.FsType.Unknown;
         }
 
@@ -70,6 +73,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                 case Types.FsType.RomFs: return "RomFs";
                 case Types.FsType.Tar: return "Tar";
                 case Types.FsType.Fat: return "Fat";
+                case Types.FsType.F2fs: return "F2FS";
                 default: return "Unknown";
             }
         }

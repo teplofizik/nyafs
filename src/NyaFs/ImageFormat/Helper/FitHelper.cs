@@ -50,6 +50,7 @@ namespace NyaFs.ImageFormat.Helper
                 case Types.FsType.RomFs: return "romfs";
                 case Types.FsType.UbiFs: return "ubifs";
                 case Types.FsType.Fat: return "fat";
+                case Types.FsType.F2fs: return "f2fs";
                 case Types.FsType.Unknown:
                 default:
                     return "unknown";
@@ -69,6 +70,7 @@ namespace NyaFs.ImageFormat.Helper
                 case "romfs": return Types.FsType.RomFs;
                 case "ubifs": return Types.FsType.UbiFs;
                 case "fat": return Types.FsType.Fat;
+                case "f2fs": return Types.FsType.F2fs;
                 default: return Types.FsType.Unknown;
             }
         }

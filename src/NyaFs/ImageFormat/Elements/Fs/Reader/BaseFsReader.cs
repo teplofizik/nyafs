@@ -44,6 +44,8 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
         private void ImportDir(Filesystem.Universal.Items.Dir Dir, string Path)
         {
             var Elements = FsReader.ReadDir(Path);
+            if (Elements == null)
+                return;
 
             foreach (var E in Elements)
             {

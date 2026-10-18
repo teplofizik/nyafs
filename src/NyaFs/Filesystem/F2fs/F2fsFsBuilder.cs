@@ -6,14 +6,29 @@ using NyaIO.Data;
 namespace NyaFs.Filesystem.F2fs
 {
     /// <summary>
-    /// F2FS image builder (Milestone 1: empty, mountable filesystem, mkfs-like layout).
-    /// Writes superblock, checkpoint pack (compacted summaries + NAT/SIT journals + nat_bits),
-    /// NAT, root inode and root dentry. SIT/SSA areas are left zero.
+    /// F2FS image builder: empty filesystem (mkfs-like) and writing a directory tree
+    /// (inodes, dentry blocks, data blocks, direct-node blocks) with NAT/SIT/SSA/checkpoint.
     /// </summary>
     public class F2fsFsBuilder : Universal.IFilesystemBuilder
     {
         public const int BlockSize = 4096;
         public const int BlocksPerSeg = 512;
+
+        private const uint Magic = 0xF2F52010;
+        private const uint CpVersion = 1;
+        private const uint CpFlagUmount = 0x1;
+        private const int NatsPerBlock = 455;
+        private const int SitsPerBlock = 55;
+        private const int NatEntrySize = 9;
+        private const int SitEntrySize = 74;
+        private const int DentryCount = 214;
+        private const int DentryBase = 30;
+        private const int FilenameBase = 2384;
+        private const int AddrsPerInode = 923;
+        private const int AddrsPerBlock = 1018;
+        private const int InodeAddrOff = 0x168;
+        private const int InodeNidOff = 0xFD4;
+        private const int FooterOff = 0xFE8;
 
         public readonly long TotalBytes;
         public uint RootIno = 3;
@@ -22,21 +37,56 @@ namespace NyaFs.Filesystem.F2fs
         public uint ReservedSegments = 8;
         public uint OverprovisionSegments = 10;
 
-        // geometry
         private int Segment0Blkaddr;
         private int CpBlkaddr, SitBlkaddr, NatBlkaddr, SsaBlkaddr, MainBlkaddr;
         private int SectionCount, SegmentCount, SegCkpt, SegSit, SegNat, SegSsa, SegMain;
 
         private byte[] Image;
-        private uint CurNodeHot, CurNodeWarm, CurNodeCold;
-        private uint CurDataHot, CurDataWarm, CurDataCold;
+
+        private int NextFreeSeg;
+        private int NextFreeNid;
+        private readonly Dictionary<uint, long> Nat = new Dictionary<uint, long>();
+        private readonly Dictionary<uint, uint> NatIno = new Dictionary<uint, uint>();
+        private readonly Dictionary<int, SegData> SealedSegs = new Dictionary<int, SegData>();
+        private readonly Curseg[] Cursegs = new Curseg[6];
+        private int NodeBlocks;
+        private int DataBlocks;
+        private int InodeCount;
+
+        private class Summary
+        {
+            public uint Nid;
+            public byte Version;
+            public ushort Ofs;
+        }
+
+        private class SegData
+        {
+            public int Type;
+            public Summary[] Entries;
+        }
+
+        private class Curseg
+        {
+            public int Segno;
+            public int Blkoff;
+            public Summary[] Entries = new Summary[BlocksPerSeg];
+        }
 
         private class Node
         {
-            public string Name;
+            public string Name = "";
+            public Node Parent;
             public bool IsDir;
-            public byte[] Content;
+            public byte Type;
+            public uint Mode, Uid, Gid;
+            public byte[] Data;
+            public uint Rdev;
+            public uint Ino;
             public readonly List<Node> Children = new List<Node>();
+            public int DirLevel;
+            public int[] ChildBlock;
+            public int[] ChildSlot;
         }
 
         private Node Root;
@@ -45,25 +95,129 @@ namespace NyaFs.Filesystem.F2fs
         {
             this.TotalBytes = TotalBytes;
             ComputeGeometry();
+            for (int i = 0; i < 6; i++)
+                Cursegs[i] = new Curseg { Segno = i };
+            NextFreeSeg = 6;
+            NextFreeNid = (int)RootIno + 1;
         }
 
-        public void Directory(string Path, uint User, uint Group, uint Mode)
+        // ---- public tree API ----
+
+        public void Directory(string Path, uint User, uint Group, uint Mode) =>
+            GetOrCreate(Path, User, Group, Mode, 0x4000, null, 0);
+
+        public void File(string Path, byte[] Content, uint User, uint Group, uint Mode) =>
+            GetOrCreate(Path, User, Group, Mode, 0x8000, Content, 0);
+
+        public void SymLink(string Path, string Target, uint User, uint Group, uint Mode) =>
+            GetOrCreate(Path, User, Group, Mode, 0xA000, Encoding.UTF8.GetBytes(Target ?? ""), 0);
+
+        public void Char(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode) =>
+            GetOrCreate(Path, User, Group, Mode, 0x2000, null, EncodeDev(Major, Minor));
+
+        public void Block(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode) =>
+            GetOrCreate(Path, User, Group, Mode, 0x6000, null, EncodeDev(Major, Minor));
+
+        public void Fifo(string Path, uint User, uint Group, uint Mode) =>
+            GetOrCreate(Path, User, Group, Mode, 0x1000, null, 0);
+
+        public void Socket(string Path, uint User, uint Group, uint Mode) =>
+            GetOrCreate(Path, User, Group, Mode, 0xC000, null, 0);
+
+        private void GetOrCreate(string Path, uint User, uint Group, uint Mode, uint Type, byte[] Content, uint Rdev)
         {
-            if ((Path == "/") || (Path == ".") || (Path == "") || (Path == null))
+            EnsureRoot();
+            var Dir = ResolveParent(Path, out string Name);
+
+            if (Name.Length == 0)
             {
-                if (Root == null)
-                    Root = new Node { Name = "", IsDir = true };
+                Root.Uid = User;
+                Root.Gid = Group;
+                Root.Mode = (Mode & 0xFFF) | 0x4000;
                 return;
             }
-            throw new NotSupportedException("F2FS builder M1 supports only an empty root filesystem");
+
+            var Child = Dir.Children.Find(C => C.Name == Name);
+            if (Child == null)
+            {
+                Child = new Node { Name = Name, Parent = Dir };
+                Dir.Children.Add(Child);
+            }
+
+            uint FType = Type;
+            Child.IsDir = FType == 0x4000;
+            Child.Uid = User;
+            Child.Gid = Group;
+            Child.Mode = (Mode & 0xFFF) | FType;
+            Child.Type = TypeToFType(FType);
+            Child.Data = Content;
+            Child.Rdev = Rdev;
         }
 
-        public void File(string Path, byte[] Content, uint User, uint Group, uint Mode) => throw new NotSupportedException("F2FS builder M1 does not write files yet");
-        public void SymLink(string Path, string Target, uint User, uint Group, uint Mode) => throw new NotSupportedException("F2FS builder M1 does not write files yet");
-        public void Char(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode) => throw new NotSupportedException("F2FS builder M1 does not write files yet");
-        public void Block(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode) => throw new NotSupportedException("F2FS builder M1 does not write files yet");
-        public void Fifo(string Path, uint User, uint Group, uint Mode) => throw new NotSupportedException("F2FS builder M1 does not write files yet");
-        public void Socket(string Path, uint User, uint Group, uint Mode) => throw new NotSupportedException("F2FS builder M1 does not write files yet");
+        private void EnsureRoot()
+        {
+            if (Root != null)
+                return;
+            Root = new Node
+            {
+                Name = "",
+                IsDir = true,
+                Type = 2,
+                Mode = 0x41ED,
+                Ino = RootIno
+            };
+        }
+
+        private Node ResolveParent(string Path, out string Name)
+        {
+            var Parts = (Path ?? "/").Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            if (Parts.Length == 0)
+            {
+                Name = "";
+                return Root;
+            }
+
+            var Cur = Root;
+            for (int i = 0; i < Parts.Length - 1; i++)
+            {
+                var Next = Cur.Children.Find(C => C.Name == Parts[i] && C.IsDir);
+                if (Next == null)
+                {
+                    Next = new Node
+                    {
+                        Name = Parts[i],
+                        Parent = Cur,
+                        IsDir = true,
+                        Type = 2,
+                        Mode = 0x41ED,
+                        Uid = 0,
+                        Gid = 0
+                    };
+                    Cur.Children.Add(Next);
+                }
+                Cur = Next;
+            }
+
+            Name = Parts[Parts.Length - 1];
+            return Cur;
+        }
+
+        private static byte TypeToFType(uint Type)
+        {
+            switch (Type)
+            {
+                case 0x4000: return 2;
+                case 0x2000: return 3;
+                case 0x6000: return 4;
+                case 0x1000: return 5;
+                case 0xC000: return 6;
+                case 0xA000: return 7;
+                default: return 1;
+            }
+        }
+
+        private static uint EncodeDev(uint Major, uint Minor) =>
+            (Minor & 0xFF) | (Major << 8) | ((Minor & ~0xFFu) << 12);
 
         // ---- geometry ----
 
@@ -71,41 +225,33 @@ namespace NyaFs.Filesystem.F2fs
 
         private void ComputeGeometry()
         {
-            int Blocks = (int)(TotalBytes / BlockSize);
             int SegmentSizeBytes = BlockSize * BlocksPerSeg;
             int ZoneSizeBytes = SegmentSizeBytes;
 
-            int ZoneAlign = ((0 + 2 * BlockSize + ZoneSizeBytes - 1) / ZoneSizeBytes) * ZoneSizeBytes;
+            int ZoneAlign = ((2 * BlockSize + ZoneSizeBytes - 1) / ZoneSizeBytes) * ZoneSizeBytes;
             Segment0Blkaddr = ZoneAlign / BlockSize;
             CpBlkaddr = Segment0Blkaddr;
 
             SegmentCount = (int)((TotalBytes - ZoneAlign) / SegmentSizeBytes);
             SegCkpt = 2;
 
-            int BlocksForSit = AlignUp(SegmentCount, 455);
+            int BlocksForSit = AlignUp(SegmentCount, SitsPerBlock);
             SegSit = ((BlocksForSit + BlocksPerSeg - 1) / BlocksPerSeg) * 2;
 
-            int BlocksForNat = AlignUp(SegmentCount, 455);
+            int BlocksForNat = AlignUp(SegmentCount, NatsPerBlock);
             SegNat = ((BlocksForNat + BlocksPerSeg - 1) / BlocksPerSeg) * 2;
 
             int AfterMeta = SegmentCount - (SegCkpt + SegSit + SegNat);
             SegSsa = (AfterMeta + BlocksPerSeg - 1) / BlocksPerSeg;
 
-            int TotalMeta = SegCkpt + SegSit + SegNat + SegSsa;
             SitBlkaddr = Segment0Blkaddr + SegCkpt * BlocksPerSeg;
             NatBlkaddr = SitBlkaddr + SegSit * BlocksPerSeg;
             SsaBlkaddr = NatBlkaddr + SegNat * BlocksPerSeg;
             MainBlkaddr = SsaBlkaddr + SegSsa * BlocksPerSeg;
 
+            int TotalMeta = SegCkpt + SegSit + SegNat + SegSsa;
             SectionCount = SegmentCount - TotalMeta;
             SegMain = SectionCount;
-
-            CurNodeHot = 0;
-            CurNodeWarm = 1;
-            CurNodeCold = 2;
-            CurDataHot = 3;
-            CurDataCold = (uint)Math.Max((SegMain >> 2) - 1, 3);
-            CurDataWarm = (uint)Math.Max((SegMain >> 1) - 1, (int)CurDataCold + 1);
         }
 
         // ---- build ----
@@ -113,20 +259,507 @@ namespace NyaFs.Filesystem.F2fs
         public byte[] GetFilesystemImage()
         {
             Image = new byte[TotalBytes];
+            EnsureRoot();
+            Root.Ino = RootIno;
+
+            AssignInodes(Root);
 
             WriteSuperblock();
-            WriteCheckpointPack();
-            WriteNatArea();
-            WriteRootInode();
-            WriteRootDentry();
+            WriteTree(Root);
+            Finalize();
 
             return Image;
         }
 
+        private void AssignInodes(Node N)
+        {
+            if (N != Root)
+                N.Ino = (uint)NextFreeNid++;
+            InodeCount++;
+
+            foreach (var C in N.Children)
+                AssignInodes(C);
+        }
+
+        private void WriteTree(Node N)
+        {
+            if (N.IsDir)
+                WriteDirectory(N);
+            else
+                WriteFileLike(N);
+
+            foreach (var C in N.Children)
+                WriteTree(C);
+        }
+
+        // ---- directories ----
+
+        private void WriteDirectory(Node D)
+        {
+            int N = D.Children.Count;
+            var ChildBlock = new int[N];
+            var ChildSlot = new int[N];
+            var Used = new Dictionary<int, bool[]>();
+
+            bool[] GetBlock(int b)
+            {
+                if (!Used.TryGetValue(b, out var u))
+                {
+                    u = new bool[DentryCount];
+                    Used[b] = u;
+                }
+                return u;
+            }
+
+            GetBlock(0)[0] = true;
+            GetBlock(0)[1] = true;
+
+            int CurrentDepth = 1;
+
+            for (int i = 0; i < N; i++)
+            {
+                var Nb = NameBytes(D.Children[i].Name);
+                int Ns = (Nb.Length + 7) / 8;
+                if (Ns > DentryCount)
+                    throw new ArgumentException($"F2FS: name too long in '{D.Name}'");
+
+                uint Hash = TeaHash(Nb);
+                bool Placed = false;
+
+                for (int Level = 0; Level < CurrentDepth && !Placed; Level++)
+                {
+                    int Buckets = 1 << Level;
+                    int Bucket = (int)(Hash % (uint)Buckets);
+                    int Base = 2 * (Buckets - 1) + 2 * Bucket;
+
+                    for (int b = Base; b < Base + 2 && !Placed; b++)
+                    {
+                        var U = GetBlock(b);
+                        int Pos = FindRoom(U, Ns);
+                        if (Pos >= 0)
+                        {
+                            for (int k = 0; k < Ns; k++) U[Pos + k] = true;
+                            ChildBlock[i] = b;
+                            ChildSlot[i] = Pos;
+                            Placed = true;
+                        }
+                    }
+                }
+
+                if (!Placed)
+                {
+                    int Level = CurrentDepth++;
+                    int Buckets = 1 << Level;
+                    int Bucket = (int)(Hash % (uint)Buckets);
+                    int Base = 2 * (Buckets - 1) + 2 * Bucket;
+                    var U = GetBlock(Base);
+                    int Pos = FindRoom(U, Ns);
+                    if (Pos < 0)
+                        throw new ArgumentException($"F2FS: no room in directory '{D.Name}'");
+                    for (int k = 0; k < Ns; k++) U[Pos + k] = true;
+                    ChildBlock[i] = Base;
+                    ChildSlot[i] = Pos;
+                }
+            }
+
+            int MaxBlock = 0;
+            foreach (var KV in Used)
+                if (KV.Key > MaxBlock)
+                    MaxBlock = KV.Key;
+
+            if (MaxBlock + 1 > AddrsPerInode)
+                throw new ArgumentException("F2FS: directory too large");
+
+            var Blocks = new byte[MaxBlock + 1][];
+            for (int b = 0; b <= MaxBlock; b++)
+            {
+                Blocks[b] = new byte[BlockSize];
+                MarkDirSlots(Blocks[b], GetBlock(b));
+            }
+
+            WriteDentry(Blocks[0], 0, NameBytes("."), D.Ino, 0, 2);
+            WriteDentry(Blocks[0], 1, NameBytes(".."), D.Parent?.Ino ?? RootIno, 0, 2);
+
+            for (int i = 0; i < N; i++)
+            {
+                var C = D.Children[i];
+                var Nb = NameBytes(C.Name);
+                WriteDentry(Blocks[ChildBlock[i]], ChildSlot[i], Nb, C.Ino, TeaHash(Nb), C.Type);
+            }
+
+            var Inode = NewInode(D);
+            for (int b = 0; b <= MaxBlock; b++)
+            {
+                long Addr = AllocData(D.Ino, (ushort)b);
+                WriteBlock(Addr, Blocks[b]);
+                PutU32(Inode, InodeAddrOff + b * 4, (uint)Addr);
+            }
+
+            PutU64(Inode, 0x10, (ulong)(MaxBlock + 1) * BlockSize);
+            PutU64(Inode, 0x18, (ulong)(1 + MaxBlock + 1));
+            PutU32(Inode, 0x48, (uint)CurrentDepth);
+            Inode[0x15B] = 0;
+
+            WriteInode(D, Inode);
+        }
+
+        private static void WriteDentry(byte[] Blk, int Pos, byte[] Name, uint Ino, uint Hash, byte FType)
+        {
+            PutU32(Blk, DentryBase + Pos * 11 + 0, Hash);
+            PutU32(Blk, DentryBase + Pos * 11 + 4, Ino);
+            PutU16(Blk, DentryBase + Pos * 11 + 8, (ushort)Name.Length);
+            Blk[DentryBase + Pos * 11 + 10] = FType;
+            for (int i = 0; i < Name.Length; i++)
+                Blk[FilenameBase + Pos * 8 + i] = Name[i];
+        }
+
+        private static void MarkDirSlots(byte[] Blk, bool[] Used)
+        {
+            for (int i = 0; i < DentryCount; i++)
+            {
+                if (Used[i])
+                    Blk[i / 8] |= (byte)(1 << (i % 8));
+            }
+        }
+
+        private static int FindRoom(bool[] Used, int Slots)
+        {
+            for (int Start = 0; Start + Slots <= DentryCount; Start++)
+            {
+                bool Free = true;
+                for (int k = 0; k < Slots; k++)
+                {
+                    if (Used[Start + k]) { Free = false; break; }
+                }
+                if (Free)
+                    return Start;
+            }
+            return -1;
+        }
+
+        // ---- files / symlinks / special ----
+
+        private void WriteFileLike(Node F)
+        {
+            var Inode = NewInode(F);
+            byte[] Data = F.Data ?? Array.Empty<byte>();
+
+            if (F.Type >= 3 && F.Type <= 6)
+            {
+                PutU32(Inode, InodeAddrOff, F.Rdev);
+                PutU64(Inode, 0x10, 0);
+                PutU64(Inode, 0x18, 1);
+                WriteInode(F, Inode);
+                return;
+            }
+
+            if (F.Type == 7 && Data.Length <= (AddrsPerInode - 1) * 4)
+            {
+                Inode[3] |= 0x0A;                    // F2FS_INLINE_DATA | F2FS_DATA_EXIST
+                Array.Copy(Data, 0, Inode, InodeAddrOff + 4, Data.Length);
+                PutU64(Inode, 0x10, (ulong)Data.Length);
+                PutU64(Inode, 0x18, 1);
+                WriteInode(F, Inode);
+                return;
+            }
+
+            int Count = (Data.Length + BlockSize - 1) / BlockSize;
+            if (Count > AddrsPerInode + AddrsPerBlock)
+                throw new ArgumentException($"F2FS: file '{F.Name}' is too large");
+
+            int Direct = Math.Min(Count, AddrsPerInode);
+            for (int i = 0; i < Direct; i++)
+            {
+                long Addr = AllocData(F.Ino, (ushort)i);
+                WriteBlock(Addr, Chunk(Data, i));
+                PutU32(Inode, InodeAddrOff + i * 4, (uint)Addr);
+            }
+
+            bool HasNode = Count > AddrsPerInode;
+            if (HasNode)
+            {
+                uint Nid = (uint)NextFreeNid++;
+                long NodeAddr = AllocNode(Nid, F.Ino);
+                var NodeBlk = new byte[BlockSize];
+                int Rest = Count - AddrsPerInode;
+                for (int i = 0; i < Rest; i++)
+                {
+                    long Addr = AllocData(F.Ino, (ushort)i);
+                    WriteBlock(Addr, Chunk(Data, AddrsPerInode + i));
+                    PutU32(NodeBlk, i * 4, (uint)Addr);
+                }
+                WriteNodeBlock(NodeAddr, Nid, F.Ino, NodeBlk);
+                PutU32(Inode, InodeNidOff, Nid);
+            }
+
+            PutU64(Inode, 0x10, (ulong)Data.Length);
+            PutU64(Inode, 0x18, (ulong)(1 + Count + (HasNode ? 1 : 0)));
+            WriteInode(F, Inode);
+        }
+
+        private static byte[] Chunk(byte[] Data, int Index)
+        {
+            var Blk = new byte[BlockSize];
+            int Off = Index * BlockSize;
+            int Len = Math.Min(BlockSize, Data.Length - Off);
+            if (Len > 0)
+                Array.Copy(Data, Off, Blk, 0, Len);
+            return Blk;
+        }
+
+        // ---- inodes ----
+
+        private byte[] NewInode(Node N)
+        {
+            var Inode = new byte[BlockSize];
+            PutU16(Inode, 0x00, (ushort)N.Mode);
+            PutU32(Inode, 0x04, N.Uid);
+            PutU32(Inode, 0x08, N.Gid);
+            PutU32(Inode, 0x0C, (uint)(N.IsDir ? 2 + CountSubdirs(N) : 1));
+            PutU32(Inode, 0x54, N.Parent?.Ino ?? 0);
+
+            var Nb = NameBytes(N.Name);
+            PutU32(Inode, 0x58, (uint)Nb.Length);
+            Array.Copy(Nb, 0, Inode, 0x5C, Math.Min(Nb.Length, 255));
+            return Inode;
+        }
+
+        private static int CountSubdirs(Node D)
+        {
+            int N = 0;
+            foreach (var C in D.Children)
+                if (C.IsDir)
+                    N++;
+            return N;
+        }
+
+        private void WriteInode(Node N, byte[] Inode)
+        {
+            long Addr = AllocNode(N.Ino, N.Ino);
+            WriteNodeBlock(Addr, N.Ino, N.Ino, Inode);
+        }
+
+        private void WriteNodeBlock(long Addr, uint Nid, uint Ino, byte[] Body)
+        {
+            var Blk = new byte[BlockSize];
+            Array.Copy(Body, Blk, BlockSize);
+            PutU32(Blk, FooterOff + 0, Nid);
+            PutU32(Blk, FooterOff + 4, Ino);
+            PutU32(Blk, FooterOff + 8, 0);
+            PutU64(Blk, FooterOff + 12, CpVersion);
+            PutU32(Blk, FooterOff + 20, (uint)(Addr + 1));
+            WriteBlock(Addr, Blk);
+        }
+
+        // ---- allocation ----
+
+        private long AllocNode(uint Nid, uint Ino)
+        {
+            var C = Cursegs[3];
+            if (C.Blkoff >= BlocksPerSeg)
+                Seal(3);
+
+            int Off = C.Blkoff++;
+            C.Entries[Off] = new Summary { Nid = Nid, Version = 0, Ofs = 0 };
+            long Addr = MainBlkaddr + C.Segno * BlocksPerSeg + Off;
+            Nat[Nid] = Addr;
+            NatIno[Nid] = Ino;
+            NodeBlocks++;
+            return Addr;
+        }
+
+        private long AllocData(uint Ino, ushort Ofs)
+        {
+            var C = Cursegs[0];
+            if (C.Blkoff >= BlocksPerSeg)
+                Seal(0);
+
+            int Off = C.Blkoff++;
+            C.Entries[Off] = new Summary { Nid = Ino, Version = 0, Ofs = Ofs };
+            DataBlocks++;
+            return MainBlkaddr + C.Segno * BlocksPerSeg + Off;
+        }
+
+        private void Seal(int Index)
+        {
+            var C = Cursegs[Index];
+            SealedSegs[C.Segno] = new SegData
+            {
+                Type = Index,
+                Entries = (Summary[])C.Entries.Clone()
+            };
+
+            int Next = NextFreeSeg++;
+            if (Next >= SegMain)
+                throw new ArgumentException("F2FS: image is too small for the requested tree");
+
+            C.Segno = Next;
+            C.Blkoff = 0;
+            C.Entries = new Summary[BlocksPerSeg];
+        }
+
+        private void WriteBlock(long Addr, byte[] Data)
+        {
+            Array.Copy(Data, 0, Image, Addr * BlockSize, BlockSize);
+        }
+
+        // ---- finalize ----
+
+        private void Finalize()
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                var C = Cursegs[i];
+                WriteSit(C.Segno, i, C.Blkoff);
+                WriteSsa(C.Segno, i, C.Entries, C.Blkoff);
+            }
+
+            foreach (var KV in SealedSegs)
+            {
+                WriteSit(KV.Key, KV.Value.Type, BlocksPerSeg);
+                WriteSsa(KV.Key, KV.Value.Type, KV.Value.Entries, BlocksPerSeg);
+            }
+
+            WriteNatArea();
+
+            WriteCheckpointPack(CpBlkaddr, 1);
+            WriteCheckpointPack(CpBlkaddr + BlocksPerSeg, 0);
+        }
+
+        private void WriteCheckpointPack(int Base, uint Version)
+        {
+            var Cp = BuildCheckpoint(Version);
+            Array.Copy(Cp, 0, Image, (long)Base * BlockSize, BlockSize);
+            for (int i = 0; i < 6; i++)
+                WriteSummaryBlock(Base + 1 + i, i, Cursegs[i]);
+            Array.Copy(Cp, 0, Image, (long)(Base + 7) * BlockSize, BlockSize);
+        }
+
+        private void WriteSit(int Segno, int Type, int Count)
+        {
+            int PerCopy = (SegSit / 2) * BlocksPerSeg;
+            var Map = new byte[64];
+            for (int i = 0; i < Count; i++)
+                Map[i / 8] |= (byte)(0x80 >> (i % 8));
+
+            for (int Copy = 0; Copy < 2; Copy++)
+            {
+                int Block = SitBlkaddr + Copy * PerCopy + Segno / SitsPerBlock;
+                long Off = (long)Block * BlockSize + (Segno % SitsPerBlock) * SitEntrySize;
+                PutU16(Image, Off + 0, (ushort)((Type << 10) | Count));
+                Array.Copy(Map, 0, Image, Off + 2, 64);
+                PutU64(Image, Off + 66, 0);
+            }
+        }
+
+        private void WriteSsa(int Segno, int Type, Summary[] Entries, int Count)
+        {
+            long Block = (long)(SsaBlkaddr + Segno) * BlockSize;
+            var Buf = new byte[BlockSize];
+            for (int i = 0; i < Count; i++)
+            {
+                var S = Entries[i];
+                if (S == null)
+                    continue;
+                PutU32(Buf, i * 7 + 0, S.Nid);
+                Buf[i * 7 + 4] = S.Version;
+                PutU16(Buf, i * 7 + 5, S.Ofs);
+            }
+            Buf[4091] = (byte)(Type < 3 ? 0 : 1);
+            Array.Copy(Buf, 0, Image, Block, BlockSize);
+        }
+
+        private void WriteSummaryBlock(int BlkAddr, int Type, Curseg C)
+        {
+            var Buf = new byte[BlockSize];
+            for (int i = 0; i < C.Blkoff; i++)
+            {
+                var S = C.Entries[i];
+                if (S == null)
+                    continue;
+                PutU32(Buf, i * 7 + 0, S.Nid);
+                Buf[i * 7 + 4] = S.Version;
+                PutU16(Buf, i * 7 + 5, S.Ofs);
+            }
+            Buf[4091] = (byte)(Type < 3 ? 0 : 1);
+            Array.Copy(Buf, 0, Image, (long)BlkAddr * BlockSize, BlockSize);
+        }
+
+        private void WriteNatArea()
+        {
+            int PerCopy = (SegNat / 2) * BlocksPerSeg;
+
+            for (uint Nid = 0; Nid < (uint)NextFreeNid; Nid++)
+            {
+                uint Ino;
+                long Blk;
+
+                if (Nid == NodeIno) { Ino = NodeIno; Blk = 1; }
+                else if (Nid == MetaIno) { Ino = MetaIno; Blk = 1; }
+                else if (!Nat.TryGetValue(Nid, out Blk)) continue;
+                else Ino = NatIno.TryGetValue(Nid, out uint I) ? I : Nid;
+
+                int Bo = (int)(Nid / NatsPerBlock);
+                int SlotOff = (int)(Nid % NatsPerBlock) * NatEntrySize;
+
+                for (int Copy = 0; Copy < 2; Copy++)
+                {
+                    long Block = NatBlkaddr + Copy * PerCopy + Bo;
+                    long Off = Block * BlockSize + SlotOff;
+                    Image[Off + 0] = 0;
+                    PutU32(Image, Off + 1, Ino);
+                    PutU32(Image, Off + 5, (uint)Blk);
+                }
+            }
+        }
+
+        private byte[] BuildCheckpoint(uint Version)
+        {
+            int SitBmBytes = (SegSit / 2) * BlocksPerSeg / 8;
+            int NatBmBytes = (SegNat / 2) * BlocksPerSeg / 8;
+            var Cp = new byte[BlockSize];
+            uint Total = (uint)(NodeBlocks + DataBlocks);
+
+            PutU64(Cp, 0x00, Version);
+            PutU64(Cp, 0x08, (ulong)(SegMain - (int)OverprovisionSegments) * BlocksPerSeg);
+            PutU64(Cp, 0x10, Total);
+            PutU32(Cp, 0x18, ReservedSegments);
+            PutU32(Cp, 0x1C, OverprovisionSegments);
+            PutU32(Cp, 0x20, (uint)(SegMain - NextFreeSeg));
+
+            for (int i = 0; i < 3; i++)
+            {
+                PutU32(Cp, 0x24 + i * 4, (uint)Cursegs[3 + i].Segno);
+                PutU16(Cp, 0x44 + i * 2, (ushort)Cursegs[3 + i].Blkoff);
+                PutU32(Cp, 0x54 + i * 4, (uint)Cursegs[i].Segno);
+                PutU16(Cp, 0x74 + i * 2, (ushort)Cursegs[i].Blkoff);
+            }
+            for (int i = 3; i < 8; i++)
+            {
+                PutU32(Cp, 0x24 + i * 4, 0xFFFFFFFF);
+                PutU32(Cp, 0x54 + i * 4, 0xFFFFFFFF);
+            }
+
+            PutU32(Cp, 0x84, CpFlagUmount);
+            PutU32(Cp, 0x88, 8);
+            PutU32(Cp, 0x8C, 1);
+            PutU32(Cp, 0x90, (uint)NodeBlocks);
+            PutU32(Cp, 0x94, (uint)InodeCount);
+            PutU32(Cp, 0x98, (uint)NextFreeNid);
+            PutU32(Cp, 0x9C, (uint)SitBmBytes);
+            PutU32(Cp, 0xA0, (uint)NatBmBytes);
+            PutU32(Cp, 0xA4, 4092);
+
+            PutU32(Cp, 4092, Crc32(Magic, Cp, 0, 4092));
+            return Cp;
+        }
+
+        // ---- superblock ----
+
         private void WriteSuperblock()
         {
             var Sb = new byte[3072];
-            PutU32(Sb, 0x00, 0xF2F52010);
+            PutU32(Sb, 0x00, Magic);
             PutU16(Sb, 0x04, 1);
             PutU16(Sb, 0x06, 16);
             PutU32(Sb, 0x08, 9);
@@ -153,192 +786,94 @@ namespace NyaFs.Filesystem.F2fs
             PutU32(Sb, 0x60, RootIno);
             PutU32(Sb, 0x64, NodeIno);
             PutU32(Sb, 0x68, MetaIno);
-            PutU32(Sb, 0x2A0, 0);                    // cp_payload
+            PutU32(Sb, 0x2A0, 0);
 
             Array.Copy(Sb, 0, Image, 1024, Sb.Length);
             Array.Copy(Sb, 0, Image, 1024 + BlockSize, Sb.Length);
         }
 
-        private void WriteCheckpointPack()
+        // ---- hash ----
+
+        private static byte[] NameBytes(string Name) => Encoding.UTF8.GetBytes(Name ?? "");
+
+        private static uint TeaHash(byte[] Name)
         {
-            int SitBmBytes = (SegSit / 2) * BlocksPerSeg / 8;
-            int NatBmBytes = (SegNat / 2) * BlocksPerSeg / 8;
+            uint[] Buf = { 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476 };
+            int Pos = 0;
+            int Len = Name.Length;
 
-            var Cp = BuildCheckpoint(0x1, SitBmBytes, NatBmBytes);
-            Array.Copy(Cp, 0, Image, (long)CpBlkaddr * BlockSize, BlockSize);
-
-            WriteCompactedSummary(CpBlkaddr + 1);
-            WriteNodeSummary(CpBlkaddr + 2, true);
-            WriteNodeSummary(CpBlkaddr + 3, false);
-            WriteNodeSummary(CpBlkaddr + 4, false);
-
-            Array.Copy(Cp, 0, Image, (long)(CpBlkaddr + 5) * BlockSize, BlockSize);
-
-            uint CpCrcVal = ReadU32(Cp, 4092);
-            ulong Ver = ReadU64(Cp, 0x00);
-            WriteNatBits(Ver | ((ulong)CpCrcVal << 32));
-
-            var Cp2 = BuildCheckpoint(0, SitBmBytes, NatBmBytes);
-            Array.Copy(Cp2, 0, Image, (long)(CpBlkaddr + 512) * BlockSize, BlockSize);
-            Array.Copy(Cp2, 0, Image, (long)(CpBlkaddr + 512 + 5) * BlockSize, BlockSize);
-        }
-
-        private byte[] BuildCheckpoint(ulong Version, int SitBmBytes, int NatBmBytes)
-        {
-            var Cp = new byte[BlockSize];
-            PutU64(Cp, 0x00, Version);
-            PutU64(Cp, 0x08, (ulong)(SegMain - (int)OverprovisionSegments) * BlocksPerSeg);
-            PutU64(Cp, 0x10, 2);
-            PutU32(Cp, 0x18, ReservedSegments);
-            PutU32(Cp, 0x1C, OverprovisionSegments);
-            PutU32(Cp, 0x20, (uint)(SegMain - 6));
-
-            for (int i = 0; i < 8; i++)
+            while (true)
             {
-                PutU32(Cp, 0x24 + i * 4, i < 3 ? new uint[] { CurNodeHot, CurNodeWarm, CurNodeCold }[i] : 0xFFFFFFFF);
-                PutU32(Cp, 0x54 + i * 4, i < 3 ? new uint[] { CurDataHot, CurDataWarm, CurDataCold }[i] : 0xFFFFFFFF);
-                PutU16(Cp, 0x44 + i * 2, (ushort)(i == 0 ? 1 : 0));
-                PutU16(Cp, 0x74 + i * 2, (ushort)(i == 0 ? 1 : 0));
+                var In = new uint[4];
+                Str2HashBuf(Name, Pos, Len, In);
+                TeaTransform(Buf, In);
+                Pos += 16;
+                if (Len <= 16)
+                    break;
+                Len -= 16;
             }
 
-            PutU32(Cp, 0x84, 0x185);                 // UMOUNT | COMPACT_SUM | NAT_BITS | TRIMMED
-            PutU32(Cp, 0x88, 6);
-            PutU32(Cp, 0x8C, 1);
-            PutU32(Cp, 0x90, 1);
-            PutU32(Cp, 0x94, 1);
-            PutU32(Cp, 0x98, RootIno + 1);
-            PutU32(Cp, 0x9C, (uint)SitBmBytes);
-            PutU32(Cp, 0xA0, (uint)NatBmBytes);
-            PutU32(Cp, 0xA4, 4092);
-
-            PutU32(Cp, 4092, Crc32(0xF2F52010, Cp, 0, 4092));
-            return Cp;
+            return Buf[0];
         }
 
-        private void WriteCompactedSummary(int BlkAddr)
+        private static void Str2HashBuf(byte[] Msg, int Pos, int Len, uint[] Buf)
         {
-            long Off = (long)BlkAddr * BlockSize;
-            var Sum = new byte[BlockSize];
+            uint Pad = (uint)Len;
+            Pad |= Pad << 8;
+            Pad |= Pad << 16;
 
-            PutU16(Sum, 0, 1);
-            PutU32(Sum, 2, RootIno);
-            Sum[6] = 0;
-            PutU32(Sum, 7, RootIno);
-            PutU32(Sum, 11, (uint)(MainBlkaddr + CurNodeHot * BlocksPerSeg));
+            uint Val = Pad;
+            int Num = 4;
+            int Bi = 0;
+            int L = Len > Num * 4 ? Num * 4 : Len;
 
-            PutU16(Sum, 507, 6);
-            WriteSitJournalEntry(Sum, 509 + 0 * 78, CurNodeHot, (ushort)((3 << 10) | 1), true);
-            WriteSitJournalEntry(Sum, 509 + 1 * 78, CurNodeWarm, (ushort)(4 << 10), false);
-            WriteSitJournalEntry(Sum, 509 + 2 * 78, CurNodeCold, (ushort)(5 << 10), false);
-            WriteSitJournalEntry(Sum, 509 + 3 * 78, CurDataHot, (ushort)((0 << 10) | 1), true);
-            WriteSitJournalEntry(Sum, 509 + 4 * 78, CurDataWarm, (ushort)(1 << 10), false);
-            WriteSitJournalEntry(Sum, 509 + 5 * 78, CurDataCold, (ushort)(2 << 10), false);
-
-            PutU32(Sum, 1014, RootIno);
-            Sum[1018] = 0;
-            PutU16(Sum, 1019, 0);
-
-            Array.Copy(Sum, 0, Image, Off, BlockSize);
-        }
-
-        private static void WriteSitJournalEntry(byte[] Sum, int Off, uint Segno, ushort VBlocks, bool Valid)
-        {
-            PutU32(Sum, Off, Segno);
-            PutU16(Sum, Off + 4, VBlocks);
-            if (Valid)
-                Sum[Off + 6] = 0x80;
-        }
-
-        private void WriteNodeSummary(int BlkAddr, bool HasEntry)
-        {
-            long Off = (long)BlkAddr * BlockSize;
-            var Sum = new byte[BlockSize];
-
-            if (HasEntry)
+            for (int i = 0; i < L; i++)
             {
-                PutU32(Sum, 0, RootIno);
-                Sum[4] = 0;
-                PutU16(Sum, 5, 0);
+                if ((i % 4) == 0)
+                    Val = Pad;
+                Val = (uint)(Msg[Pos + i] + (Val << 8));
+                if ((i % 4) == 3)
+                {
+                    Buf[Bi++] = Val;
+                    Val = Pad;
+                    Num--;
+                }
             }
-            Sum[4091] = 1;                            // SUM_TYPE_NODE
 
-            Array.Copy(Sum, 0, Image, Off, BlockSize);
+            if (--Num >= 0)
+                Buf[Bi++] = Val;
+            while (--Num >= 0)
+                Buf[Bi++] = Pad;
         }
 
-        private void WriteNatBits(ulong CpVerCrc)
+        private static void TeaTransform(uint[] Buf, uint[] In)
         {
-            int NatBitsBytes = SegNat << 5;
-            int NatBitsBlocks = ((NatBitsBytes << 1) + 8 + BlockSize - 1) / BlockSize;
-            int Blk = Segment0Blkaddr + BlocksPerSeg - NatBitsBlocks;
+            uint Sum = 0;
+            uint B0 = Buf[0], B1 = Buf[1];
+            uint A = In[0], B = In[1], C = In[2], D = In[3];
+            int N = 16;
 
-            long Off = (long)Blk * BlockSize;
-            PutU64(Image, Off, CpVerCrc);
+            do
+            {
+                Sum += 0x9E3779B9;
+                B0 += ((B1 << 4) + A) ^ (B1 + Sum) ^ ((B1 >> 5) + B);
+                B1 += ((B0 << 4) + C) ^ (B0 + Sum) ^ ((B0 >> 5) + D);
+            }
+            while (--N > 0);
 
-            for (int i = 8; i < 8 + NatBitsBytes; i++)
-                Image[Off + i] = 0x00;
-
-            for (int i = 0; i < NatBitsBytes; i++)
-                Image[Off + 8 + NatBitsBytes + i] = 0xFF;
-            Image[Off + 8 + NatBitsBytes] = 0xFE;
-        }
-
-        private void WriteNatArea()
-        {
-            long Off = (long)NatBlkaddr * BlockSize;
-
-            PutU32(Image, Off + 1 * 9 + 1, NodeIno);
-            PutU32(Image, Off + 1 * 9 + 5, 1);
-
-            PutU32(Image, Off + 2 * 9 + 1, MetaIno);
-            PutU32(Image, Off + 2 * 9 + 5, 1);
-
-            PutU32(Image, Off + 3 * 9 + 1, RootIno);
-            PutU32(Image, Off + 3 * 9 + 5, (uint)MainBlkaddr);
-        }
-
-        private void WriteRootInode()
-        {
-            long Off = (long)MainBlkaddr * BlockSize;
-            var N = new byte[BlockSize];
-
-            PutU16(N, 0x00, 0x41ED);
-            PutU32(N, 0x0C, 2);
-            PutU64(N, 0x10, BlockSize);
-            PutU64(N, 0x18, 2);
-            PutU32(N, 0x48, 1);
-            PutU32(N, 0x168, (uint)(MainBlkaddr + CurDataHot * BlocksPerSeg));
-
-            PutU32(N, 0xFE8, RootIno);
-            PutU32(N, 0xFEC, RootIno);
-            PutU32(N, 0xFF4, 1);
-            PutU32(N, 0xFFC, (uint)(MainBlkaddr + 1));
-
-            Array.Copy(N, 0, Image, Off, BlockSize);
-        }
-
-        private void WriteRootDentry()
-        {
-            long Off = (long)(MainBlkaddr + CurDataHot * BlocksPerSeg) * BlockSize;
-            var D = new byte[BlockSize];
-
-            D[0] = 0x03;
-            PutU32(D, 30 + 0 * 11 + 4, RootIno);
-            PutU16(D, 30 + 0 * 11 + 8, 1);
-            D[30 + 0 * 11 + 10] = 2;
-            D[2384 + 0 * 8] = (byte)'.';
-
-            PutU32(D, 30 + 1 * 11 + 4, RootIno);
-            PutU16(D, 30 + 1 * 11 + 8, 2);
-            D[30 + 1 * 11 + 10] = 2;
-            D[2384 + 1 * 8] = (byte)'.';
-            D[2384 + 1 * 8 + 1] = (byte)'.';
-
-            Array.Copy(D, 0, Image, Off, BlockSize);
+            Buf[0] += B0;
+            Buf[1] += B1;
         }
 
         // ---- primitives ----
 
         private static void PutU16(byte[] D, int O, ushort V)
+        {
+            D[O] = (byte)V;
+            D[O + 1] = (byte)(V >> 8);
+        }
+
+        private static void PutU16(byte[] D, long O, ushort V)
         {
             D[O] = (byte)V;
             D[O + 1] = (byte)(V >> 8);
@@ -350,12 +885,6 @@ namespace NyaFs.Filesystem.F2fs
             D[O + 1] = (byte)(V >> 8);
             D[O + 2] = (byte)(V >> 16);
             D[O + 3] = (byte)(V >> 24);
-        }
-
-        private static void PutU16(byte[] D, long O, ushort V)
-        {
-            D[O] = (byte)V;
-            D[O + 1] = (byte)(V >> 8);
         }
 
         private static void PutU32(byte[] D, long O, uint V)
@@ -377,9 +906,6 @@ namespace NyaFs.Filesystem.F2fs
             for (int i = 0; i < 8; i++)
                 D[O + i] = (byte)(V >> (i * 8));
         }
-
-        private static uint ReadU32(byte[] D, int O) => BitConverter.ToUInt32(D, O);
-        private static ulong ReadU64(byte[] D, int O) => BitConverter.ToUInt64(D, O);
 
         private static uint Crc32(uint Crc, byte[] Data, int Off, int Len)
         {

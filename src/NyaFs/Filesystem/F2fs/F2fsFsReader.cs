@@ -270,7 +270,7 @@ namespace NyaFs.Filesystem.F2fs
             byte Inline = Node[INO_INLINE];
             if ((Inline & INLINE_DATA) != 0)
             {
-                int DataOff = INO_ADDR + (((Inline & INLINE_XATTR) != 0) ? 4 : 0);
+                int DataOff = INO_ADDR + 4;
                 int Len = (int)Math.Min(Size, Node.Length - DataOff);
                 var Inl = new byte[Len];
                 Array.Copy(Node, DataOff, Inl, 0, Len);
@@ -353,7 +353,7 @@ namespace NyaFs.Filesystem.F2fs
 
             if ((Inline & INLINE_DATA) != 0)
             {
-                int DataOff = INO_ADDR + (((Inline & INLINE_XATTR) != 0) ? 4 : 0);
+                int DataOff = INO_ADDR + 4;
                 int Len = (int)Math.Min(Size, Node.Length - DataOff);
                 return Encoding.UTF8.GetString(Node, DataOff, Len);
             }

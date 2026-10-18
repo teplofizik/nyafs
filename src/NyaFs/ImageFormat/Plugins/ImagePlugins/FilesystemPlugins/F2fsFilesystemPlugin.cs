@@ -32,17 +32,5 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             long Size = (Fs.FsSize > 0) ? Fs.FsSize : 64L * 1024 * 1024;
             return new Elements.Fs.Writer.BaseFsWriter(new Filesystem.F2fs.F2fsFsBuilder(Size));
         }
-
-        /// <summary>Milestone 1: empty filesystem only (mkfs-like image without user files).</summary>
-        public override bool CheckFilesystem(Elements.Fs.LinuxFilesystem Fs)
-        {
-            if (Fs.Fs.Root.Items.Count > 0)
-            {
-                Log.Error(0, "F2FS writer currently supports only an empty filesystem (Milestone 1)");
-                return false;
-            }
-
-            return true;
-        }
     }
 }

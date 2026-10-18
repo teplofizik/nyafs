@@ -15,6 +15,7 @@ namespace NyaFs.Filesystem.F2fs
     public class F2fsFsReader : IFilesystemReader
     {
         public readonly F2fsSuperblock Superblock;
+        public readonly F2fsCheckpoint Checkpoint;
 
         private readonly byte[] Raw;
         private readonly int BlockSize;
@@ -43,6 +44,7 @@ namespace NyaFs.Filesystem.F2fs
             Raw = Data;
             Superblock = new F2fsSuperblock(Data, 0);
             BlockSize = Superblock.BlockSize;
+            Checkpoint = F2fsCheckpoint.Read(Superblock, Data);
         }
 
         public F2fsFsReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename)) { }
@@ -64,9 +66,12 @@ namespace NyaFs.Filesystem.F2fs
 
         public uint ReadNat(uint Nid)
         {
-            int PerBlock = BlockSize / 9;
-            long Blk = (long)Superblock.NatBlkaddr + (Nid / (uint)PerBlock);
-            long Off = Blk * BlockSize + (Nid % (uint)PerBlock) * 9;
+            if (Checkpoint.TryJournal(Nid, out uint JBlk))
+                return JBlk;
+
+            const int PerBlock = 455;
+            long Blk = Checkpoint.NatAddr(Nid);
+            long Off = Blk * BlockSize + (Nid % PerBlock) * 9;
             if (Off + 9 > Raw.Length)
                 return 0;
             return Raw.ReadUInt32(Off + 5);
@@ -161,11 +166,26 @@ namespace NyaFs.Filesystem.F2fs
             if (Addr0 < Superblock.MainBlkaddr)
                 return new List<DEntry>();
 
-            var Data = ReadBlockRaw(Addr0);
-            if (Data == null)
-                return new List<DEntry>();
+            var Res = new List<DEntry>();
+            long DirSize = Convert.ToInt64(U64(Node, INO_SIZE));
+            int Blocks = (int)Math.Max(1, (DirSize + BlockSize - 1) / BlockSize);
+            int Seen = 0;
 
-            return ParseDentries(Data, 0, DENTRY_BASE, DENTRY_BASE + NR_DENTRY * DENTRY_SIZE, NR_DENTRY);
+            foreach (var Blk in InodeDataBlocks(Node))
+            {
+                if (Seen++ >= Blocks)
+                    break;
+                if (Blk < Superblock.MainBlkaddr)
+                    continue;
+
+                var Data = ReadBlockRaw(Blk);
+                if (Data == null)
+                    continue;
+
+                Res.AddRange(ParseDentries(Data, 0, DENTRY_BASE, DENTRY_BASE + NR_DENTRY * DENTRY_SIZE, NR_DENTRY));
+            }
+
+            return Res;
         }
 
         private bool Resolve(string Path, out uint Inum)
@@ -257,42 +277,64 @@ namespace NyaFs.Filesystem.F2fs
                 return Inl;
             }
 
-            var All = new List<uint>();
-            int AddrPerInode = (BlockSize - INO_ADDR) / 4;
-            for (int i = 0; i < AddrPerInode; i++)
-                All.Add(U32(Node, INO_ADDR + i * 4));
-
-            uint DNid = U32(Node, INO_NID);
-            if (DNid != 0)
-            {
-                var DN = ReadNode(DNid);
-                if (DN != null)
-                {
-                    int AddrPerBlock = (BlockSize - 24) / 4;
-                    for (int i = 0; i < AddrPerBlock; i++)
-                        All.Add(U32(DN, i * 4));
-                }
-            }
-
             var Res = new byte[Size];
             long Done = 0;
-            foreach (var Blk in All)
+            foreach (var Blk in InodeDataBlocks(Node))
             {
                 if (Done >= Size)
                     break;
-                if (Blk < Superblock.MainBlkaddr)
-                    continue;
-
-                var Data = ReadBlockRaw(Blk);
-                if (Data == null)
-                    continue;
 
                 int Len = (int)Math.Min(BlockSize, Size - Done);
-                Array.Copy(Data, 0, Res, Done, Len);
+                if (Blk < Superblock.MainBlkaddr)
+                {
+                    Done += Len;              // hole: leave zeros
+                    continue;
+                }
+
+                var Data = ReadBlockRaw(Blk);
+                if (Data != null)
+                    Array.Copy(Data, 0, Res, Done, Len);
                 Done += Len;
             }
 
             return Res;
+        }
+
+        /// <summary>Logical data-block addresses of an inode: direct, single indirect, double indirect.</summary>
+        private IEnumerable<uint> InodeDataBlocks(byte[] Node)
+        {
+            int AddrPerInode = (INO_NID - INO_ADDR) / 4;
+            for (int i = 0; i < AddrPerInode; i++)
+                yield return U32(Node, INO_ADDR + i * 4);
+
+            int AddrPerBlock = (BlockSize - 24) / 4;
+
+            uint N0 = U32(Node, INO_NID + 0);       // direct node
+            if (N0 != 0)
+            {
+                var DN = ReadNode(N0);
+                if (DN != null)
+                    for (int i = 0; i < AddrPerBlock; i++)
+                        yield return U32(DN, i * 4);
+            }
+
+            uint N1 = U32(Node, INO_NID + 4);       // double indirect
+            if (N1 != 0)
+            {
+                var DB = ReadNode(N1);
+                if (DB != null)
+                    for (int j = 0; j < AddrPerBlock; j++)
+                    {
+                        uint INid = U32(DB, j * 4);
+                        if (INid == 0)
+                            continue;
+                        var IN = ReadNode(INid);
+                        if (IN == null)
+                            continue;
+                        for (int i = 0; i < AddrPerBlock; i++)
+                            yield return U32(IN, i * 4);
+                    }
+            }
         }
 
         public string ReadLink(string Path)

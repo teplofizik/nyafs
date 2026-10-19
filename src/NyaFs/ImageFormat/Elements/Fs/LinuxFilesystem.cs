@@ -24,6 +24,11 @@ namespace NyaFs.ImageFormat.Elements.Fs
         public Filesystem.UbiFs.Ubifs.UbifsCompression UbiFsCompression = Filesystem.UbiFs.Ubifs.UbifsCompression.None;
 
         /// <summary>
+        /// Compression for regular file data when writing an F2FS image (None disables it).
+        /// </summary>
+        public Filesystem.F2fs.F2fsCompression F2fsCompression = Filesystem.F2fs.F2fsCompression.None;
+
+        /// <summary>
         /// Target FAT type when writing a FAT image: 0 = auto (by size), 12 / 16 / 32.
         /// </summary>
         public int FatType = 0;

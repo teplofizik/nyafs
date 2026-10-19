@@ -42,10 +42,10 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "ubifs.compression", "fat.type", "size" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "ubifs.compression", "f2fs.compression", "fat.type", "size" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
-                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, ubifs.compression, size");
+                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, ubifs.compression, f2fs.compression, size");
                         return false;
                     }
                 }
@@ -235,6 +235,23 @@ namespace NyaFs.Processor.Scripting.Commands
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown compression: {Value}!");
                             }
                         }
+                    case "f2fs.compression":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set f2fs compression type to non-ramfs image!");
+
+                            try
+                            {
+                                var Fs = Processor.GetFs();
+                                Fs.F2fsCompression = ParseF2fsCompression(Value);
+
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set compression ok: {Value}!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown compression: {Value}!");
+                            }
+                        }
                     case "compression":
                         {
                             try
@@ -412,6 +429,20 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "fat32": return 32;
                     default:
                         throw new ArgumentException("Unsupported fat type");
+                }
+            }
+
+            Filesystem.F2fs.F2fsCompression ParseF2fsCompression(string Compression)
+            {
+                switch (Compression.ToLower())
+                {
+                    case "none": return Filesystem.F2fs.F2fsCompression.None;
+                    case "lzo": return Filesystem.F2fs.F2fsCompression.Lzo;
+                    case "lz4": return Filesystem.F2fs.F2fsCompression.Lz4;
+                    case "zstd": return Filesystem.F2fs.F2fsCompression.Zstd;
+                    case "lzorle": return Filesystem.F2fs.F2fsCompression.LzoRle;
+                    default:
+                        throw new ArgumentException("Unsupported compression type");
                 }
             }
 

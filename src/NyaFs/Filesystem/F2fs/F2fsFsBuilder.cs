@@ -40,6 +40,15 @@ namespace NyaFs.Filesystem.F2fs
         public uint ReservedSegments = 8;
         public uint OverprovisionSegments = 10;
 
+        /// <summary>Per-file compression for regular files (None disables F2FS_FEATURE_COMPRESSION).</summary>
+        public F2fsCompression Compression = F2fsCompression.None;
+
+        private const int CompressClusterLog = 2;           // cluster = 4 blocks (16 KiB)
+        private const int CompressionExtraIsize = 36;       // F2FS_TOTAL_EXTRA_ATTR_SIZE (bytes)
+        private const uint FeatureCompression = 0x2000;
+        private const uint FeatureExtraAttr = 0x0008;
+        private const uint CompressAddr = 0xFFFFFFFE;
+
         private int Segment0Blkaddr;
         private int CpBlkaddr, SitBlkaddr, NatBlkaddr, SsaBlkaddr, MainBlkaddr;
         private int SectionCount, SegmentCount, SegCkpt, SegSit, SegNat, SegSsa, SegMain;
@@ -55,6 +64,7 @@ namespace NyaFs.Filesystem.F2fs
         private int NodeBlocks;
         private int DataBlocks;
         private int InodeCount;
+        private int ValidExtra;      // pseudo blocks (COMPRESS_ADDR) counted in CP valid_block_count
 
         private class Summary
         {
@@ -498,6 +508,10 @@ namespace NyaFs.Filesystem.F2fs
                 return;
             }
 
+            if ((Compression != F2fsCompression.None) && (F.Type == 1) && (Data.Length > 0) &&
+                TryCompressFile(F, Data, Inode, XattrAddrs, ExtraXattrBlocks))
+                return;
+
             int Count = (Data.Length + BlockSize - 1) / BlockSize;
             int B = AddrsPerBlock;
             long IND = (long)B * B;
@@ -655,6 +669,153 @@ namespace NyaFs.Filesystem.F2fs
             long Addr = AllocNode(Nid, Ino);
             WriteNodeBlock(Addr, Nid, Ino, Blk);
         }
+
+        private bool TryCompressFile(Node F, byte[] Data, byte[] Inode, int XattrAddrs, int ExtraXattrBlocks)
+        {
+            if (Compression == F2fsCompression.LzoRle)
+                throw new NotSupportedException("F2FS LZORLE compression is not implemented yet");
+
+            int C = 1 << CompressClusterLog;
+            int ExtraEntries = CompressionExtraIsize / 4;
+            int Dc = AlignDown(AddrsPerInode - ExtraEntries - XattrAddrs, C);
+            int Bc = AlignDown(AddrsPerBlock, C);
+
+            int Count = (Data.Length + BlockSize - 1) / BlockSize;
+            int Clusters = (Count + C - 1) / C;
+            long MaxBlock = (long)Clusters * C;
+            if (MaxBlock > Dc + 2L * Bc)
+                return false;
+
+            uint Nid1 = 0, Nid2 = 0;
+            if (MaxBlock > Dc) Nid1 = (uint)NextFreeNid++;
+            if (MaxBlock > Dc + Bc) Nid2 = (uint)NextFreeNid++;
+
+            var Addr1 = new uint[Bc];
+            var Addr2 = new uint[Bc];
+
+            Inode[3] |= 0x20;                                   // F2FS_EXTRA_ATTR
+            PutU16(Inode, InodeAddrOff, CompressionExtraIsize);
+            PutU32(Inode, 0x50, ReadU32(Inode, 0x50) | 0x4);    // F2FS_COMPR_FL
+            Inode[InodeAddrOff + 32] = (byte)Compression;       // i_compress_algorithm
+            Inode[InodeAddrOff + 33] = (byte)CompressClusterLog;// i_log_cluster_size
+            PutU16(Inode, InodeAddrOff + 34, 0);                // i_compress_flag
+
+            int DataBlocks = 0;
+            int PseudoBlocks = 0;
+            long ComprClusters = 0;
+
+            var Cluster = new byte[C * BlockSize];
+            for (int ci = 0; ci < Clusters; ci++)
+            {
+                int CStart = ci * C;
+                bool InInode = CStart < Dc;
+                uint Parent;
+                uint[] Arr = null;
+                int Ofs;
+
+                if (InInode) { Parent = F.Ino; Ofs = CStart; }
+                else if (CStart < Dc + Bc) { Parent = Nid1; Arr = Addr1; Ofs = CStart - Dc; }
+                else { Parent = Nid2; Arr = Addr2; Ofs = CStart - (Dc + Bc); }
+
+                Array.Clear(Cluster, 0, Cluster.Length);
+                for (int j = 0; j < C; j++)
+                {
+                    long Src = ((long)CStart + j) * BlockSize;
+                    if (Src < Data.Length)
+                    {
+                        int Len = (int)Math.Min(BlockSize, Data.Length - Src);
+                        Array.Copy(Data, Src, Cluster, j * BlockSize, Len);
+                    }
+                }
+
+                var Comp = CompressCluster(Cluster);
+                int Need = 24 + Comp.Length;
+                int N = (Need + BlockSize - 1) / BlockSize;
+
+                if (N < C)
+                {
+                    var Payload = new byte[N * BlockSize];
+                    PutU32(Payload, 0, (uint)Comp.Length);
+                    Array.Copy(Comp, 0, Payload, 24, Comp.Length);
+
+                    SetCompressedSlot(Inode, Arr, InInode, ExtraEntries, Ofs, CompressAddr);
+                    for (int i = 0; i < N; i++)
+                    {
+                        long A = AllocData(Parent, (ushort)(Ofs + 1 + i));
+                        WriteBlock(A, Chunk(Payload, i));
+                        SetCompressedSlot(Inode, Arr, InInode, ExtraEntries, Ofs + 1 + i, (uint)A);
+                    }
+                    DataBlocks += N;
+                    PseudoBlocks += 1;
+                    ComprClusters += 1;
+                }
+                else
+                {
+                    for (int j = 0; j < C; j++)
+                    {
+                        long A = AllocData(Parent, (ushort)(Ofs + j));
+                        WriteBlock(A, Chunk(Cluster, j));
+                        SetCompressedSlot(Inode, Arr, InInode, ExtraEntries, Ofs + j, (uint)A);
+                    }
+                    DataBlocks += C;
+                }
+            }
+
+            if (Nid1 != 0)
+            {
+                WriteNodeBody(F.Ino, Nid1, ToLong(Addr1, Bc), 0, Bc);
+                PutU32(Inode, InodeNidOff + 0, Nid1);
+            }
+            if (Nid2 != 0)
+            {
+                WriteNodeBody(F.Ino, Nid2, ToLong(Addr2, Bc), 0, Bc);
+                PutU32(Inode, InodeNidOff + 4, Nid2);
+            }
+
+            int Nodes = 1 + (Nid1 != 0 ? 1 : 0) + (Nid2 != 0 ? 1 : 0);
+            PutU64(Inode, 0x10, (ulong)Data.Length);
+            PutU64(Inode, InodeAddrOff + 24, (ulong)ComprClusters);
+            PutU64(Inode, 0x18, (ulong)(Nodes + DataBlocks + PseudoBlocks + ExtraXattrBlocks));
+
+            ValidExtra += PseudoBlocks;
+            WriteInode(F, Inode);
+            return true;
+        }
+
+        private byte[] CompressCluster(byte[] Data)
+        {
+            switch (Compression)
+            {
+                case F2fsCompression.Zstd:
+                    return NyaFs.ImageFormat.Compressors.ZStd.CompressWithHeader(Data);
+                case F2fsCompression.Lz4:
+                    return NyaFs.ImageFormat.Compressors.Lz4Raw.Compress(Data);
+                case F2fsCompression.Lzo:
+                    return NyaLZO.LZO1xCompressor.Compress(Data);
+                default:
+                    throw new NotSupportedException($"F2FS compression algorithm {Compression} is not implemented");
+            }
+        }
+
+        private static void SetCompressedSlot(byte[] Inode, uint[] Arr, bool InInode, int ExtraEntries, int Slot, uint Value)
+        {
+            if (InInode)
+                PutU32(Inode, InodeAddrOff + (ExtraEntries + Slot) * 4, Value);
+            else
+                Arr[Slot] = Value;
+        }
+
+        private static long[] ToLong(uint[] Src, int Count)
+        {
+            var Res = new long[Count];
+            for (int i = 0; i < Count; i++)
+                Res[i] = Src[i];
+            return Res;
+        }
+
+        private static int AlignDown(int V, int A) => (V / A) * A;
+
+        private static uint ReadU32(byte[] D, int O) => BitConverter.ToUInt32(D, O);
 
         private static byte[] Chunk(byte[] Data, int Index)
         {
@@ -877,7 +1038,7 @@ namespace NyaFs.Filesystem.F2fs
             int SitBmBytes = (SegSit / 2) * BlocksPerSeg / 8;
             int NatBmBytes = (SegNat / 2) * BlocksPerSeg / 8;
             var Cp = new byte[BlockSize];
-            uint Total = (uint)(NodeBlocks + DataBlocks);
+            uint Total = (uint)(NodeBlocks + DataBlocks + ValidExtra);
 
             PutU64(Cp, 0x00, Version);
             PutU64(Cp, 0x08, (ulong)(SegMain - (int)OverprovisionSegments) * BlocksPerSeg);
@@ -945,6 +1106,8 @@ namespace NyaFs.Filesystem.F2fs
             PutU32(Sb, 0x60, RootIno);
             PutU32(Sb, 0x64, NodeIno);
             PutU32(Sb, 0x68, MetaIno);
+            if (Compression != F2fsCompression.None)
+                PutU32(Sb, 0x884, FeatureCompression | FeatureExtraAttr);
             PutU32(Sb, 0x2A0, 0);
 
             Array.Copy(Sb, 0, Image, 1024, Sb.Length);

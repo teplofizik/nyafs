@@ -35,6 +35,10 @@ namespace NyaFs.Filesystem.F2fs
         private const int INO_ADDR = 0x168;      // i_addr[]
         private const int INO_NID = 0xFD4;       // i_nid[]
         private const int INO_XATTR_NID = 0x4C;  // i_xattr_nid
+        private const int INO_FLAGS = 0x50;      // i_flags
+        private const uint F2FS_COMPR_FL = 0x4;
+        private const int INO_COMPR_BASE = 0x168;  // i_extra_isize.. (extra attrs)
+        private const uint COMPRESS_ADDR = 0xFFFFFFFE;
         private const int ADDRS_PER_INODE = 923;
         private const int INLINE_XATTR_ADDRS = 50;   // DEFAULT_INLINE_XATTR_ADDRS
         private const uint XATTR_MAGIC = 0xF2F52011;
@@ -346,6 +350,9 @@ namespace NyaFs.Filesystem.F2fs
             if ((U16(Node, INO_MODE) & 0xF000) != 0x8000)
                 return null;
 
+            if ((U32(Node, INO_FLAGS) & F2FS_COMPR_FL) != 0)
+                return ReadCompressed(Node, Convert.ToInt64(U64(Node, INO_SIZE)));
+
             long Size = Convert.ToInt64(U64(Node, INO_SIZE));
             if (Size <= 0)
                 return new byte[0];
@@ -432,6 +439,102 @@ namespace NyaFs.Filesystem.F2fs
                     for (int i = 0; i < B; i++)
                         yield return (DB == null) ? 0u : U32(DB, i * 4);
                 }
+            }
+        }
+
+        private byte[] ReadCompressed(byte[] Node, long Size)
+        {
+            if (Size <= 0)
+                return new byte[0];
+
+            int C = 1 << Node[INO_COMPR_BASE + 33];
+            int Extra = (int)U16(Node, INO_COMPR_BASE) / 4;
+            int Xattr = ((Node[INO_INLINE] & INLINE_XATTR) != 0) ? INLINE_XATTR_ADDRS : 0;
+            int Bc0 = (BlockSize - 24) / 4;
+            int Dc = (ADDRS_PER_INODE - Extra - Xattr) / C * C;
+            int Bc = Bc0 / C * C;
+
+            var N1 = (U32(Node, INO_NID + 0) != 0) ? ReadNode(U32(Node, INO_NID + 0)) : null;
+            var N2 = (U32(Node, INO_NID + 4) != 0) ? ReadNode(U32(Node, INO_NID + 4)) : null;
+
+            uint GetAddr(long L)
+            {
+                if (L < Dc) return U32(Node, INO_ADDR + (int)(Extra + L) * 4);
+                L -= Dc;
+                if (L < Bc) return (N1 == null) ? 0u : U32(N1, (int)L * 4);
+                L -= Bc;
+                if (L < Bc) return (N2 == null) ? 0u : U32(N2, (int)L * 4);
+                return 0;
+            }
+
+            int Count = (int)((Size + BlockSize - 1) / BlockSize);
+            int Clusters = (Count + C - 1) / C;
+            var Res = new byte[Size];
+            long Done = 0;
+
+            for (int ci = 0; (ci < Clusters) && (Done < Size); ci++)
+            {
+                long Base = (long)ci * C;
+                uint A0 = GetAddr(Base);
+
+                if (A0 == COMPRESS_ADDR)
+                {
+                    var First = ReadBlockRaw(GetAddr(Base + 1));
+                    int Clen = (First == null) ? 0 : (int)U32(First, 0);
+                    int N = (24 + Clen + BlockSize - 1) / BlockSize;
+
+                    var Payload = new byte[N * BlockSize];
+                    for (int i = 0; i < N; i++)
+                    {
+                        var B = ReadBlockRaw(GetAddr(Base + 1 + i));
+                        if (B != null)
+                            Array.Copy(B, 0, Payload, i * BlockSize, BlockSize);
+                    }
+
+                    var Comp = new byte[Clen];
+                    Array.Copy(Payload, 24, Comp, 0, Clen);
+                    var Dec = DecompressCluster(Node[INO_COMPR_BASE + 32], Comp, C * BlockSize);
+                    int Len = (int)Math.Min(C * BlockSize, Size - Done);
+                    Array.Copy(Dec, 0, Res, Done, Len);
+                    Done += Len;
+                }
+                else
+                {
+                    for (int j = 0; (j < C) && (Done < Size); j++)
+                    {
+                        var B = ReadBlockRaw(GetAddr(Base + j));
+                        int Len = (int)Math.Min(BlockSize, Size - Done);
+                        if (B != null)
+                            Array.Copy(B, 0, Res, Done, Len);
+                        Done += Len;
+                    }
+                }
+            }
+
+            return Res;
+        }
+
+        private static byte[] DecompressCluster(byte Algo, byte[] Comp, int Expected)
+        {
+            switch (Algo)
+            {
+                case 2:
+                    return NyaFs.ImageFormat.Compressors.ZStd.Decompress(Comp);
+                case 1:
+                    return NyaFs.ImageFormat.Compressors.Lz4Raw.Decompress(Comp, Expected);
+                case 0:
+                    {
+                        var Raw = NyaLZO.LZO1xDecompressor.Decompress(Comp);
+                        if (Raw == null)
+                            return new byte[Expected];
+                        if (Raw.Length >= Expected)
+                            return Raw;
+                        var Res = new byte[Expected];
+                        Array.Copy(Raw, Res, Raw.Length);
+                        return Res;
+                    }
+                default:
+                    throw new NotSupportedException($"F2FS compression algorithm {Algo} is not supported");
             }
         }
 

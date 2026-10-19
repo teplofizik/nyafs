@@ -30,7 +30,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(Elements.Fs.LinuxFilesystem Fs)
         {
             long Size = (Fs.FsSize > 0) ? Fs.FsSize : 64L * 1024 * 1024;
-            return new Elements.Fs.Writer.BaseFsWriter(new Filesystem.F2fs.F2fsFsBuilder(Size));
+            return new Elements.Fs.Writer.BaseFsWriter(new Filesystem.F2fs.F2fsFsBuilder(Size) { Compression = Fs.F2fsCompression });
         }
     }
 }

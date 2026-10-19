@@ -61,6 +61,7 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Fs.Rm());
             Add(new Commands.Fs.Chmod());
             Add(new Commands.Fs.Chown());
+            Add(new Commands.Fs.Xattr());
             Add(new Commands.Fs.Mkfs());
 
             // mknod

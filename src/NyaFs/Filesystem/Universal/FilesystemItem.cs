@@ -38,6 +38,9 @@ namespace NyaFs.Filesystem.Universal
 
         public uint Mode; // Access rights 12 bit 4 4 4
 
+        /// <summary>Extended attributes (full name -> raw value). Empty when the item has none.</summary>
+        public readonly Dictionary<string, byte[]> Xattrs = new Dictionary<string, byte[]>();
+
         public string Filename
         {
             get { return IntFilename; }

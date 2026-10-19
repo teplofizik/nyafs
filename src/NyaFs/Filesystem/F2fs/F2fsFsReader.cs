@@ -34,6 +34,10 @@ namespace NyaFs.Filesystem.F2fs
         private const int INO_SIZE = 0x10;
         private const int INO_ADDR = 0x168;      // i_addr[]
         private const int INO_NID = 0xFD4;       // i_nid[]
+        private const int INO_XATTR_NID = 0x4C;  // i_xattr_nid
+        private const int ADDRS_PER_INODE = 923;
+        private const int INLINE_XATTR_ADDRS = 50;   // DEFAULT_INLINE_XATTR_ADDRS
+        private const uint XATTR_MAGIC = 0xF2F52011;
 
         private const byte INLINE_XATTR = 0x01;
         private const byte INLINE_DATA = 0x02;
@@ -244,12 +248,91 @@ namespace NyaFs.Filesystem.F2fs
                         Size = 0;
                 }
 
-                Res.Add(new FilesystemEntry(E.Type, Universal.Helper.FsHelper.CombinePath(Path, E.Name), 0, 0, Perm, Size));
+                var Entry = new FilesystemEntry(E.Type, Universal.Helper.FsHelper.CombinePath(Path, E.Name), 0, 0, Perm, Size);
+                var Xattrs = ParseXattrs(Child);
+                if (Xattrs != null)
+                    Entry.Xattrs = Xattrs;
+
+                Res.Add(Entry);
             }
 
             // skip unsupported entries
             Res.RemoveAll(E => E.NodeType == FilesystemItemType.Unknown);
             return Res.ToArray();
+        }
+
+        private static string XattrPrefix(byte Index)
+        {
+            switch (Index)
+            {
+                case 1: return "user.";
+                case 2: return "system.posix_acl_access";
+                case 3: return "system.posix_acl_default";
+                case 4: return "trusted.";
+                case 5: return "lustre.";
+                case 6: return "security.";
+                case 7: return "system.advise";
+                case 9: return "encryption.";
+                case 11: return "verity.";
+                default: return null;
+            }
+        }
+
+        private Dictionary<string, byte[]> ParseXattrs(byte[] Node)
+        {
+            if (Node == null)
+                return null;
+
+            Dictionary<string, byte[]> Res = null;
+
+            if ((Node[INO_INLINE] & INLINE_XATTR) != 0)
+            {
+                int Off = INO_ADDR + (ADDRS_PER_INODE - INLINE_XATTR_ADDRS) * 4;
+                ParseXattrBlock(Node, Off, INLINE_XATTR_ADDRS * 4, ref Res);
+            }
+
+            uint Xnid = U32(Node, INO_XATTR_NID);
+            if (Xnid != 0)
+            {
+                var Blk = ReadNode(Xnid);
+                if (Blk != null)
+                    ParseXattrBlock(Blk, 0, BlockSize - 24, ref Res);
+            }
+
+            return Res;
+        }
+
+        private static void ParseXattrBlock(byte[] B, int Off, int Max, ref Dictionary<string, byte[]> Res)
+        {
+            if ((Off + 4 > B.Length) || (U32(B, Off) != XATTR_MAGIC))
+                return;
+
+            int P = Off + 24;
+            int End = Math.Min(B.Length, Off + Max) - 4;
+
+            while ((P + 4 <= B.Length) && (P <= End))
+            {
+                if (U32(B, P) == 0)
+                    break;
+
+                byte Index = B[P];
+                int NameLen = B[P + 1];
+                int ValueSize = (int)U16(B, P + 2);
+                int NamePos = P + 4;
+                int ValuePos = NamePos + NameLen;
+
+                var Prefix = XattrPrefix(Index);
+                if ((Prefix != null) && (ValuePos + ValueSize <= B.Length))
+                {
+                    var Name = Prefix + Encoding.UTF8.GetString(B, NamePos, NameLen);
+                    var Value = new byte[ValueSize];
+                    Array.Copy(B, ValuePos, Value, 0, ValueSize);
+                    (Res ?? (Res = new Dictionary<string, byte[]>()))[Name] = Value;
+                }
+
+                int EntrySize = 4 + NameLen + ValueSize;
+                P += (EntrySize + 3) & ~3;
+            }
         }
 
         public byte[] Read(string Path)

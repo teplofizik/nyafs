@@ -49,32 +49,35 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
 
             foreach (var E in Elements)
             {
+                Filesystem.Universal.FilesystemItem Created = null;
+
                 switch (E.NodeType)
                 {
                     case Filesystem.Universal.Types.FilesystemItemType.Directory:
                         {
                             var SubDir = new Filesystem.Universal.Items.Dir(E.Path, E.User, E.Group, E.HexMode);
                             Dir.Items.Add(SubDir);
+                            Created = SubDir;
                             ImportDir(SubDir, E.Path);
                         }
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.File:
                         {
                             var Data = FsReader.Read(E.Path) ?? new byte[0];
-                            var File = new Filesystem.Universal.Items.File(E.Path, E.User, E.Group, E.HexMode, Data);
-                            Dir.Items.Add(File);
+                            Created = new Filesystem.Universal.Items.File(E.Path, E.User, E.Group, E.HexMode, Data);
+                            Dir.Items.Add(Created);
                         }
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.SymLink:
                         {
-                            var Link = new Filesystem.Universal.Items.SymLink(E.Path, E.User, E.Group, E.HexMode, FsReader.ReadLink(E.Path));
-                            Dir.Items.Add(Link);
+                            Created = new Filesystem.Universal.Items.SymLink(E.Path, E.User, E.Group, E.HexMode, FsReader.ReadLink(E.Path));
+                            Dir.Items.Add(Created);
                         }
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.Fifo:
                         {
-                            var Fifo = new Filesystem.Universal.Items.Fifo(E.Path, E.User, E.Group, E.HexMode);
-                            Dir.Items.Add(Fifo);
+                            Created = new Filesystem.Universal.Items.Fifo(E.Path, E.User, E.Group, E.HexMode);
+                            Dir.Items.Add(Created);
                         }
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.Character:
@@ -83,6 +86,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                             var Char = new Filesystem.Universal.Items.Char(E.Path, E.User, E.Group, E.HexMode);
                             Char.Major = DevInfo?.Major ?? 0;
                             Char.Minor = DevInfo?.Minor ?? 0;
+                            Created = Char;
                             Dir.Items.Add(Char);
                         }
                         break;
@@ -92,9 +96,16 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                             var Block = new Filesystem.Universal.Items.Block(E.Path, E.User, E.Group, E.HexMode);
                             Block.Major = DevInfo?.Major ?? 0;
                             Block.Minor = DevInfo?.Minor ?? 0;
+                            Created = Block;
                             Dir.Items.Add(Block);
                         }
                         break;
+                }
+
+                if ((Created != null) && (E.Xattrs != null))
+                {
+                    foreach (var X in E.Xattrs)
+                        Created.Xattrs[X.Key] = X.Value;
                 }
             }
         }

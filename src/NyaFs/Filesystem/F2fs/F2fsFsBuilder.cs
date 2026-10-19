@@ -9,7 +9,7 @@ namespace NyaFs.Filesystem.F2fs
     /// F2FS image builder: empty filesystem (mkfs-like) and writing a directory tree
     /// (inodes, dentry blocks, data blocks, direct-node blocks) with NAT/SIT/SSA/checkpoint.
     /// </summary>
-    public class F2fsFsBuilder : Universal.IFilesystemBuilder
+    public class F2fsFsBuilder : Universal.IFilesystemBuilder, Universal.IXattrBuilder
     {
         public const int BlockSize = 4096;
         public const int BlocksPerSeg = 512;
@@ -28,7 +28,10 @@ namespace NyaFs.Filesystem.F2fs
         private const int AddrsPerBlock = 1018;
         private const int InodeAddrOff = 0x168;
         private const int InodeNidOff = 0xFD4;
+        private const int InodeXattrNidOff = 0x4C;
         private const int FooterOff = 0xFE8;
+        private const int InlineXattrAddrs = 50;             // DEFAULT_INLINE_XATTR_ADDRS
+        private const uint XattrMagic = 0xF2F52011;
 
         public readonly long TotalBytes;
         public uint RootIno = 3;
@@ -84,6 +87,7 @@ namespace NyaFs.Filesystem.F2fs
             public uint Rdev;
             public uint Ino;
             public readonly List<Node> Children = new List<Node>();
+            public readonly Dictionary<string, byte[]> Xattrs = new Dictionary<string, byte[]>();
             public int DirLevel;
             public int[] ChildBlock;
             public int[] ChildSlot;
@@ -123,6 +127,28 @@ namespace NyaFs.Filesystem.F2fs
 
         public void Socket(string Path, uint User, uint Group, uint Mode) =>
             GetOrCreate(Path, User, Group, Mode, 0xC000, null, 0);
+
+        public void Xattr(string Path, string Name, byte[] Value)
+        {
+            EnsureRoot();
+            var N = ResolveNode(Path);
+            if (N != null)
+                N.Xattrs[Name] = Value ?? Array.Empty<byte>();
+        }
+
+        private Node ResolveNode(string Path)
+        {
+            var Parts = (Path ?? "").Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            var Cur = Root;
+            foreach (var P in Parts)
+            {
+                var Next = Cur.Children.Find(C => C.Name == P);
+                if (Next == null)
+                    return null;
+                Cur = Next;
+            }
+            return Cur;
+        }
 
         private void GetOrCreate(string Path, uint User, uint Group, uint Mode, uint Type, byte[] Content, uint Rdev)
         {
@@ -220,6 +246,9 @@ namespace NyaFs.Filesystem.F2fs
             (Minor & 0xFF) | (Major << 8) | ((Minor & ~0xFFu) << 12);
 
         // ---- geometry ----
+        // NOTE: fixed geometry (segs_per_sec=1, secs_per_zone=1, constant rsvd/overprov)
+        // is only valid for small images (< 512 MiB); larger images need mkfs-like
+        // section/zone/overprovision calculation.
 
         private static int AlignUp(int V, int A) => ((V + A - 1) / A) * A;
 
@@ -367,7 +396,11 @@ namespace NyaFs.Filesystem.F2fs
                 if (KV.Key > MaxBlock)
                     MaxBlock = KV.Key;
 
-            if (MaxBlock + 1 > AddrsPerInode)
+            var Inode = NewInode(D);
+            int XattrAddrs = AddXattrs(D, Inode, out int ExtraXattrBlocks);
+            int Cap = AddrsPerInode - XattrAddrs;
+
+            if (MaxBlock + 1 > Cap)
                 throw new ArgumentException("F2FS: directory too large");
 
             var Blocks = new byte[MaxBlock + 1][];
@@ -387,7 +420,6 @@ namespace NyaFs.Filesystem.F2fs
                 WriteDentry(Blocks[ChildBlock[i]], ChildSlot[i], Nb, C.Ino, TeaHash(Nb), C.Type);
             }
 
-            var Inode = NewInode(D);
             for (int b = 0; b <= MaxBlock; b++)
             {
                 long Addr = AllocData(D.Ino, (ushort)b);
@@ -396,7 +428,7 @@ namespace NyaFs.Filesystem.F2fs
             }
 
             PutU64(Inode, 0x10, (ulong)(MaxBlock + 1) * BlockSize);
-            PutU64(Inode, 0x18, (ulong)(1 + MaxBlock + 1));
+            PutU64(Inode, 0x18, (ulong)(1 + MaxBlock + 1 + ExtraXattrBlocks));
             PutU32(Inode, 0x48, (uint)CurrentDepth);
             Inode[0x15B] = 0;
 
@@ -444,21 +476,24 @@ namespace NyaFs.Filesystem.F2fs
             var Inode = NewInode(F);
             byte[] Data = F.Data ?? Array.Empty<byte>();
 
+            int XattrAddrs = AddXattrs(F, Inode, out int ExtraXattrBlocks);
+            int D = AddrsPerInode - XattrAddrs;
+
             if (F.Type >= 3 && F.Type <= 6)
             {
                 PutU32(Inode, InodeAddrOff, F.Rdev);
                 PutU64(Inode, 0x10, 0);
-                PutU64(Inode, 0x18, 1);
+                PutU64(Inode, 0x18, (ulong)(1 + ExtraXattrBlocks));
                 WriteInode(F, Inode);
                 return;
             }
 
-            if (F.Type == 7 && Data.Length <= (AddrsPerInode - 1) * 4)
+            if (F.Type == 7 && (Data.Length <= (D - 1) * 4))
             {
                 Inode[3] |= 0x0A;                    // F2FS_INLINE_DATA | F2FS_DATA_EXIST
                 Array.Copy(Data, 0, Inode, InodeAddrOff + 4, Data.Length);
                 PutU64(Inode, 0x10, (ulong)Data.Length);
-                PutU64(Inode, 0x18, 1);
+                PutU64(Inode, 0x18, (ulong)(1 + ExtraXattrBlocks));
                 WriteInode(F, Inode);
                 return;
             }
@@ -466,7 +501,7 @@ namespace NyaFs.Filesystem.F2fs
             int Count = (Data.Length + BlockSize - 1) / BlockSize;
             int B = AddrsPerBlock;
             long IND = (long)B * B;
-            long Base1 = AddrsPerInode + 2L * B;
+            long Base1 = D + 2L * B;
             long Base2 = Base1 + IND;
             long Base3 = Base2 + IND;
             if (Count > Base3 + (long)B * B * B)
@@ -480,8 +515,8 @@ namespace NyaFs.Filesystem.F2fs
             var DindIndirects = new List<uint>();
             var DindDnodes = new List<List<uint>>();
 
-            if (Count > AddrsPerInode) NidDir1 = (uint)NextFreeNid++;
-            if (Count > AddrsPerInode + B) NidDir2 = (uint)NextFreeNid++;
+            if (Count > D) NidDir1 = (uint)NextFreeNid++;
+            if (Count > D + B) NidDir2 = (uint)NextFreeNid++;
 
             if (Count > Base1)
             {
@@ -522,9 +557,9 @@ namespace NyaFs.Filesystem.F2fs
             {
                 uint Parent = F.Ino;
                 int Ofs;
-                if (i < AddrsPerInode) { Ofs = i; }
-                else if (i < AddrsPerInode + B) { Parent = NidDir1; Ofs = i - AddrsPerInode; }
-                else if (i < AddrsPerInode + 2 * B) { Parent = NidDir2; Ofs = i - (AddrsPerInode + B); }
+                if (i < D) { Ofs = i; }
+                else if (i < D + B) { Parent = NidDir1; Ofs = i - D; }
+                else if (i < D + 2 * B) { Parent = NidDir2; Ofs = i - (D + B); }
                 else if (i < Base2)
                 {
                     int g = (int)((i - Base1) / B);
@@ -551,18 +586,18 @@ namespace NyaFs.Filesystem.F2fs
                 WriteBlock(A[i], Chunk(Data, i));
             }
 
-            for (int i = 0; i < Math.Min(Count, AddrsPerInode); i++)
+            for (int i = 0; i < Math.Min(Count, D); i++)
                 PutU32(Inode, InodeAddrOff + i * 4, (uint)A[i]);
 
             if (NidDir1 != 0)
             {
-                WriteNodeBody(F.Ino, NidDir1, A, AddrsPerInode, Math.Min(Count - AddrsPerInode, B));
+                WriteNodeBody(F.Ino, NidDir1, A, D, Math.Min(Count - D, B));
                 PutU32(Inode, InodeNidOff + 0, NidDir1);
             }
 
             if (NidDir2 != 0)
             {
-                WriteNodeBody(F.Ino, NidDir2, A, AddrsPerInode + B, (int)Math.Min(Count - (AddrsPerInode + B), B));
+                WriteNodeBody(F.Ino, NidDir2, A, D + B, (int)Math.Min(Count - (D + B), B));
                 PutU32(Inode, InodeNidOff + 4, NidDir2);
             }
 
@@ -599,7 +634,7 @@ namespace NyaFs.Filesystem.F2fs
             }
 
             PutU64(Inode, 0x10, (ulong)Data.Length);
-            PutU64(Inode, 0x18, (ulong)(1 + Count + NodeBlocksUsed));
+            PutU64(Inode, 0x18, (ulong)(1 + Count + NodeBlocksUsed + ExtraXattrBlocks));
             WriteInode(F, Inode);
         }
 
@@ -663,13 +698,13 @@ namespace NyaFs.Filesystem.F2fs
             WriteNodeBlock(Addr, N.Ino, N.Ino, Inode);
         }
 
-        private void WriteNodeBlock(long Addr, uint Nid, uint Ino, byte[] Body)
+        private void WriteNodeBlock(long Addr, uint Nid, uint Ino, byte[] Body, uint Flag = 0)
         {
             var Blk = new byte[BlockSize];
             Array.Copy(Body, Blk, BlockSize);
             PutU32(Blk, FooterOff + 0, Nid);
             PutU32(Blk, FooterOff + 4, Ino);
-            PutU32(Blk, FooterOff + 8, 0);
+            PutU32(Blk, FooterOff + 8, Flag);
             PutU64(Blk, FooterOff + 12, CpVersion);
             PutU32(Blk, FooterOff + 20, (uint)(Addr + 1));
             WriteBlock(Addr, Blk);
@@ -914,6 +949,90 @@ namespace NyaFs.Filesystem.F2fs
 
             Array.Copy(Sb, 0, Image, 1024, Sb.Length);
             Array.Copy(Sb, 0, Image, 1024 + BlockSize, Sb.Length);
+        }
+
+        // ---- xattr ----
+
+        private static bool SplitXattrName(string Name, out byte Index, out string Rest)
+        {
+            if (Name == "system.posix_acl_access") { Index = 2; Rest = ""; return true; }
+            if (Name == "system.posix_acl_default") { Index = 3; Rest = ""; return true; }
+            if (Name == "system.advise") { Index = 7; Rest = ""; return true; }
+            if (Name.StartsWith("user.")) { Index = 1; Rest = Name.Substring(5); return true; }
+            if (Name.StartsWith("trusted.")) { Index = 4; Rest = Name.Substring(8); return true; }
+            if (Name.StartsWith("lustre.")) { Index = 5; Rest = Name.Substring(7); return true; }
+            if (Name.StartsWith("security.")) { Index = 6; Rest = Name.Substring(9); return true; }
+            if (Name.StartsWith("encryption.")) { Index = 9; Rest = Name.Substring(11); return true; }
+            if (Name.StartsWith("verity.")) { Index = 11; Rest = Name.Substring(7); return true; }
+
+            Index = 0;
+            Rest = null;
+            return false;
+        }
+
+        private byte[] BuildXattrBody(Node N)
+        {
+            var Names = new List<string>(N.Xattrs.Keys);
+            Names.Sort(StringComparer.Ordinal);
+
+            var B = new List<byte>();
+            void W16(ushort v) { B.Add((byte)v); B.Add((byte)(v >> 8)); }
+            void W32(uint v) { B.Add((byte)v); B.Add((byte)(v >> 8)); B.Add((byte)(v >> 16)); B.Add((byte)(v >> 24)); }
+
+            W32(XattrMagic);
+            W32(1);
+            W32(0); W32(0); W32(0); W32(0);
+
+            foreach (var Name in Names)
+            {
+                if (!SplitXattrName(Name, out byte Index, out string Rest))
+                    throw new ArgumentException($"F2FS: unsupported xattr name '{Name}'");
+
+                var Nb = Encoding.UTF8.GetBytes(Rest);
+                var V = N.Xattrs[Name] ?? Array.Empty<byte>();
+                B.Add(Index);
+                B.Add((byte)Nb.Length);
+                W16((ushort)V.Length);
+                B.AddRange(Nb);
+                B.AddRange(V);
+                while ((B.Count % 4) != 0)
+                    B.Add(0);
+            }
+
+            W32(0);
+            return B.ToArray();
+        }
+
+        private int AddXattrs(Node N, byte[] Inode, out int ExtraBlocks)
+        {
+            ExtraBlocks = 0;
+            if (N.Xattrs.Count == 0)
+                return 0;
+
+            var Body = BuildXattrBody(N);
+            int AreaOff = InodeAddrOff + (AddrsPerInode - InlineXattrAddrs) * 4;
+            int AreaSize = InlineXattrAddrs * 4;
+
+            if (Body.Length <= AreaSize)
+            {
+                Inode[3] |= 0x01;                             // F2FS_INLINE_XATTR
+                Array.Copy(Body, 0, Inode, AreaOff, Body.Length);
+                return InlineXattrAddrs;
+            }
+
+            // External xattr node: inline flag must stay clear, otherwise the kernel
+            // reads the (empty) inline area as the xattr header.
+            if (Body.Length > BlockSize - 24)
+                throw new ArgumentException($"F2FS: xattrs of '{N.Name}' are too large");
+
+            uint Xnid = (uint)NextFreeNid++;
+            long Xaddr = AllocNode(Xnid, N.Ino);
+            var Blk = new byte[BlockSize];
+            Array.Copy(Body, 0, Blk, 0, Body.Length);
+            WriteNodeBlock(Xaddr, Xnid, N.Ino, Blk, 0xFFFFFFFFu);   // ofs = XATTR_NODE_OFFSET
+            PutU32(Inode, InodeXattrNidOff, Xnid);
+            ExtraBlocks = 1;
+            return 0;
         }
 
         // ---- hash ----

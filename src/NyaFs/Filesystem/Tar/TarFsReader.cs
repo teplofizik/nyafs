@@ -25,6 +25,7 @@ namespace NyaFs.Filesystem.Tar
             public string Link;
             public uint Major;
             public uint Minor;
+            public Dictionary<string, byte[]> Xattrs;
         }
 
         private readonly List<Node> Nodes = new List<Node>();
@@ -90,6 +91,9 @@ namespace NyaFs.Filesystem.Tar
             long Offset = 0;
             string LongName = null;
             string LongLink = null;
+            Dictionary<string, byte[]> PaxXattrs = null;
+            string PaxPath = null;
+            string PaxLink = null;
 
             while (Offset + Types.TarHeader.HeaderSize <= Raw.Length)
             {
@@ -114,10 +118,19 @@ namespace NyaFs.Filesystem.Tar
                     continue;
                 }
 
-                var Name = LongName ?? Header.FullName;
-                var Link = LongLink ?? Header.LinkName;
+                if ((Header.TypeFlagByte == (byte)'x') || (Header.TypeFlagByte == (byte)'g'))
+                {
+                    ParsePax(ReadData(DataOffset, Size), ref PaxXattrs, ref PaxPath, ref PaxLink);
+                    Offset = DataOffset + Align512(Size);
+                    continue;
+                }
+
+                var Name = PaxPath ?? LongName ?? Header.FullName;
+                var Link = PaxLink ?? LongLink ?? Header.LinkName;
                 LongName = null;
                 LongLink = null;
+                PaxPath = null;
+                PaxLink = null;
 
                 var Path = Normalize(Name);
                 if (Path.Length == 0)
@@ -144,11 +157,56 @@ namespace NyaFs.Filesystem.Tar
                         ContentOffset = DataOffset,
                         Link = Link,
                         Major = Convert.ToUInt32(Header.DevMajor),
-                        Minor = Convert.ToUInt32(Header.DevMinor)
+                        Minor = Convert.ToUInt32(Header.DevMinor),
+                        Xattrs = PaxXattrs
                     });
                 }
 
+                PaxXattrs = null;
+
                 Offset = DataOffset + Align512(Size);
+            }
+        }
+
+        private static void ParsePax(byte[] Body, ref Dictionary<string, byte[]> Xattrs, ref string Path, ref string Link)
+        {
+            int P = 0;
+            while (P < Body.Length)
+            {
+                int Sp = Array.IndexOf(Body, (byte)' ', P);
+                if (Sp < 0) break;
+
+                if (!int.TryParse(Encoding.ASCII.GetString(Body, P, Sp - P), out int Len) || (Len <= 0))
+                    break;
+
+                int RecEnd = Math.Min(P + Len, Body.Length);
+                int Eq = Array.IndexOf(Body, (byte)'=', Sp + 1, RecEnd - (Sp + 1));
+                if (Eq < 0) { P += Len; continue; }
+
+                var Key = Encoding.UTF8.GetString(Body, Sp + 1, Eq - (Sp + 1));
+                int ValueLen = RecEnd - (Eq + 1);
+                if ((ValueLen > 0) && (Body[RecEnd - 1] == (byte)'\n'))
+                    ValueLen--;
+
+                var Val = new byte[ValueLen];
+                Array.Copy(Body, Eq + 1, Val, 0, ValueLen);
+
+                if (Key.StartsWith("LIBARCHIVE.xattr.", StringComparison.Ordinal) && (Key.Length > 17))
+                {
+                    try { Xattrs = Xattrs ?? new Dictionary<string, byte[]>(); Xattrs[Key.Substring(17)] = Convert.FromBase64String(Encoding.ASCII.GetString(Val)); }
+                    catch { }
+                }
+                else if (Key.StartsWith("SCHILY.xattr.", StringComparison.Ordinal) && (Key.Length > 13))
+                {
+                    Xattrs = Xattrs ?? new Dictionary<string, byte[]>();
+                    Xattrs[Key.Substring(13)] = Val;
+                }
+                else if (Key == "path")
+                    Path = Encoding.UTF8.GetString(Val);
+                else if (Key == "linkpath")
+                    Link = Encoding.UTF8.GetString(Val);
+
+                P += Len;
             }
         }
 
@@ -214,7 +272,12 @@ namespace NyaFs.Filesystem.Tar
             {
                 if (N.Path.Length == 0) continue;
                 if (ParentOf(N.Path) == Normalized)
-                    Res.Add(new FilesystemEntry(N.Type, N.Path, N.User, N.Group, N.Mode, Convert.ToUInt32(N.Size)));
+                {
+                    var Entry = new FilesystemEntry(N.Type, N.Path, N.User, N.Group, N.Mode, Convert.ToUInt32(N.Size));
+                    if (N.Xattrs != null)
+                        Entry.Xattrs = N.Xattrs;
+                    Res.Add(Entry);
+                }
             }
 
             return Res.ToArray();

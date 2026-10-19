@@ -38,6 +38,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
         private void ProcessDirectory(Filesystem.Universal.Items.Dir Dir)
         {
             Builder.Directory(Dir.Filename, Dir.User, Dir.Group, Dir.Mode);
+            Attach(Dir);
             foreach (var I in Dir.Items)
             {
                 switch (I.ItemType)
@@ -47,27 +48,41 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.File:
                         Builder.File(I.Filename, (I as Filesystem.Universal.Items.File).Content, I.User, I.Group, I.Mode);
+                        Attach(I);
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.SymLink:
                         Builder.SymLink(I.Filename, (I as Filesystem.Universal.Items.SymLink).Target, I.User, I.Group, I.Mode);
+                        Attach(I);
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.Character:
                         {
                             var C = I as Filesystem.Universal.Items.Char;
                             Builder.Char(I.Filename, C.Major, C.Minor, I.User, I.Group, I.Mode);
+                            Attach(I);
                         }
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.Block:
                         {
                             var B = I as Filesystem.Universal.Items.Block;
                             Builder.Block(I.Filename, B.Major, B.Minor, I.User, I.Group, I.Mode);
+                            Attach(I);
                         }
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.Fifo:
                         Builder.Fifo(I.Filename, I.User, I.Group, I.Mode);
+                        Attach(I);
                         break;
                 }
             }
+        }
+
+        private void Attach(Filesystem.Universal.FilesystemItem I)
+        {
+            if ((I.Xattrs.Count == 0) || !(Builder is Filesystem.Universal.IXattrBuilder Xb))
+                return;
+
+            foreach (var X in I.Xattrs)
+                Xb.Xattr(I.Filename, X.Key, X.Value);
         }
 
         public override bool HasRawStreamData => (FsData != null);

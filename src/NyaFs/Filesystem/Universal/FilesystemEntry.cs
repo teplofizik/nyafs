@@ -15,6 +15,9 @@ namespace NyaFs.Filesystem.Universal
 
         public readonly string ShortName;
 
+        /// <summary>Extended attributes (full name -> raw value), or null when not reported.</summary>
+        public Dictionary<string, byte[]> Xattrs;
+
         public FilesystemEntry(Types.FilesystemItemType NodeType, string Path, uint User, uint Group, uint Mode, uint Size)
         {
             this.NodeType = NodeType;

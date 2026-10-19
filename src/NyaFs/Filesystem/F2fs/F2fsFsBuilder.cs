@@ -305,7 +305,7 @@ namespace NyaFs.Filesystem.F2fs
 
             WriteSuperblock();
             WriteTree(Root);
-            Finalize();
+            FinalizeImage();
 
             return Image;
         }
@@ -672,26 +672,81 @@ namespace NyaFs.Filesystem.F2fs
 
         private bool TryCompressFile(Node F, byte[] Data, byte[] Inode, int XattrAddrs, int ExtraXattrBlocks)
         {
-            if (Compression == F2fsCompression.LzoRle)
-                throw new NotSupportedException("F2FS LZORLE compression is not implemented yet");
-
             int C = 1 << CompressClusterLog;
             int ExtraEntries = CompressionExtraIsize / 4;
             int Dc = AlignDown(AddrsPerInode - ExtraEntries - XattrAddrs, C);
             int Bc = AlignDown(AddrsPerBlock, C);
+            long IND = (long)Bc * Bc;
+
+            long R1 = Dc, R2 = Dc + Bc, R3 = Dc + 2L * Bc;
+            long R4 = R3 + IND, R5 = R4 + IND;
+            long MaxCap = R5 + (long)Bc * Bc * Bc;
 
             int Count = (Data.Length + BlockSize - 1) / BlockSize;
             int Clusters = (Count + C - 1) / C;
             long MaxBlock = (long)Clusters * C;
-            if (MaxBlock > Dc + 2L * Bc)
+            if (MaxBlock > MaxCap)
                 return false;
 
-            uint Nid1 = 0, Nid2 = 0;
-            if (MaxBlock > Dc) Nid1 = (uint)NextFreeNid++;
-            if (MaxBlock > Dc + Bc) Nid2 = (uint)NextFreeNid++;
+            uint Nid1 = 0, Nid2 = 0, Ind1 = 0, Ind2 = 0, Dind = 0;
+            List<uint> Ind1Dn = null, Ind2Dn = null, DindInd = null;
+            List<List<uint>> DindDn = null;
+            var DnAddr = new Dictionary<uint, uint[]>();
 
-            var Addr1 = new uint[Bc];
-            var Addr2 = new uint[Bc];
+            uint AllocDnode()
+            {
+                uint N = (uint)NextFreeNid++;
+                DnAddr[N] = new uint[Bc];
+                return N;
+            }
+
+            if (MaxBlock > Dc) Nid1 = AllocDnode();
+            if (MaxBlock > R2) Nid2 = AllocDnode();
+
+            if (MaxBlock > R3)
+            {
+                long Last = Math.Min(MaxBlock, R4);
+                int G = (int)((Last - R3 + Bc - 1) / Bc);
+                Ind1Dn = new List<uint>();
+                for (int i = 0; i < G; i++) Ind1Dn.Add(AllocDnode());
+                Ind1 = (uint)NextFreeNid++;
+            }
+            if (MaxBlock > R4)
+            {
+                long Last = Math.Min(MaxBlock, R5);
+                int G = (int)((Last - R4 + Bc - 1) / Bc);
+                Ind2Dn = new List<uint>();
+                for (int i = 0; i < G; i++) Ind2Dn.Add(AllocDnode());
+                Ind2 = (uint)NextFreeNid++;
+            }
+            if (MaxBlock > R5)
+            {
+                long Rem = MaxBlock - R5;
+                long G1 = (Rem + IND - 1) / IND;
+                DindDn = new List<List<uint>>();
+                DindInd = new List<uint>();
+                for (long i = 0; i < G1; i++)
+                {
+                    long R = Math.Min(Rem - i * IND, IND);
+                    int G2 = (int)((R + Bc - 1) / Bc);
+                    var L = new List<uint>();
+                    for (int j = 0; j < G2; j++) L.Add(AllocDnode());
+                    DindDn.Add(L);
+                    DindInd.Add((uint)NextFreeNid++);
+                }
+                Dind = (uint)NextFreeNid++;
+            }
+
+            int DindDnCount = 0;
+            if (DindDn != null)
+                foreach (var L in DindDn)
+                    DindDnCount += L.Count;
+
+            int Nodes = 1
+                + (Nid1 != 0 ? 1 : 0) + (Nid2 != 0 ? 1 : 0)
+                + (Ind1Dn != null ? Ind1Dn.Count + 1 : 0)
+                + (Ind2Dn != null ? Ind2Dn.Count + 1 : 0)
+                + (Dind != 0 ? DindDnCount + DindInd.Count + 1 : 0);
 
             Inode[3] |= 0x20;                                   // F2FS_EXTRA_ATTR
             PutU16(Inode, InodeAddrOff, CompressionExtraIsize);
@@ -707,20 +762,33 @@ namespace NyaFs.Filesystem.F2fs
             var Cluster = new byte[C * BlockSize];
             for (int ci = 0; ci < Clusters; ci++)
             {
-                int CStart = ci * C;
-                bool InInode = CStart < Dc;
+                long S = (long)ci * C;
+                bool InInode;
                 uint Parent;
                 uint[] Arr = null;
                 int Ofs;
 
-                if (InInode) { Parent = F.Ino; Ofs = CStart; }
-                else if (CStart < Dc + Bc) { Parent = Nid1; Arr = Addr1; Ofs = CStart - Dc; }
-                else { Parent = Nid2; Arr = Addr2; Ofs = CStart - (Dc + Bc); }
+                if (S < Dc) { InInode = true; Parent = F.Ino; Ofs = (int)S; }
+                else if (S < R2) { InInode = false; Parent = Nid1; Arr = DnAddr[Nid1]; Ofs = (int)(S - Dc); }
+                else if (S < R3) { InInode = false; Parent = Nid2; Arr = DnAddr[Nid2]; Ofs = (int)(S - R2); }
+                else if (S < R4) { InInode = false; long lo = S - R3; int dg = (int)(lo / Bc); Parent = Ind1Dn[dg]; Arr = DnAddr[Parent]; Ofs = (int)(lo % Bc); }
+                else if (S < R5) { InInode = false; long lo = S - R4; int dg = (int)(lo / Bc); Parent = Ind2Dn[dg]; Arr = DnAddr[Parent]; Ofs = (int)(lo % Bc); }
+                else
+                {
+                    long lo = S - R5;
+                    int g1i = (int)(lo / IND);
+                    long rr = lo % IND;
+                    int g2 = (int)(rr / Bc);
+                    InInode = false;
+                    Parent = DindDn[g1i][g2];
+                    Arr = DnAddr[Parent];
+                    Ofs = (int)(rr % Bc);
+                }
 
                 Array.Clear(Cluster, 0, Cluster.Length);
                 for (int j = 0; j < C; j++)
                 {
-                    long Src = ((long)CStart + j) * BlockSize;
+                    long Src = (S + j) * BlockSize;
                     if (Src < Data.Length)
                     {
                         int Len = (int)Math.Min(BlockSize, Data.Length - Src);
@@ -761,18 +829,31 @@ namespace NyaFs.Filesystem.F2fs
                 }
             }
 
-            if (Nid1 != 0)
+            if (Nid1 != 0) { WriteDnode(F.Ino, Nid1, DnAddr[Nid1], Bc); PutU32(Inode, InodeNidOff + 0, Nid1); }
+            if (Nid2 != 0) { WriteDnode(F.Ino, Nid2, DnAddr[Nid2], Bc); PutU32(Inode, InodeNidOff + 4, Nid2); }
+            if (Ind1 != 0)
             {
-                WriteNodeBody(F.Ino, Nid1, ToLong(Addr1, Bc), 0, Bc);
-                PutU32(Inode, InodeNidOff + 0, Nid1);
+                foreach (var n in Ind1Dn) WriteDnode(F.Ino, n, DnAddr[n], Bc);
+                WriteIndirectBody(F.Ino, Ind1, Ind1Dn);
+                PutU32(Inode, InodeNidOff + 8, Ind1);
             }
-            if (Nid2 != 0)
+            if (Ind2 != 0)
             {
-                WriteNodeBody(F.Ino, Nid2, ToLong(Addr2, Bc), 0, Bc);
-                PutU32(Inode, InodeNidOff + 4, Nid2);
+                foreach (var n in Ind2Dn) WriteDnode(F.Ino, n, DnAddr[n], Bc);
+                WriteIndirectBody(F.Ino, Ind2, Ind2Dn);
+                PutU32(Inode, InodeNidOff + 12, Ind2);
+            }
+            if (Dind != 0)
+            {
+                for (int i = 0; i < DindDn.Count; i++)
+                {
+                    foreach (var n in DindDn[i]) WriteDnode(F.Ino, n, DnAddr[n], Bc);
+                    WriteIndirectBody(F.Ino, DindInd[i], DindDn[i]);
+                }
+                WriteIndirectBody(F.Ino, Dind, DindInd);
+                PutU32(Inode, InodeNidOff + 16, Dind);
             }
 
-            int Nodes = 1 + (Nid1 != 0 ? 1 : 0) + (Nid2 != 0 ? 1 : 0);
             PutU64(Inode, 0x10, (ulong)Data.Length);
             PutU64(Inode, InodeAddrOff + 24, (ulong)ComprClusters);
             PutU64(Inode, 0x18, (ulong)(Nodes + DataBlocks + PseudoBlocks + ExtraXattrBlocks));
@@ -780,6 +861,15 @@ namespace NyaFs.Filesystem.F2fs
             ValidExtra += PseudoBlocks;
             WriteInode(F, Inode);
             return true;
+        }
+
+        private void WriteDnode(uint Ino, uint Nid, uint[] Addr, int Count)
+        {
+            var Blk = new byte[BlockSize];
+            for (int i = 0; i < Count; i++)
+                PutU32(Blk, i * 4, Addr[i]);
+            long A = AllocNode(Nid, Ino);
+            WriteNodeBlock(A, Nid, Ino, Blk);
         }
 
         private byte[] CompressCluster(byte[] Data)
@@ -791,6 +881,7 @@ namespace NyaFs.Filesystem.F2fs
                 case F2fsCompression.Lz4:
                     return NyaFs.ImageFormat.Compressors.Lz4Raw.Compress(Data);
                 case F2fsCompression.Lzo:
+                case F2fsCompression.LzoRle:
                     return NyaLZO.LZO1xCompressor.Compress(Data);
                 default:
                     throw new NotSupportedException($"F2FS compression algorithm {Compression} is not implemented");
@@ -925,7 +1016,7 @@ namespace NyaFs.Filesystem.F2fs
 
         // ---- finalize ----
 
-        private void Finalize()
+        private void FinalizeImage()
         {
             for (int i = 0; i < 6; i++)
             {

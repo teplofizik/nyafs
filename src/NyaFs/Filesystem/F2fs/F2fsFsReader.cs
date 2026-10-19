@@ -456,6 +456,11 @@ namespace NyaFs.Filesystem.F2fs
 
             var N1 = (U32(Node, INO_NID + 0) != 0) ? ReadNode(U32(Node, INO_NID + 0)) : null;
             var N2 = (U32(Node, INO_NID + 4) != 0) ? ReadNode(U32(Node, INO_NID + 4)) : null;
+            var I1 = (U32(Node, INO_NID + 8) != 0) ? ReadNode(U32(Node, INO_NID + 8)) : null;
+            var I2 = (U32(Node, INO_NID + 12) != 0) ? ReadNode(U32(Node, INO_NID + 12)) : null;
+            var DD = (U32(Node, INO_NID + 16) != 0) ? ReadNode(U32(Node, INO_NID + 16)) : null;
+
+            long IND = (long)Bc * Bc;
 
             uint GetAddr(long L)
             {
@@ -464,7 +469,28 @@ namespace NyaFs.Filesystem.F2fs
                 if (L < Bc) return (N1 == null) ? 0u : U32(N1, (int)L * 4);
                 L -= Bc;
                 if (L < Bc) return (N2 == null) ? 0u : U32(N2, (int)L * 4);
-                return 0;
+                L -= Bc;
+
+                if (L < IND)
+                {
+                    var Dn = (I1 == null) ? null : ReadNode(U32(I1, (int)(L / Bc) * 4));
+                    return (Dn == null) ? 0u : U32(Dn, (int)(L % Bc) * 4);
+                }
+                L -= IND;
+
+                if (L < IND)
+                {
+                    var Dn = (I2 == null) ? null : ReadNode(U32(I2, (int)(L / Bc) * 4));
+                    return (Dn == null) ? 0u : U32(Dn, (int)(L % Bc) * 4);
+                }
+                L -= IND;
+
+                {
+                    var Ind = (DD == null) ? null : ReadNode(U32(DD, (int)(L / IND) * 4));
+                    long rr = L % IND;
+                    var Dn = (Ind == null) ? null : ReadNode(U32(Ind, (int)(rr / Bc) * 4));
+                    return (Dn == null) ? 0u : U32(Dn, (int)(rr % Bc) * 4);
+                }
             }
 
             int Count = (int)((Size + BlockSize - 1) / BlockSize);
@@ -523,6 +549,7 @@ namespace NyaFs.Filesystem.F2fs
                 case 1:
                     return NyaFs.ImageFormat.Compressors.Lz4Raw.Decompress(Comp, Expected);
                 case 0:
+                case 3:
                     {
                         var Raw = NyaLZO.LZO1xDecompressor.Decompress(Comp);
                         if (Raw == null)

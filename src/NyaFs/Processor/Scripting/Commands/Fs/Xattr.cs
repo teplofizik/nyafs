@@ -24,13 +24,13 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
         public class XattrScriptStep : ScriptStep
         {
             string Path;
-            string Name;
+            string XAttrName;
             string Value;
 
             public XattrScriptStep(string Path, string Name, string Value) : base("xattr")
             {
                 this.Path = Path;
-                this.Name = Name;
+                this.XAttrName = Name;
                 this.Value = Value;
             }
 
@@ -47,8 +47,8 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
 
                 if (Value == "-")
                 {
-                    Item.Xattrs.Remove(Name);
-                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Removed xattr {Name} of {Path}!");
+                    Item.Xattrs.Remove(XAttrName);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Removed xattr {XAttrName} of {Path}!");
                 }
 
                 byte[] Data;
@@ -65,8 +65,8 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
                 else
                     Data = Encoding.UTF8.GetBytes(Value);
 
-                Item.Xattrs[Name] = Data;
-                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set xattr {Name} ({Data.Length} bytes) of {Path}!");
+                Item.Xattrs[XAttrName] = Data;
+                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set xattr {XAttrName} ({Data.Length} bytes) of {Path}!");
             }
         }
     }

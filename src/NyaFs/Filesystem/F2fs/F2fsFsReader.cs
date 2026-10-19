@@ -300,40 +300,55 @@ namespace NyaFs.Filesystem.F2fs
             return Res;
         }
 
-        /// <summary>Logical data-block addresses of an inode: direct, single indirect, double indirect.</summary>
+        /// <summary>Logical data-block addresses of an inode (direct, 2 direct nodes, 2 indirect, double indirect).</summary>
         private IEnumerable<uint> InodeDataBlocks(byte[] Node)
         {
-            int AddrPerInode = (INO_NID - INO_ADDR) / 4;
-            for (int i = 0; i < AddrPerInode; i++)
+            int Xattr = ((Node[INO_INLINE] & INLINE_XATTR) != 0) ? 50 : 0;   // DEFAULT_INLINE_XATTR_ADDRS
+            int D = (INO_NID - INO_ADDR) / 4 - Xattr;
+            int B = (BlockSize - 24) / 4;
+
+            for (int i = 0; i < D; i++)
                 yield return U32(Node, INO_ADDR + i * 4);
 
-            int AddrPerBlock = (BlockSize - 24) / 4;
-
-            uint N0 = U32(Node, INO_NID + 0);       // direct node
-            if (N0 != 0)
+            // i_nid[0], i_nid[1] - direct nodes
+            for (int k = 0; k < 2; k++)
             {
-                var DN = ReadNode(N0);
-                if (DN != null)
-                    for (int i = 0; i < AddrPerBlock; i++)
+                var DN = ReadNode(U32(Node, INO_NID + k * 4));
+                if (DN == null)
+                {
+                    for (int i = 0; i < B; i++)
+                        yield return 0;
+                }
+                else
+                {
+                    for (int i = 0; i < B; i++)
                         yield return U32(DN, i * 4);
+                }
             }
 
-            uint N1 = U32(Node, INO_NID + 4);       // double indirect
-            if (N1 != 0)
+            // i_nid[2], i_nid[3] - indirect nodes
+            for (int k = 0; k < 2; k++)
             {
-                var DB = ReadNode(N1);
-                if (DB != null)
-                    for (int j = 0; j < AddrPerBlock; j++)
-                    {
-                        uint INid = U32(DB, j * 4);
-                        if (INid == 0)
-                            continue;
-                        var IN = ReadNode(INid);
-                        if (IN == null)
-                            continue;
-                        for (int i = 0; i < AddrPerBlock; i++)
-                            yield return U32(IN, i * 4);
-                    }
+                var IND = ReadNode(U32(Node, INO_NID + (2 + k) * 4));
+                for (int j = 0; j < B; j++)
+                {
+                    var DB = (IND == null) ? null : ReadNode(U32(IND, j * 4));
+                    for (int i = 0; i < B; i++)
+                        yield return (DB == null) ? 0u : U32(DB, i * 4);
+                }
+            }
+
+            // i_nid[4] - double indirect node
+            var DD = ReadNode(U32(Node, INO_NID + 16));
+            for (int m = 0; m < B; m++)
+            {
+                var IND = (DD == null) ? null : ReadNode(U32(DD, m * 4));
+                for (int j = 0; j < B; j++)
+                {
+                    var DB = (IND == null) ? null : ReadNode(U32(IND, j * 4));
+                    for (int i = 0; i < B; i++)
+                        yield return (DB == null) ? 0u : U32(DB, i * 4);
+                }
             }
         }
 

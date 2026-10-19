@@ -464,37 +464,161 @@ namespace NyaFs.Filesystem.F2fs
             }
 
             int Count = (Data.Length + BlockSize - 1) / BlockSize;
-            if (Count > AddrsPerInode + AddrsPerBlock)
+            int B = AddrsPerBlock;
+            long IND = (long)B * B;
+            long Base1 = AddrsPerInode + 2L * B;
+            long Base2 = Base1 + IND;
+            long Base3 = Base2 + IND;
+            if (Count > Base3 + (long)B * B * B)
                 throw new ArgumentException($"F2FS: file '{F.Name}' is too large");
 
-            int Direct = Math.Min(Count, AddrsPerInode);
-            for (int i = 0; i < Direct; i++)
+            // Plan node nids first so that data-block summaries reference the owning node.
+            int NidStart = NextFreeNid;
+            uint NidDir1 = 0, NidDir2 = 0, NidInd1 = 0, NidInd2 = 0, NidDind = 0;
+            var Ind1Dnodes = new List<uint>();
+            var Ind2Dnodes = new List<uint>();
+            var DindIndirects = new List<uint>();
+            var DindDnodes = new List<List<uint>>();
+
+            if (Count > AddrsPerInode) NidDir1 = (uint)NextFreeNid++;
+            if (Count > AddrsPerInode + B) NidDir2 = (uint)NextFreeNid++;
+
+            if (Count > Base1)
             {
-                long Addr = AllocData(F.Ino, (ushort)i);
-                WriteBlock(Addr, Chunk(Data, i));
-                PutU32(Inode, InodeAddrOff + i * 4, (uint)Addr);
+                long Total = Math.Min(Count - Base1, IND);
+                int Groups = (int)((Total + B - 1) / B);
+                for (int g = 0; g < Groups; g++) Ind1Dnodes.Add((uint)NextFreeNid++);
+                NidInd1 = (uint)NextFreeNid++;
             }
 
-            bool HasNode = Count > AddrsPerInode;
-            if (HasNode)
+            if (Count > Base2)
             {
-                uint Nid = (uint)NextFreeNid++;
-                long NodeAddr = AllocNode(Nid, F.Ino);
-                var NodeBlk = new byte[BlockSize];
-                int Rest = Count - AddrsPerInode;
-                for (int i = 0; i < Rest; i++)
+                long Total = Math.Min(Count - Base2, IND);
+                int Groups = (int)((Total + B - 1) / B);
+                for (int g = 0; g < Groups; g++) Ind2Dnodes.Add((uint)NextFreeNid++);
+                NidInd2 = (uint)NextFreeNid++;
+            }
+
+            if (Count > Base3)
+            {
+                long Remaining = Count - Base3;
+                long Groups1 = (Remaining + IND - 1) / IND;
+                for (long g1 = 0; g1 < Groups1; g1++)
                 {
-                    long Addr = AllocData(F.Ino, (ushort)i);
-                    WriteBlock(Addr, Chunk(Data, AddrsPerInode + i));
-                    PutU32(NodeBlk, i * 4, (uint)Addr);
+                    long R1 = Math.Min(Remaining - g1 * IND, IND);
+                    int Groups2 = (int)((R1 + B - 1) / B);
+                    var Dnids = new List<uint>();
+                    for (int g2 = 0; g2 < Groups2; g2++) Dnids.Add((uint)NextFreeNid++);
+                    DindDnodes.Add(Dnids);
+                    DindIndirects.Add((uint)NextFreeNid++);
                 }
-                WriteNodeBlock(NodeAddr, Nid, F.Ino, NodeBlk);
-                PutU32(Inode, InodeNidOff, Nid);
+                NidDind = (uint)NextFreeNid++;
+            }
+
+            int NodeBlocksUsed = NextFreeNid - NidStart;
+
+            var A = new long[Count];
+            for (int i = 0; i < Count; i++)
+            {
+                uint Parent = F.Ino;
+                int Ofs;
+                if (i < AddrsPerInode) { Ofs = i; }
+                else if (i < AddrsPerInode + B) { Parent = NidDir1; Ofs = i - AddrsPerInode; }
+                else if (i < AddrsPerInode + 2 * B) { Parent = NidDir2; Ofs = i - (AddrsPerInode + B); }
+                else if (i < Base2)
+                {
+                    int g = (int)((i - Base1) / B);
+                    Parent = Ind1Dnodes[g];
+                    Ofs = (int)((i - Base1) % B);
+                }
+                else if (i < Base3)
+                {
+                    int g = (int)((i - Base2) / B);
+                    Parent = Ind2Dnodes[g];
+                    Ofs = (int)((i - Base2) % B);
+                }
+                else
+                {
+                    long r = i - Base3;
+                    int g1 = (int)(r / IND);
+                    long rr = r % IND;
+                    int g2 = (int)(rr / B);
+                    Parent = DindDnodes[g1][g2];
+                    Ofs = (int)(rr % B);
+                }
+
+                A[i] = AllocData(Parent, (ushort)Ofs);
+                WriteBlock(A[i], Chunk(Data, i));
+            }
+
+            for (int i = 0; i < Math.Min(Count, AddrsPerInode); i++)
+                PutU32(Inode, InodeAddrOff + i * 4, (uint)A[i]);
+
+            if (NidDir1 != 0)
+            {
+                WriteNodeBody(F.Ino, NidDir1, A, AddrsPerInode, Math.Min(Count - AddrsPerInode, B));
+                PutU32(Inode, InodeNidOff + 0, NidDir1);
+            }
+
+            if (NidDir2 != 0)
+            {
+                WriteNodeBody(F.Ino, NidDir2, A, AddrsPerInode + B, (int)Math.Min(Count - (AddrsPerInode + B), B));
+                PutU32(Inode, InodeNidOff + 4, NidDir2);
+            }
+
+            if (NidInd1 != 0)
+            {
+                long Total = Math.Min(Count - Base1, IND);
+                for (int g = 0; g < Ind1Dnodes.Count; g++)
+                    WriteNodeBody(F.Ino, Ind1Dnodes[g], A, (int)(Base1 + g * B), (int)Math.Min(B, Total - (long)g * B));
+                WriteIndirectBody(F.Ino, NidInd1, Ind1Dnodes);
+                PutU32(Inode, InodeNidOff + 8, NidInd1);
+            }
+
+            if (NidInd2 != 0)
+            {
+                long Total = Math.Min(Count - Base2, IND);
+                for (int g = 0; g < Ind2Dnodes.Count; g++)
+                    WriteNodeBody(F.Ino, Ind2Dnodes[g], A, (int)(Base2 + g * B), (int)Math.Min(B, Total - (long)g * B));
+                WriteIndirectBody(F.Ino, NidInd2, Ind2Dnodes);
+                PutU32(Inode, InodeNidOff + 12, NidInd2);
+            }
+
+            if (NidDind != 0)
+            {
+                long Remaining = Count - Base3;
+                for (int g1 = 0; g1 < DindDnodes.Count; g1++)
+                {
+                    long R1 = Math.Min(Remaining - (long)g1 * IND, IND);
+                    for (int g2 = 0; g2 < DindDnodes[g1].Count; g2++)
+                        WriteNodeBody(F.Ino, DindDnodes[g1][g2], A, (int)(Base3 + (long)g1 * IND + g2 * B), (int)Math.Min(B, R1 - (long)g2 * B));
+                    WriteIndirectBody(F.Ino, DindIndirects[g1], DindDnodes[g1]);
+                }
+                WriteIndirectBody(F.Ino, NidDind, DindIndirects);
+                PutU32(Inode, InodeNidOff + 16, NidDind);
             }
 
             PutU64(Inode, 0x10, (ulong)Data.Length);
-            PutU64(Inode, 0x18, (ulong)(1 + Count + (HasNode ? 1 : 0)));
+            PutU64(Inode, 0x18, (ulong)(1 + Count + NodeBlocksUsed));
             WriteInode(F, Inode);
+        }
+
+        private void WriteNodeBody(uint Ino, uint Nid, long[] A, int Start, int Count)
+        {
+            var Blk = new byte[BlockSize];
+            for (int i = 0; i < Count; i++)
+                PutU32(Blk, i * 4, (uint)A[Start + i]);
+            long Addr = AllocNode(Nid, Ino);
+            WriteNodeBlock(Addr, Nid, Ino, Blk);
+        }
+
+        private void WriteIndirectBody(uint Ino, uint Nid, List<uint> Nids)
+        {
+            var Blk = new byte[BlockSize];
+            for (int i = 0; i < Nids.Count; i++)
+                PutU32(Blk, i * 4, Nids[i]);
+            long Addr = AllocNode(Nid, Ino);
+            WriteNodeBlock(Addr, Nid, Ino, Blk);
         }
 
         private static byte[] Chunk(byte[] Data, int Index)

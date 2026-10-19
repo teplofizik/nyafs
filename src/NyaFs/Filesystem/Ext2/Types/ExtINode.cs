@@ -185,6 +185,15 @@ namespace NyaFs.Filesystem.Ext2.Types
         }
 
         /// <summary>
+        /// Block number of the extended-attribute block (i_file_acl_lo, 0x68); 0 if none.
+        /// </summary>
+        public uint FileAcl
+        {
+            get { return ReadUInt32(0x68); }
+            set { WriteUInt32(0x68, value); }
+        }
+
+        /// <summary>
         /// Inode flags. Any of:
         /// 0x1	This file requires secure deletion (EXT4_SECRM_FL). (not implemented)
         /// 0x2	This file should be preserved, should undeletion be desired(EXT4_UNRM_FL). (not implemented)

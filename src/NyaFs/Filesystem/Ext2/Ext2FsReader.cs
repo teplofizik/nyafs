@@ -110,14 +110,68 @@ namespace NyaFs.Filesystem.Ext2
 
                     var N = GetINode(E.INode);
 
-                    //Console.WriteLine($"{E.Name} {E.INode}     {N}");
-                    Res.Add(new Universal.FilesystemEntry(N.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), N.UID, N.GID, N.Mode, GetNodeSize(N)));
+                    var Entry = new Universal.FilesystemEntry(N.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), N.UID, N.GID, N.Mode, GetNodeSize(N));
+                    var X = ParseXattrs(N);
+                    if (X != null)
+                        Entry.Xattrs = X;
+
+                    Res.Add(Entry);
                 }
 
                 return Res.ToArray();
             }
             else
                 return null;
+        }
+
+        private static string XattrPrefix(byte Index)
+        {
+            switch (Index)
+            {
+                case 1: return "user.";
+                case 2: return "system.posix_acl_access";
+                case 3: return "system.posix_acl_default";
+                case 4: return "trusted.";
+                case 6: return "security.";
+                case 7: return "system.";
+                default: return null;
+            }
+        }
+
+        private Dictionary<string, byte[]> ParseXattrs(Types.ExtINode N)
+        {
+            if (N.FileAcl == 0)
+                return null;
+
+            long Base = (long)N.FileAcl * Superblock.BlockSize;
+            if (ReadUInt32(Base) != 0xEA020000)
+                return null;
+
+            Dictionary<string, byte[]> Res = null;
+            int Off = 32;
+
+            while (Off + 4 <= Superblock.BlockSize)
+            {
+                if (ReadUInt32(Base + Off) == 0)
+                    break;
+
+                int NameLen = ReadByte(Base + Off);
+                int Index = ReadByte(Base + Off + 1);
+                int ValueOff = ReadUInt16(Base + Off + 2);
+                uint ValueSize = ReadUInt32(Base + Off + 8);
+
+                var Prefix = XattrPrefix((byte)Index);
+                if ((Prefix != null) && (NameLen >= 0) && (ValueSize < Superblock.BlockSize))
+                {
+                    var Name = ReadArray(Base + Off + 16, NameLen);
+                    var Value = ReadArray(Base + ValueOff, (int)ValueSize);
+                    (Res ?? (Res = new Dictionary<string, byte[]>()))[Prefix + UTF8Encoding.UTF8.GetString(Name)] = Value;
+                }
+
+                Off += 16 + (((NameLen + 3) & ~3));
+            }
+
+            return Res;
         }
 
         internal Types.ExtINode GetINodeByPath(string Path)

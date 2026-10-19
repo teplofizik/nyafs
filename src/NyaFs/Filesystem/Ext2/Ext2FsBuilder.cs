@@ -7,7 +7,7 @@ using NyaIO.Data;
 
 namespace NyaFs.Filesystem.Ext2
 {
-    public class Ext2FsBuilder : Ext2FsBase, IFilesystemBuilder
+    public class Ext2FsBuilder : Ext2FsBase, IFilesystemBuilder, IXattrBuilder
     {
         uint DiskBlockSize;
         internal uint INodeIndex = 2;
@@ -15,6 +15,8 @@ namespace NyaFs.Filesystem.Ext2
         uint DataBlockIndex = 0x1;
 
         private List<BuilderDirectory> Dirs = new List<BuilderDirectory>();
+        private readonly Dictionary<string, Types.ExtINode> NodeByPath = new Dictionary<string, Types.ExtINode>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Dictionary<string, byte[]>> Xattrs = new Dictionary<string, Dictionary<string, byte[]>>(StringComparer.Ordinal);
 
         private uint[] BlockMap;
 
@@ -195,6 +197,8 @@ namespace NyaFs.Filesystem.Ext2
                 D.Node.LinksCount = Convert.ToUInt32(D.Entries.Count(E => GetINode(E.INode).FsNodeType == Universal.Types.FilesystemItemType.Directory));
             }
 
+            WriteXattrs();
+
             DuplicateSuperblocks();
 
             return getPacket();
@@ -262,6 +266,7 @@ namespace NyaFs.Filesystem.Ext2
             if (Parent != null)
             {
                 var N = NodeGetter();
+                NodeByPath[NormPath(Path)] = N;
                 Parent.Entries.Add(new Types.ExtDirectoryEntry(Convert.ToUInt32(N.Index), Types.ExtINodeType.NONE, Universal.Helper.FsHelper.GetName(Path)));
 
                 var BG = GetBlockGroupByNodeId(N.Index);
@@ -334,6 +339,7 @@ namespace NyaFs.Filesystem.Ext2
                 if (Dirs.Count == 0)
                 {
                     var N = CreateNewINode(Types.ExtINodeType.DIR, User, Group, Mode);
+                    NodeByPath[""] = N;
                     //Log.Write(0, $"INode {N.Index}: {N.FsNodeType} offset {N.getOffset():x08} {Path}");
                     var D = new BuilderDirectory(Path, N);
                     Dirs.Add(D);
@@ -594,6 +600,160 @@ namespace NyaFs.Filesystem.Ext2
         {
             foreach (var Block in Blocks)
                 AddBlockToNode(Node, Block);
+        }
+
+        // ---- extended attributes (external xattr block) ----
+
+        private sealed class XattrInfo
+        {
+            public byte Index;
+            public byte[] Name;
+            public byte[] Value;
+        }
+
+        private static string NormPath(string Path)
+        {
+            var P = (Path ?? "").Replace('\\', '/');
+            while (P.StartsWith("/")) P = P.Substring(1);
+            return P.TrimEnd('/');
+        }
+
+        public void Xattr(string Path, string Name, byte[] Value)
+        {
+            var P = NormPath(Path);
+            if (!Xattrs.TryGetValue(P, out var D))
+            {
+                D = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+                Xattrs[P] = D;
+            }
+            D[Name] = Value ?? Array.Empty<byte>();
+        }
+
+        private void WriteXattrs()
+        {
+            if (Xattrs.Count == 0)
+                return;
+
+            Superblock.FeatureCompatible |= 0x0008; // EXT2_FEATURE_COMPAT_EXT_ATTR
+
+            foreach (var KV in Xattrs)
+            {
+                if (!NodeByPath.TryGetValue(KV.Key, out var Node))
+                    continue;
+
+                var Block = GetNewBlock();
+                var Data = BuildXattrBlock(KV.Value);
+                WriteArray(Block * Superblock.BlockSize, Data, Data.Length);
+
+                Node.FileAcl = Block;
+                Node.BlocksLo += Superblock.BlockSize / 512;
+            }
+        }
+
+        private byte[] BuildXattrBlock(Dictionary<string, byte[]> Attrs)
+        {
+            var Infos = new List<XattrInfo>();
+            foreach (var KV in Attrs)
+            {
+                if (!SplitXattrName(KV.Key, out byte Index, out string Rest))
+                    throw new ArgumentException($"EXT: unsupported xattr name '{KV.Key}'");
+
+                Infos.Add(new XattrInfo
+                {
+                    Index = Index,
+                    Name = Encoding.UTF8.GetBytes(Rest),
+                    Value = KV.Value ?? Array.Empty<byte>()
+                });
+            }
+
+            Infos.Sort((A, B) =>
+            {
+                if (A.Index != B.Index) return A.Index.CompareTo(B.Index);
+                return string.CompareOrdinal(Encoding.UTF8.GetString(A.Name), Encoding.UTF8.GetString(B.Name));
+            });
+
+            int EntriesSize = 0;
+            foreach (var I in Infos)
+                EntriesSize += 16 + Align4(I.Name.Length);
+            int ValuesStart = 32 + EntriesSize + 4;
+
+            var Buf = new byte[Superblock.BlockSize];
+            WriteU32(Buf, 0, 0xEA020000);   // h_magic
+            WriteU32(Buf, 4, 1);            // h_refcount
+            WriteU32(Buf, 8, 1);            // h_blocks
+            WriteU32(Buf, 12, 0);           // h_hash
+            WriteU32(Buf, 16, 0);           // h_checksum
+
+            int ValuePos = (int)Superblock.BlockSize;
+            int Off = 32;
+            uint BlockHash = 0;
+
+            foreach (var I in Infos)
+            {
+                ValuePos = (ValuePos - I.Value.Length) & ~3;
+                if (ValuePos < ValuesStart)
+                    throw new ArgumentException("EXT: xattrs are too large for one block");
+
+                Array.Copy(I.Value, 0, Buf, ValuePos, I.Value.Length);
+
+                uint EntryHash = 0;
+                for (int n = 0; n < I.Name.Length; n++)
+                    EntryHash = (EntryHash << 5) ^ (EntryHash >> 27) ^ I.Name[n];
+
+                int Words = (I.Value.Length + 3) >> 2;
+                for (int w = 0; w < Words; w++)
+                {
+                    int P = ValuePos + w * 4;
+                    uint V = (uint)(Buf[P] | (Buf[P + 1] << 8) | (Buf[P + 2] << 16) | (Buf[P + 3] << 24));
+                    EntryHash = (EntryHash << 16) ^ (EntryHash >> 16) ^ V;
+                }
+
+                Buf[Off + 0] = (byte)I.Name.Length;
+                Buf[Off + 1] = I.Index;
+                WriteU16(Buf, Off + 2, (ushort)ValuePos);
+                WriteU32(Buf, Off + 4, 0);
+                WriteU32(Buf, Off + 8, (uint)I.Value.Length);
+                WriteU32(Buf, Off + 12, EntryHash);
+                Array.Copy(I.Name, 0, Buf, Off + 16, I.Name.Length);
+
+                BlockHash = (BlockHash << 16) ^ (BlockHash >> 16) ^ EntryHash;
+
+                Off += 16 + Align4(I.Name.Length);
+            }
+
+            WriteU32(Buf, 12, BlockHash);
+
+            return Buf;
+        }
+
+        private static bool SplitXattrName(string Name, out byte Index, out string Rest)
+        {
+            if (Name == "system.posix_acl_access") { Index = 2; Rest = ""; return true; }
+            if (Name == "system.posix_acl_default") { Index = 3; Rest = ""; return true; }
+            if (Name.StartsWith("user.")) { Index = 1; Rest = Name.Substring(5); return true; }
+            if (Name.StartsWith("trusted.")) { Index = 4; Rest = Name.Substring(8); return true; }
+            if (Name.StartsWith("security.")) { Index = 6; Rest = Name.Substring(9); return true; }
+            if (Name.StartsWith("system.")) { Index = 7; Rest = Name.Substring(7); return true; }
+
+            Index = 0;
+            Rest = null;
+            return false;
+        }
+
+        private static int Align4(int V) => (V + 3) & ~3;
+
+        private static void WriteU16(byte[] D, int O, ushort V)
+        {
+            D[O] = (byte)V;
+            D[O + 1] = (byte)(V >> 8);
+        }
+
+        private static void WriteU32(byte[] D, int O, uint V)
+        {
+            D[O] = (byte)V;
+            D[O + 1] = (byte)(V >> 8);
+            D[O + 2] = (byte)(V >> 16);
+            D[O + 3] = (byte)(V >> 24);
         }
 
         class BuilderDirectory

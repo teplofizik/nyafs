@@ -25,6 +25,7 @@ namespace NyaFs.Filesystem.Tar
             public string Target;
             public uint Major;
             public uint Minor;
+            public Dictionary<string, byte[]> Xattrs;
         }
 
         private readonly List<Entry> Files = new List<Entry>();
@@ -174,10 +175,67 @@ namespace NyaFs.Filesystem.Tar
                 Link = Link.Substring(0, 100);
             }
 
+            if ((E.Xattrs != null) && (E.Xattrs.Count > 0))
+                WritePax(Stream, E.Xattrs);
+
             var Header = CreateHeader(Base, Prefix, Type, Link, Content.Length, E.User, E.Group, E.Mode, E.Major, E.Minor);
 
             Stream.Write(Header.getPacket(), 0, Types.TarHeader.HeaderSize);
             WritePadded(Stream, Content);
+        }
+
+        private static void WritePax(Stream Stream, Dictionary<string, byte[]> Xattrs)
+        {
+            using (var Data = new MemoryStream())
+            {
+                foreach (var X in Xattrs)
+                {
+                    var Key = Encoding.UTF8.GetBytes("SCHILY.xattr." + X.Key);
+                    var Val = X.Value ?? Array.Empty<byte>();
+
+                    int BodyLen = Key.Length + 1 + Val.Length + 1;   // key=value\n
+                    int Len = BodyLen + 2;
+                    while (true)
+                    {
+                        int Next = BodyLen + Len.ToString().Length + 1;
+                        if (Next == Len)
+                            break;
+                        Len = Next;
+                    }
+
+                    var Prefix = Encoding.ASCII.GetBytes(Len.ToString() + " ");
+                    Data.Write(Prefix, 0, Prefix.Length);
+                    Data.Write(Key, 0, Key.Length);
+                    Data.WriteByte((byte)'=');
+                    Data.Write(Val, 0, Val.Length);
+                    Data.WriteByte((byte)'\n');
+                }
+
+                var PaxData = Data.ToArray();
+                var Header = CreateHeader("PaxHeaders.X/xattr", "", (Types.TarFileType)(byte)'x', "", PaxData.Length, 0, 0, 0, 0, 0);
+
+                Stream.Write(Header.getPacket(), 0, Types.TarHeader.HeaderSize);
+                WritePadded(Stream, PaxData);
+            }
+        }
+
+        /// <summary>
+        /// Attach an extended attribute to the most recently added entry with this path.
+        /// Emitted as a PAX "SCHILY.xattr.*" record before the entry.
+        /// </summary>
+        public void Xattr(string Path, string Name, byte[] Value)
+        {
+            var N = Normalize(Path);
+            for (int i = Files.Count - 1; i >= 0; i--)
+            {
+                if (Normalize(Files[i].Path) != N)
+                    continue;
+
+                if (Files[i].Xattrs == null)
+                    Files[i].Xattrs = new Dictionary<string, byte[]>();
+                Files[i].Xattrs[Name] = Value ?? Array.Empty<byte>();
+                return;
+            }
         }
 
         /// <summary>

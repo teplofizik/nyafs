@@ -58,11 +58,13 @@ namespace NyaFs.Processor.Scripting.Commands
             {
                 try
                 {
+                    var Resolved = Resolve(File);
+
                     switch (Action)
                     {
                         case "info":
                             {
-                                var P = NyaPackage.Open(System.IO.File.ReadAllBytes(File));
+                                var P = NyaPackage.Open(System.IO.File.ReadAllBytes(Resolved));
                                 return new ScriptStepResult(ScriptStepStatus.Ok,
                                     $"Package: {P.Metadata} entries={P.Entries.Count}");
                             }
@@ -72,7 +74,7 @@ namespace NyaFs.Processor.Scripting.Commands
                                 if (Fs == null)
                                     return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
 
-                                var P = NyaPackage.Open(System.IO.File.ReadAllBytes(File));
+                                var P = NyaPackage.Open(System.IO.File.ReadAllBytes(Resolved));
                                 if (!P.Matches(Fs))
                                     return new ScriptStepResult(ScriptStepStatus.Warning,
                                         $"Package {P.Metadata} does not match target ({Fs.Info.Architecture}/{Fs.Info.OperatingSystem}), skipped");
@@ -97,9 +99,9 @@ namespace NyaFs.Processor.Scripting.Commands
                                     Meta.Os = Fs.Info.OperatingSystem.ToString().Replace("IH_OS_", "").ToLowerInvariant();
 
                                 var P = NyaPackage.FromFilesystem(Fs, Path, Meta);
-                                System.IO.File.WriteAllBytes(File, P.ToFile());
+                                System.IO.File.WriteAllBytes(Resolved, P.ToFile());
                                 return new ScriptStepResult(ScriptStepStatus.Ok,
-                                    $"Created package {File}: {P.Metadata}, entries={P.Entries.Count}");
+                                    $"Created package {Resolved}: {P.Metadata}, entries={P.Entries.Count}");
                             }
                         default:
                             return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown pkg action: {Action}");
@@ -109,6 +111,15 @@ namespace NyaFs.Processor.Scripting.Commands
                 {
                     return new ScriptStepResult(ScriptStepStatus.Error, $"pkg failed: {E.Message}");
                 }
+            }
+
+            private string Resolve(string F)
+            {
+                if (string.IsNullOrEmpty(F) || System.IO.Path.IsPathRooted(F))
+                    return F;
+
+                var Dir = System.IO.Path.GetDirectoryName(ScriptFilename ?? "");
+                return string.IsNullOrEmpty(Dir) ? F : System.IO.Path.Combine(Dir, F);
             }
         }
     }

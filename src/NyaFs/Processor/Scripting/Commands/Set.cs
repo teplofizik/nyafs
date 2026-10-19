@@ -42,10 +42,10 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "ubifs.compression", "f2fs.compression", "fat.type", "size" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
-                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, ubifs.compression, f2fs.compression, size");
+                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size");
                         return false;
                     }
                 }
@@ -250,6 +250,30 @@ namespace NyaFs.Processor.Scripting.Commands
                             catch (Exception)
                             {
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown compression: {Value}!");
+                            }
+                        }
+                    case "f2fs.compression.cluster":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set f2fs compression cluster to non-ramfs image!");
+
+                            try
+                            {
+                                long Size = ParseSize(Value);
+                                if ((Size < 16 * 1024) || (Size > 1024 * 1024) || ((Size & (Size - 1)) != 0))
+                                    return new ScriptStepResult(ScriptStepStatus.Error, "Cluster size must be a power of two between 16K and 1M");
+
+                                int Blocks = (int)(Size / 4096);
+                                int Log = 0;
+                                while ((1 << Log) < Blocks) Log++;
+
+                                var Fs = Processor.GetFs();
+                                Fs.F2fsCompressionClusterLog = Log;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set f2fs compression cluster ok: {Value} ({Blocks} blocks)!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid cluster size: {Value}!");
                             }
                         }
                     case "compression":

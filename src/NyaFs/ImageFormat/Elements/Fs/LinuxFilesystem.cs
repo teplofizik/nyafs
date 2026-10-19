@@ -28,6 +28,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// </summary>
         public Filesystem.F2fs.F2fsCompression F2fsCompression = Filesystem.F2fs.F2fsCompression.None;
 
+        /// <summary>log2 of the F2FS compression cluster size in blocks (2 = 16 KiB ... 8 = 1 MiB).</summary>
+        public int F2fsCompressionClusterLog = 2;
+
         /// <summary>
         /// Target FAT type when writing a FAT image: 0 = auto (by size), 12 / 16 / 32.
         /// </summary>

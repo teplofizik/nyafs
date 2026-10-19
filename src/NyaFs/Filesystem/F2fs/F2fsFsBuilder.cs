@@ -43,7 +43,9 @@ namespace NyaFs.Filesystem.F2fs
         /// <summary>Per-file compression for regular files (None disables F2FS_FEATURE_COMPRESSION).</summary>
         public F2fsCompression Compression = F2fsCompression.None;
 
-        private const int CompressClusterLog = 2;           // cluster = 4 blocks (16 KiB)
+        /// <summary>log2 of the compression cluster size in blocks (2..8).</summary>
+        public int CompressionClusterLog = 2;
+
         private const int CompressionExtraIsize = 36;       // F2FS_TOTAL_EXTRA_ATTR_SIZE (bytes)
         private const uint FeatureCompression = 0x2000;
         private const uint FeatureExtraAttr = 0x0008;
@@ -672,7 +674,7 @@ namespace NyaFs.Filesystem.F2fs
 
         private bool TryCompressFile(Node F, byte[] Data, byte[] Inode, int XattrAddrs, int ExtraXattrBlocks)
         {
-            int C = 1 << CompressClusterLog;
+            int C = 1 << CompressionClusterLog;
             int ExtraEntries = CompressionExtraIsize / 4;
             int Dc = AlignDown(AddrsPerInode - ExtraEntries - XattrAddrs, C);
             int Bc = AlignDown(AddrsPerBlock, C);
@@ -752,7 +754,7 @@ namespace NyaFs.Filesystem.F2fs
             PutU16(Inode, InodeAddrOff, CompressionExtraIsize);
             PutU32(Inode, 0x50, ReadU32(Inode, 0x50) | 0x4);    // F2FS_COMPR_FL
             Inode[InodeAddrOff + 32] = (byte)Compression;       // i_compress_algorithm
-            Inode[InodeAddrOff + 33] = (byte)CompressClusterLog;// i_log_cluster_size
+            Inode[InodeAddrOff + 33] = (byte)CompressionClusterLog;// i_log_cluster_size
             PutU16(Inode, InodeAddrOff + 34, 0);                // i_compress_flag
 
             int DataBlocks = 0;

@@ -65,6 +65,9 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Fs.Xattr());
             Add(new Commands.Fs.Mkfs());
 
+            Add(new Commands.Remote.RemoteGet());
+            Add(new Commands.Remote.RemotePut());
+
             // mknod
             // mkfifo
             // mkblk

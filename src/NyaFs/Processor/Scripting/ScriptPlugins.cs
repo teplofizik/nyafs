@@ -18,6 +18,7 @@ namespace NyaFs.Processor.Scripting
         private List<KernelPlugin> Kernels = new List<KernelPlugin>();
         private List<DevtreePlugin> Dtbs = new List<DevtreePlugin>();
         private List<ServicePlugin> Services = new List<ServicePlugin>();
+        private List<RemoteFilesystemPlugin> Remotes = new List<RemoteFilesystemPlugin>();
         private List<Plugins.CommandPlugin> Commands = new List<Plugins.CommandPlugin>();
 
         /// <summary>
@@ -230,6 +231,28 @@ namespace NyaFs.Processor.Scripting
         /// </summary>
         /// <param name="Name"></param>
         /// <returns></returns>
+        public RemoteFilesystemPlugin[] GetRemotes() => Remotes.ToArray();
+
+        public RemoteFilesystemPlugin GetRemote(string Protocol)
+        {
+            if (string.IsNullOrEmpty(Protocol))
+                return null;
+
+            foreach (var R in Remotes)
+            {
+                if (R.Protocols == null)
+                    continue;
+
+                foreach (var P in R.Protocols)
+                {
+                    if (string.Equals(P, Protocol, StringComparison.OrdinalIgnoreCase))
+                        return R;
+                }
+            }
+
+            return null;
+        }
+
         public ServicePlugin GetService(string Name)
         {
             foreach (var S in Services)
@@ -301,6 +324,13 @@ namespace NyaFs.Processor.Scripting
                 return true;
             }
 
+            var Remote = Plugin as RemoteFilesystemPlugin;
+            if (Remote != null)
+            {
+                Insert(Remotes, Remote);
+                return true;
+            }
+
             var Command = Plugin as Plugins.CommandPlugin;
             if (Command != null)
             {
@@ -345,16 +375,11 @@ namespace NyaFs.Processor.Scripting
 
         private bool CheckPluginType(Type type)
         {
-            if (type.IsInterface || type.IsAbstract) return false;
-            if (type.BaseType == null)
-                return false;
-            else
-            {
-                if (type.BaseType.FullName == "NyaFs.ImageFormat.Plugins.Base.NyaPlugin")
-                    return true;
-                else
-                    return CheckPluginType(type.BaseType);
-            }
+            if (type == null) return false;
+            if (type.FullName == "NyaFs.ImageFormat.Plugins.Base.NyaPlugin") return true;
+            if (type.IsInterface) return false;
+
+            return CheckPluginType(type.BaseType);
         }
 
         public NyaPlugin[] LoadFromFile(string Filename)
@@ -369,7 +394,7 @@ namespace NyaFs.Processor.Scripting
 
             if (PluginAssembly != null)
             {
-                var Types = PluginAssembly.GetTypes().Where(t => CheckPluginType(t)).ToArray();
+                var Types = PluginAssembly.GetTypes().Where(t => !t.IsAbstract && !t.IsInterface && CheckPluginType(t)).ToArray();
                 foreach (var t in Types)
                 {
                     var obj = AppDomain.CurrentDomain.CreateInstanceFrom(Filename, t.FullName).Unwrap();

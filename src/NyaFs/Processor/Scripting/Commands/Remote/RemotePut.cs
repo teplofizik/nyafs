@@ -55,7 +55,8 @@ namespace NyaFs.Processor.Scripting.Commands.Remote
 
                 try
                 {
-                    using (var Remote = Plugin.Create(Protocol, Host, Login, Password))
+                    var Auth = RemoteAuthResolver.Resolve(Login, Password);
+                    using (var Remote = Plugin.Create(Protocol, Host, Auth))
                     {
                         Remote.Connect();
                         RemoteTransfer.Upload(Fs, FsPath, Remote, RemotePath);

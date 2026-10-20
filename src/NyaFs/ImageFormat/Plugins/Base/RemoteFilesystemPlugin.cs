@@ -20,5 +20,11 @@ namespace NyaFs.ImageFormat.Plugins.Base
         /// Create a transport for the given protocol. HostPort is "host" or "host:port".
         /// </summary>
         public abstract IRemoteFs Create(string Protocol, string HostPort, string Login, string Password);
+
+        /// <summary>
+        /// Create a transport using password or private-key credentials.
+        /// </summary>
+        public virtual IRemoteFs Create(string Protocol, string HostPort, RemoteAuth Auth) =>
+            Create(Protocol, HostPort, Auth.Login, Auth.Password);
     }
 }

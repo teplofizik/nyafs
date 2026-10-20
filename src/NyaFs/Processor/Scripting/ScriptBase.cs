@@ -67,6 +67,7 @@ namespace NyaFs.Processor.Scripting
 
             Add(new Commands.Remote.RemoteGet());
             Add(new Commands.Remote.RemotePut());
+            Add(new Commands.Remote.RemoteAuthCommand());
 
             // mknod
             // mkfifo

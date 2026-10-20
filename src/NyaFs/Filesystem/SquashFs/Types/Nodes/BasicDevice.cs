@@ -7,8 +7,23 @@ namespace NyaFs.Filesystem.SquashFs.Types.Nodes
 {
     class BasicDevice : SqInode
     {
-        public BasicDevice(SqInodeType Type, uint Mode, uint User, uint Group, uint Major, uint Minor) : base(0x18)
+        /// <summary>
+        /// True for the extended (LBLKDEV/LCHRDEV) inode layout.
+        /// </summary>
+        internal readonly bool IsExtended;
+
+        public BasicDevice(SqInodeType Type, uint Mode, uint User, uint Group, uint Major, uint Minor, uint XAttrId = InvalidXAttr) : base(XAttrId != InvalidXAttr ? 0x1C : 0x18)
         {
+            IsExtended = XAttrId != InvalidXAttr;
+
+            if (IsExtended)
+            {
+                if (Type == SqInodeType.BasicBlockDevice)
+                    Type = SqInodeType.ExtendedBlockDevice;
+                else if (Type == SqInodeType.BasicCharDevice)
+                    Type = SqInodeType.ExtendedCharDevice;
+            }
+
             InodeType = Type;
             Permissions = Mode;
             GidIndex = Group;
@@ -20,17 +35,30 @@ namespace NyaFs.Filesystem.SquashFs.Types.Nodes
             uint DevMinor = (Minor & 0xff) | (Minor & 0xfff00) << 12;
 
             Device = DevMajor | DevMinor;
+
+            if (IsExtended)
+                XAttrIndex = XAttrId;
         }
 
-        public BasicDevice(byte[] Data) : base(Data, 0x18)
+        public BasicDevice(byte[] Data, bool IsExtended = false) : base(Data, IsExtended ? 0x1C : 0x18)
         {
-
+            this.IsExtended = IsExtended;
         }
 
         /// <summary>
         /// INode size
         /// </summary>
-        internal override long INodeSize => 0x18; // TODO: add blocks_sizes calculation...
+        internal override long INodeSize => IsExtended ? 0x1C : 0x18;
+
+        /// <summary>
+        /// Index in the xattr id lookup table (extended inodes only).
+        /// u32 xattr (0x18)
+        /// </summary>
+        internal override uint XAttrIndex
+        {
+            get { return IsExtended ? ReadUInt32(0x18) : InvalidXAttr; }
+            set { if (IsExtended) WriteUInt32(0x18, value); }
+        }
 
         /// <summary>
         /// The number of hard links to this device

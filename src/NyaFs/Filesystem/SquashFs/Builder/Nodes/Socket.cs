@@ -11,6 +11,6 @@ namespace NyaFs.Filesystem.SquashFs.Builder.Nodes
 
         }
 
-        public override Types.SqInode GetINode() => new Types.Nodes.BasicIPC(Types.SqInodeType.BasicSocket, Mode, UId, GId, 1);
+        public override Types.SqInode GetINode() => new Types.Nodes.BasicIPC(Types.SqInodeType.BasicSocket, Mode, UId, GId, 1, XAttrIndex);
     }
 }

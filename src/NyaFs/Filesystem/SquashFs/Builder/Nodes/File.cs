@@ -53,6 +53,7 @@ namespace NyaFs.Filesystem.SquashFs.Builder.Nodes
             Convert.ToUInt32(Content.Length),
             Convert.ToUInt32((FragmentRef != null) ? FragmentIndex : 0xFFFFFFFFu),
             Convert.ToUInt32(FragmentRef?.UnpackedOffset ?? 0), 
-            DataBlocksSizes);
+            DataBlocksSizes,
+            XAttrIndex);
     }
 }

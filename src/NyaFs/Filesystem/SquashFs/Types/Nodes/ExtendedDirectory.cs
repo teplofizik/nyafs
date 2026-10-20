@@ -41,12 +41,12 @@ namespace NyaFs.Filesystem.SquashFs.Types.Nodes
         /// <summary>
         /// Total (uncompressed) size in bytes of the entries in the Directory Table, including headers plus 3. 
         /// The extra 3 bytes are for a virtual "." and ".." item in each directory which is not written, but can be considered to be part of the logical size of the directory.
-        /// u16 file_size (0x14)
+        /// u32 file_size (0x14)
         /// </summary>
         public uint FileSize
         {
-            get { return ReadUInt16(0x14); }
-            set { WriteUInt16(0x14, value); }
+            get { return ReadUInt32(0x14); }
+            set { WriteUInt32(0x14, value); }
         }
 
         /// <summary>
@@ -93,7 +93,7 @@ namespace NyaFs.Filesystem.SquashFs.Types.Nodes
         /// An index into the xattr lookup table. Set to 0xFFFFFFFF if the inode has no extended attributes
         /// u32 xattr_idx (0x24)
         /// </summary>
-        public uint XAttrIndex
+        internal override uint XAttrIndex
         {
             get { return ReadUInt32(0x24); }
             set { WriteUInt32(0x24, value); }

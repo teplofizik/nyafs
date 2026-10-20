@@ -12,11 +12,11 @@ namespace NyaFs.Filesystem.SquashFs.Builder
         long BlockSize = 0;
         long BlockOffset = 0;
 
-        public FragmentBlock(long Offset, uint Size, bool AddHeader = true)
+        public FragmentBlock(long Offset, uint Size)
         {
             BlockSize = Size;
             BlockOffset = Offset;
-            Content = new byte[AddHeader ? Size - 2 : Size];
+            Content = new byte[Size];
         }
 
         public byte[] FullData => Content;

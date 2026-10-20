@@ -18,7 +18,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
     /// LEB (gc_lnum) is kept just before them, and the LPT is written as
     /// [pnodes][nnodes bottom-up..root][ltab] in the first LPT LEB.
     /// </summary>
-    public class UbifsBuilder : IFilesystemBuilder
+    public class UbifsBuilder : IFilesystemBuilder, IXattrBuilder
     {
         public const int DefaultMinIoSize = 2048;
         public const uint FirstIno = 16;
@@ -66,6 +66,14 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             public uint Major, Minor;
             public Node Parent;
             public readonly List<Node> Children = new List<Node>();
+            public readonly List<XAttr> Xattrs = new List<XAttr>();
+            public uint Inum;
+        }
+
+        private class XAttr
+        {
+            public string Name;
+            public byte[] Value;
             public uint Inum;
         }
 
@@ -161,6 +169,16 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             Parent.Children.Add(N);
         }
 
+        public void Xattr(string Path, string Name, byte[] Value)
+        {
+            var N = Find(Path);
+            if (N == null)
+                throw new ArgumentException($"UBIFS: item '{Path}' not found");
+
+            N.Xattrs.RemoveAll(X => X.Name == Name);
+            N.Xattrs.Add(new XAttr { Name = Name, Value = Value ?? Array.Empty<byte>() });
+        }
+
         // ---- node collection ----
 
         private class NRef
@@ -179,6 +197,26 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
 
             foreach (var C in N.Children)
                 AssignInums(C, ref Next);
+        }
+
+        private void AssignXattrInums(Node N, ref uint Next)
+        {
+            N.Xattrs.Sort((A, B) => string.CompareOrdinal(A.Name, B.Name));
+
+            foreach (var X in N.Xattrs)
+            {
+                int NameLen = Encoding.UTF8.GetByteCount(X.Name);
+                if (NameLen > 255)
+                    throw new ArgumentException($"UBIFS: xattr name '{X.Name}' is too long");
+
+                if (X.Value.Length > 0x1000)
+                    throw new ArgumentException($"UBIFS: xattr '{X.Name}' value is too large (max 4096 bytes)");
+
+                X.Inum = Next++;
+            }
+
+            foreach (var C in N.Children)
+                AssignXattrInums(C, ref Next);
         }
 
         private void Emit(List<NRef> Out, uint W0, UbifsKeyType Type, uint Val, byte[] Data) =>
@@ -216,8 +254,33 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                     break;
             }
 
-            var Ino = UbifsNodeWriter.Inode(N.Inum, Mode, Size, N.User, N.Group, Nlink, Sqnum++, Time, Inline, Compr);
+            uint XattrCnt = 0, XattrSize = 0, XattrNames = 0;
+            foreach (var X in N.Xattrs)
+            {
+                int NameLen = Encoding.UTF8.GetByteCount(X.Name);
+                XattrCnt++;
+                XattrNames += (uint)NameLen;
+                XattrSize += (uint)(Align8(0x38 + NameLen + 1) + Align8(0xA0 + X.Value.Length + 1));
+            }
+
+            var Ino = UbifsNodeWriter.Inode(N.Inum, Mode, Size, N.User, N.Group, Nlink, Sqnum++, Time, Inline, Compr,
+                0, XattrCnt, XattrSize, XattrNames);
             Emit(Out, N.Inum, UbifsKeyType.Ino, 0, Ino);
+        }
+
+        private void EmitXattrs(List<NRef> Out, Node N)
+        {
+            foreach (var X in N.Xattrs)
+            {
+                uint Hash = UbifsNodeWriter.R5Hash(X.Name);
+
+                var Ino = UbifsNodeWriter.Inode(X.Inum, 0x8000 | 0x1FF, (ulong)X.Value.Length,
+                    N.User, N.Group, 1, Sqnum++, Time, X.Value, 0, 0x20 /* UBIFS_XATTR_FL */);
+                Emit(Out, X.Inum, UbifsKeyType.Ino, 0, Ino);
+
+                var Xent = UbifsNodeWriter.Dent(N.Inum, X.Inum, 0 /* UBIFS_ITYPE_REG */, Hash, X.Name, Sqnum++, true);
+                Emit(Out, N.Inum, UbifsKeyType.Xent, Hash, Xent);
+            }
         }
 
         private void EmitData(List<NRef> Out, Node N)
@@ -303,6 +366,8 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             foreach (var C in N.Children)
                 EmitDent(Out, N, C);
 
+            EmitXattrs(Out, N);
+
             foreach (var C in N.Children)
                 Collect(Out, C);
         }
@@ -353,6 +418,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             // 1. assign inode numbers and generate the real nodes
             uint Next = FirstIno;
             AssignInums(Root, ref Next);
+            AssignXattrInums(Root, ref Next);
             uint HighestInum = Next - 1;
 
             var Real = new List<NRef>();

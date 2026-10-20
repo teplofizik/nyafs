@@ -24,7 +24,7 @@ namespace NyaFs.Filesystem.SquashFs.Builder
             this.BlockSize = BlockSize;
             this.Compressor = Compressor;
 
-            TempMetablock = new FragmentBlock(0, BlockSize, AddHeader);
+            TempMetablock = new FragmentBlock(0, BlockSize);
         }
 
         public long CurrentBlockFreeSize => TempMetablock.FreeSize;

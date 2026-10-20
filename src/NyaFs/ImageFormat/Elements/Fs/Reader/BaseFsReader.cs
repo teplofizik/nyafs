@@ -34,6 +34,16 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                 Dst.Fs.Root.Mode = RootMode;
             }
 
+            if (FsReader is Filesystem.Universal.IRootXattrs RootXattrs)
+            {
+                var Xattrs = RootXattrs.GetRootXattrs();
+                if (Xattrs != null)
+                {
+                    foreach (var X in Xattrs)
+                        Dst.Fs.Root.Xattrs[X.Key] = X.Value;
+                }
+            }
+
             if (Dst.Info.Type == Types.ImageType.IH_TYPE_INVALID)
                 Dst.Info.Type = Types.ImageType.IH_TYPE_RAMDISK;
 

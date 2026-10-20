@@ -61,7 +61,8 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         // ---- node builders ----
 
         public static byte[] Inode(uint Inum, uint Mode, ulong Size, uint Uid, uint Gid, uint Nlink,
-                                   ulong Sqnum, ulong MTimeSec, byte[] InlineData, ushort ComprType = 0)
+                                   ulong Sqnum, ulong MTimeSec, byte[] InlineData, ushort ComprType = 0,
+                                   uint Flags = 0, uint XattrCnt = 0, uint XattrSize = 0, uint XattrNames = 0)
         {
             int DataLen = InlineData?.Length ?? 0;
             int Len = InoNodeSize + DataLen;
@@ -81,11 +82,11 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             WriteLE32(N, 0x60, Uid);
             WriteLE32(N, 0x64, Gid);
             WriteLE32(N, 0x68, Mode);
-            WriteLE32(N, 0x6C, 0);                    // flags
+            WriteLE32(N, 0x6C, Flags);                // flags
             WriteLE32(N, 0x70, (uint)DataLen);        // data_len
-            WriteLE32(N, 0x74, 0);                    // xattr_cnt
-            WriteLE32(N, 0x78, 0);                    // xattr_size
-            WriteLE32(N, 0x80, 0);                    // xattr_names
+            WriteLE32(N, 0x74, XattrCnt);             // xattr_cnt
+            WriteLE32(N, 0x78, XattrSize);            // xattr_size
+            WriteLE32(N, 0x80, XattrNames);           // xattr_names
             WriteLE16(N, 0x84, ComprType);
             if (DataLen > 0)
                 Array.Copy(InlineData, 0, N, InoNodeSize, DataLen);
@@ -95,13 +96,13 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             return N;
         }
 
-        public static byte[] Dent(uint ParentInum, ulong TargetInum, byte Type, uint Hash, string Name, ulong Sqnum)
+        public static byte[] Dent(uint ParentInum, ulong TargetInum, byte Type, uint Hash, string Name, ulong Sqnum, bool Xattr = false)
         {
             var NameBytes = Encoding.UTF8.GetBytes(Name);
             int Len = DentNodeSize + NameBytes.Length + 1;   // name is NUL-terminated
             var N = new byte[Len];
 
-            WriteKey(N, 0x18, ParentInum, UbifsKeyType.Dent, Hash);
+            WriteKey(N, 0x18, ParentInum, Xattr ? UbifsKeyType.Xent : UbifsKeyType.Dent, Hash);
             WriteLE64(N, 0x28, TargetInum);
             N[0x30] = 0;                              // padding1
             N[0x31] = Type;
@@ -109,7 +110,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             WriteLE32(N, 0x34, 0);                    // cookie
             Array.Copy(NameBytes, 0, N, DentNodeSize, NameBytes.Length);
 
-            WriteCommonHeader(N, UbifsNodeType.Dent, Sqnum, (uint)Len);
+            WriteCommonHeader(N, Xattr ? UbifsNodeType.Xent : UbifsNodeType.Dent, Sqnum, (uint)Len);
             return N;
         }
 

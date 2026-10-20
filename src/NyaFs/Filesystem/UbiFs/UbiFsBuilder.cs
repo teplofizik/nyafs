@@ -10,7 +10,7 @@ namespace NyaFs.Filesystem.UbiFs
     /// Wraps a <see cref="Ubifs.UbifsBuilder"/> (raw UBIFS volume) into a UBI container:
     /// builds the layout volume (volume table) and the volume LEBs with the given geometry.
     /// </summary>
-    public class UbiFsBuilder : IFilesystemBuilder
+    public class UbiFsBuilder : IFilesystemBuilder, IXattrBuilder
     {
         public readonly Ubifs.UbifsBuilder Ubifs;
 
@@ -41,6 +41,7 @@ namespace NyaFs.Filesystem.UbiFs
         public void Block(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode) => Ubifs.Block(Path, Major, Minor, User, Group, Mode);
         public void Fifo(string Path, uint User, uint Group, uint Mode) => Ubifs.Fifo(Path, User, Group, Mode);
         public void Socket(string Path, uint User, uint Group, uint Mode) => Ubifs.Socket(Path, User, Group, Mode);
+        public void Xattr(string Path, string Name, byte[] Value) => Ubifs.Xattr(Path, Name, Value);
 
         public byte[] GetFilesystemImage()
         {

@@ -11,9 +11,14 @@ using System.Text;
 
 namespace NyaFs.Filesystem.SquashFs
 {
-    public class SquashFsBuilder : IFilesystemBuilder
+    public class SquashFsBuilder : IFilesystemBuilder, Universal.IXattrBuilder
     {
         private Compression.BaseCompressor Comp;
+
+        private readonly Dictionary<string, Dictionary<string, byte[]>> Xattrs =
+            new Dictionary<string, Dictionary<string, byte[]>>(StringComparer.Ordinal);
+
+        private List<Dictionary<string, byte[]>> XAttrSets = null;
 
         /// <summary>
         /// Superblock
@@ -347,9 +352,12 @@ namespace NyaFs.Filesystem.SquashFs
                 if (N.Type == Types.SqInodeType.BasicDirectory)
                 {
                     var D = N as Builder.Nodes.Dir;
+                    bool IsExtended = D.XAttrIndex != Types.SqInode.InvalidXAttr;
 
                     // Fix reference
-                    var DE = new Types.Nodes.BasicDirectory(ReadUncompressedMetadata(Dst, Superblock.INodeTableStart, D.Ref, 0x20));
+                    var DE = new Types.Nodes.BasicDirectory(
+                        ReadUncompressedMetadata(Dst, Superblock.INodeTableStart, D.Ref, IsExtended ? 0x28u : 0x20u),
+                        IsExtended);
 
                     DE.DirBlockStart = Convert.ToUInt32(D.EntriesRef.MetadataOffset);
                     DE.BlockOffset = Convert.ToUInt32(D.EntriesRef.UnpackedOffset);
@@ -459,7 +467,7 @@ namespace NyaFs.Filesystem.SquashFs
             SB.IdCount = Convert.ToUInt32(IdTable.Count);
             SB.INodeCount = Convert.ToUInt32(Nodes.Count);
             SB.IdTableStart = Superblock.IdTableStart;
-            SB.XAttrIdTableStart = 0xfffffffffffffffful;
+            SB.XAttrIdTableStart = Superblock.XAttrIdTableStart;
             SB.FragmentTableStart = Superblock.FragmentTableStart;
             SB.FragmentEntryCount = Convert.ToUInt32(Fragments.Count);
             SB.ExportTableStart = Superblock.ExportTableStart;
@@ -515,6 +523,187 @@ namespace NyaFs.Filesystem.SquashFs
                 throw new InvalidOperationException($"Cannot add entry with path {Path}: no parent dir.");
         }
 
+        // ---- extended attributes ----
+
+        private static string NormPath(string Path)
+        {
+            var P = (Path ?? "").Replace('\\', '/');
+            while (P.StartsWith("/")) P = P.Substring(1);
+            return P.TrimEnd('/');
+        }
+
+        public void Xattr(string Path, string Name, byte[] Value)
+        {
+            var P = NormPath(Path);
+            if (!Xattrs.TryGetValue(P, out var D))
+            {
+                D = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+                Xattrs[P] = D;
+            }
+
+            D[Name] = Value ?? Array.Empty<byte>();
+        }
+
+        private static string XAttrKey(Dictionary<string, byte[]> Attrs)
+        {
+            var Parts = new List<string>();
+            foreach (var KV in Attrs.OrderBy(K => K.Key, StringComparer.Ordinal))
+                Parts.Add(KV.Key + "\0" + Convert.ToBase64String(KV.Value ?? Array.Empty<byte>()));
+
+            return string.Join("\n", Parts);
+        }
+
+        private static bool SplitXAttrName(string Name, out ushort Type, out string Rest)
+        {
+            if (Name.StartsWith("user.", StringComparison.Ordinal)) { Type = 0; Rest = Name.Substring(5); return true; }
+            if (Name.StartsWith("trusted.", StringComparison.Ordinal)) { Type = 1; Rest = Name.Substring(8); return true; }
+            if (Name.StartsWith("security.", StringComparison.Ordinal)) { Type = 2; Rest = Name.Substring(9); return true; }
+
+            Type = 0;
+            Rest = null;
+            return false;
+        }
+
+        private static byte[] BuildXAttrList(Dictionary<string, byte[]> Attrs)
+        {
+            var Names = new List<string>(Attrs.Keys);
+            Names.Sort(StringComparer.Ordinal);
+
+            var Res = new List<byte>();
+            foreach (var Name in Names)
+            {
+                if (!SplitXAttrName(Name, out ushort Type, out string Rest))
+                    throw new ArgumentException($"SquashFs: unsupported xattr name '{Name}'");
+
+                var NameBytes = Encoding.UTF8.GetBytes(Rest);
+                var Value = Attrs[Name] ?? Array.Empty<byte>();
+
+                if (NameBytes.Length > UInt16.MaxValue)
+                    throw new ArgumentException($"SquashFs: xattr name '{Name}' is too long");
+
+                var Header = new byte[0x04];
+                Header.WriteUInt16(0, Type);
+                Header.WriteUInt16(2, Convert.ToUInt32(NameBytes.Length));
+                Res.AddRange(Header);
+                Res.AddRange(NameBytes);
+
+                var ValueHeader = new byte[0x04];
+                ValueHeader.WriteUInt32(0, Convert.ToUInt32(Value.Length));
+                Res.AddRange(ValueHeader);
+                Res.AddRange(Value);
+            }
+
+            return Res.ToArray();
+        }
+
+        private void PrepareXAttrs()
+        {
+            XAttrSets = new List<Dictionary<string, byte[]>>();
+            var IdByKey = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            foreach (var N in Nodes)
+                N.XAttrIndex = Types.SqInode.InvalidXAttr;
+
+            foreach (var N in Nodes)
+            {
+                if (!Xattrs.TryGetValue(NormPath(N.Path), out var Attrs) || (Attrs.Count == 0))
+                    continue;
+
+                var Key = XAttrKey(Attrs);
+                if (!IdByKey.TryGetValue(Key, out int Id))
+                {
+                    Id = XAttrSets.Count;
+                    IdByKey[Key] = Id;
+                    XAttrSets.Add(Attrs);
+                }
+
+                N.XAttrIndex = Convert.ToUInt32(Id);
+            }
+
+            if (XAttrSets.Count == 0)
+            {
+                Superblock.XAttrIdTableStart = 0xfffffffffffffffful;
+                Superblock.Flags |= Types.SqSuperblockFlags.NO_XATTRS;
+            }
+            else
+            {
+                Superblock.Flags &= ~Types.SqSuperblockFlags.NO_XATTRS;
+            }
+
+            // The xattr metadata and id table are compressed with the filesystem compressor.
+            Superblock.Flags &= ~Types.SqSuperblockFlags.UNCOMPRESSED_XATTRS;
+        }
+
+        private static List<int> GetMetadataBlockOffsets(byte[] Data)
+        {
+            var Res = new List<int>();
+            int Pos = 0;
+
+            while (Pos < Data.Length)
+            {
+                Res.Add(Pos);
+                uint Header = Data.ReadUInt16(Pos);
+                Pos += 2 + Convert.ToInt32(Header & 0x7FFFu);
+            }
+
+            return Res;
+        }
+
+        private void AppendXAttrTable(List<byte> Dst)
+        {
+            if ((XAttrSets == null) || (XAttrSets.Count == 0))
+            {
+                Superblock.XAttrIdTableStart = 0xfffffffffffffffful;
+                return;
+            }
+
+            ulong TableStart = Convert.ToUInt64(Dst.Count);
+
+            var Data = new List<byte>();
+            var Writer = new Builder.MetadataWriter(Data, 0, MetadataBlockSize, Comp);
+            var Ids = new List<Types.SqXattrId>();
+
+            foreach (var Attrs in XAttrSets)
+            {
+                var Body = BuildXAttrList(Attrs);
+                var Ref = Writer.Write(Body);
+
+                var Id = new Types.SqXattrId();
+                Id.XAttr = Ref.Value;
+                Id.Count = Convert.ToUInt32(Attrs.Count);
+                Id.Size = Convert.ToUInt32(Attrs.Sum(KV => Encoding.UTF8.GetByteCount(KV.Key) + 1 + (KV.Value?.Length ?? 0)));
+                Ids.Add(Id);
+            }
+
+            Writer.Flush();
+            Dst.AddRange(Data);
+
+            var IdData = new List<byte>();
+            var IdWriter = new Builder.MetadataWriter(IdData, 0, MetadataBlockSize, Comp);
+            foreach (var Id in Ids)
+                IdWriter.Write(Id.getPacket());
+            IdWriter.Flush();
+
+            var IdBlockOffsets = GetMetadataBlockOffsets(IdData.ToArray());
+            ulong IdDataStart = Convert.ToUInt64(Dst.Count);
+            Dst.AddRange(IdData);
+
+            Superblock.XAttrIdTableStart = Convert.ToUInt64(Dst.Count);
+
+            var Header = new byte[0x10];
+            Header.WriteUInt64(0, TableStart);
+            Header.WriteUInt32(8, Convert.ToUInt32(Ids.Count));
+            Header.WriteUInt32(12, 0);
+            Dst.AddRange(Header);
+
+            foreach (var Offset in IdBlockOffsets)
+            {
+                var Temp = new byte[0x08];
+                Temp.WriteUInt64(0, IdDataStart + Convert.ToUInt64(Offset));
+                Dst.AddRange(Temp);
+            }
+        }
+
         private void AddCompressorOptions(List<byte> Dst)
         {
             if(Superblock.CompressionId == Types.SqCompressionType.Lz4)
@@ -543,6 +732,7 @@ namespace NyaFs.Filesystem.SquashFs
             Res.AddRange(Superblock.getPacket());
 
             PreprocessNodes();
+            PrepareXAttrs();
             PrepareFragmentTable();
 
             AddCompressorOptions(Res);
@@ -552,6 +742,7 @@ namespace NyaFs.Filesystem.SquashFs
             AppendFragmentTable(Res);
             AppendExportTable(Res);
             AppendIdTable(Res);
+            AppendXAttrTable(Res);
 
             var Image = Res.ToArray();
 

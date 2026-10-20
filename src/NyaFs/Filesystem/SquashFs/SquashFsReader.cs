@@ -8,13 +8,18 @@ using NyaIO.Data;
 
 namespace NyaFs.Filesystem.SquashFs
 {
-    public class SquashFsReader : RawPacket, Universal.IFilesystemReader, Universal.IRootFsInfo
+    public class SquashFsReader : RawPacket, Universal.IFilesystemReader, Universal.IRootFsInfo, Universal.IRootXattrs
     {
         private Compression.BaseCompressor Comp;
         private Dictionary<long, byte[]> MetadataTable = new Dictionary<long, byte[]>();
 
         Types.SqFragmentBlockEntry[] FragmentEntries = null;
         uint[] IdTable = null;
+
+        ulong XAttrTableStart = 0;
+        uint XAttrIds = 0;
+        long[] XAttrIdBlocks = null;
+        Dictionary<uint, Dictionary<string, byte[]>> XAttrsCache = new Dictionary<uint, Dictionary<string, byte[]>>();
 
         bool DebugReader = false;
 
@@ -38,6 +43,7 @@ namespace NyaFs.Filesystem.SquashFs
                 if (Superblock.IdTableStart != 0xfffffffffffffffful) ReadIdTable();
                 if (Superblock.ExportTableStart != 0xfffffffffffffffful) ReadExportTable();
                 if (Superblock.FragmentTableStart != 0xfffffffffffffffful) ReadFragmentTable();
+                if (Superblock.XAttrIdTableStart != 0xfffffffffffffffful) ReadXAttrIdTable();
 
                 //var Root = GetRootDir();
                 //var Entries = GetDirEntries(Root);
@@ -105,6 +111,150 @@ namespace NyaFs.Filesystem.SquashFs
             FragmentEntries = Entries.ToArray();
         }
 
+        private void ReadXAttrIdTable()
+        {
+            var TableStart = Convert.ToInt64(Superblock.XAttrIdTableStart);
+            XAttrTableStart = ReadUInt64(TableStart);
+            XAttrIds = ReadUInt32(TableStart + 0x08);
+            // u32 unused at 0x0C
+
+            // Each metadata block holds 8192 / 16 = 512 xattr ids.
+            var BlocksCount = (Convert.ToInt64(XAttrIds) * 0x10 + 0x1FFF) / 0x2000;
+            var Blocks = new long[BlocksCount];
+            for (int i = 0; i < BlocksCount; i++)
+                Blocks[i] = Convert.ToInt64(ReadUInt64(TableStart + 0x10 + i * 0x08));
+
+            XAttrIdBlocks = Blocks;
+
+            if (DebugReader) Debug.WriteLine($"Xattr id table: ids {XAttrIds} blocks {BlocksCount} table {XAttrTableStart:X08}");
+        }
+
+        private Types.SqXattrId ReadXAttrId(uint Index)
+        {
+            if ((XAttrIdBlocks == null) || (Index >= XAttrIds))
+                return null;
+
+            long Pos = Convert.ToInt64(Index) * 0x10;
+            long BlockIndex = Pos / 0x2000;
+            long Offset = Pos % 0x2000;
+
+            if (BlockIndex >= XAttrIdBlocks.Length)
+                return null;
+
+            var Data = ReadMetadata(XAttrIdBlocks[BlockIndex], Offset, 0x10);
+            return new Types.SqXattrId(Data, 0);
+        }
+
+        private Dictionary<string, byte[]> ReadXAttrs(uint Index)
+        {
+            if (XAttrIdBlocks == null)
+                return null;
+
+            if (XAttrsCache.TryGetValue(Index, out var Cached))
+                return Cached;
+
+            var Id = ReadXAttrId(Index);
+            if ((Id == null) || (Id.Count == 0))
+                return null;
+
+            var Res = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            var Cursor = new MetadataCursor(this, Convert.ToInt64(XAttrTableStart) + Id.XAttrBlock, Id.XAttrOffset);
+
+            for (uint i = 0; i < Id.Count; i++)
+            {
+                var Header = Cursor.Read(0x04);
+                int Type = Header.ReadUInt16(0);
+                int NameSize = Header.ReadUInt16(2);
+                var Name = Cursor.Read(NameSize);
+
+                var ValueHeader = Cursor.Read(0x04);
+                uint ValueSize = ValueHeader.ReadUInt32(0);
+                byte[] Value;
+
+                if ((Type & 0x100) != 0)
+                {
+                    // Out-of-line value: the entry contains a metadata reference to a value record.
+                    var RefData = Cursor.Read(0x08);
+                    ulong Ref = RefData.ReadUInt64(0);
+                    var ValueCursor = new MetadataCursor(this,
+                        Convert.ToInt64(XAttrTableStart) + Convert.ToInt64(Ref >> 16),
+                        Convert.ToInt32(Ref & 0xFFFF));
+
+                    var OolHeader = ValueCursor.Read(0x04);
+                    uint OolSize = OolHeader.ReadUInt32(0);
+                    Value = ValueCursor.Read(Convert.ToInt32(OolSize));
+                }
+                else
+                    Value = Cursor.Read(Convert.ToInt32(ValueSize));
+
+                var Prefix = GetXAttrPrefix(Type);
+                if (Prefix == null)
+                {
+                    if (DebugReader) Debug.WriteLine($"SquashFs: unknown xattr type {Type & 0xFF}, skipped");
+                    continue;
+                }
+
+                Res[Prefix + Encoding.UTF8.GetString(Name)] = Value;
+            }
+
+            XAttrsCache[Index] = Res;
+            return Res;
+        }
+
+        private static string GetXAttrPrefix(int Type)
+        {
+            switch (Type & 0xFF)
+            {
+                case 0: return "user.";
+                case 1: return "trusted.";
+                case 2: return "security.";
+                default: return null;
+            }
+        }
+
+        private sealed class MetadataCursor
+        {
+            private readonly SquashFsReader Reader;
+            private long Address;
+            private long Offset;
+
+            internal MetadataCursor(SquashFsReader Reader, long Address, long Offset)
+            {
+                this.Reader = Reader;
+                this.Address = Address;
+                this.Offset = Offset;
+            }
+
+            internal byte[] Read(int Size)
+            {
+                if (Size == 0)
+                    return new byte[0];
+
+                var Res = Reader.ReadMetadata(Address, Offset, Size);
+
+                long Remaining = Size;
+                while (Remaining > 0)
+                {
+                    var Block = Reader.GetMetadataBlock(Address);
+                    long Available = Block.Length - Offset;
+
+                    if (Remaining < Available)
+                    {
+                        Offset += Remaining;
+                        Remaining = 0;
+                    }
+                    else
+                    {
+                        Remaining -= Available;
+                        Address += 2 + (Reader.ReadUInt16(Address) & 0x7FFF);
+                        Offset = 0;
+                    }
+                }
+
+                return Res;
+            }
+        }
+
         private void InitCompressor()
         {
             switch (Superblock.CompressionId)
@@ -147,7 +297,7 @@ namespace NyaFs.Filesystem.SquashFs
             }
         }
 
-        private Types.Nodes.BasicDirectory GetRootDir() => GetNode(Superblock.RootINodeRef) as Types.Nodes.BasicDirectory;
+        private Types.SqInode GetRootDir() => GetNode(Superblock.RootINodeRef);
 
         public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
         {
@@ -163,6 +313,8 @@ namespace NyaFs.Filesystem.SquashFs
             Mode = R.Permissions & 0xFFF;
             return true;
         }
+
+        public Dictionary<string, byte[]> GetRootXattrs() => GetXAttrs(GetRootDir());
 
         private Types.SqInode GetNode(Types.SqMetadataRef Ref)
         {
@@ -181,35 +333,50 @@ namespace NyaFs.Filesystem.SquashFs
                 case Types.SqInodeType.BasicSymlink:
                 case Types.SqInodeType.ExtendedSymlink:
                     {
-                        // Extended symlinks share the basic header + target_path layout (xattr fields follow).
+                        bool IsExtended = UnknownNode.InodeType == Types.SqInodeType.ExtendedSymlink;
+
                         Metadata = ReadINodeMetadata(Ref, 0x18);
-                        var N = new Types.Nodes.BasicSymLink(Metadata);
+                        var N = new Types.Nodes.BasicSymLink(Metadata, IsExtended);
                         Metadata = ReadINodeMetadata(Ref, N.INodeSize);
-                        return new Types.Nodes.BasicSymLink(Metadata);
+                        return new Types.Nodes.BasicSymLink(Metadata, IsExtended);
                     }
 
                 case Types.SqInodeType.BasicFile:
                 case Types.SqInodeType.ExtendedFile:
                     {
-                        Metadata = ReadINodeMetadata(Ref, 0x20);
-                        var N = new Types.Nodes.BasicFile(Metadata, Superblock.BlockSize);
+                        bool IsExtended = UnknownNode.InodeType == Types.SqInodeType.ExtendedFile;
+
+                        // Extended headers are larger; reading them for basic files is harmless
+                        // because the basic fields all live inside the first 0x20 bytes.
+                        Metadata = ReadINodeMetadata(Ref, IsExtended ? 0x38 : 0x20);
+                        var N = new Types.Nodes.BasicFile(Metadata, Superblock.BlockSize, IsExtended);
                         Metadata = ReadINodeMetadata(Ref, N.INodeSize);
-                        return new Types.Nodes.BasicFile(Metadata, Superblock.BlockSize);
+                        return new Types.Nodes.BasicFile(Metadata, Superblock.BlockSize, IsExtended);
                     }
 
                 case Types.SqInodeType.BasicBlockDevice:
                 case Types.SqInodeType.BasicCharDevice:
-                case Types.SqInodeType.BasicFifo:
                 case Types.SqInodeType.ExtendedBlockDevice:
                 case Types.SqInodeType.ExtendedCharDevice:
-                case Types.SqInodeType.ExtendedFifo:
-                    Metadata = ReadINodeMetadata(Ref, 0x18);
-                    return new Types.Nodes.BasicDevice(Metadata);
+                    {
+                        bool IsExtended = (UnknownNode.InodeType == Types.SqInodeType.ExtendedBlockDevice) ||
+                                          (UnknownNode.InodeType == Types.SqInodeType.ExtendedCharDevice);
 
+                        Metadata = ReadINodeMetadata(Ref, IsExtended ? 0x1C : 0x18);
+                        return new Types.Nodes.BasicDevice(Metadata, IsExtended);
+                    }
+
+                case Types.SqInodeType.BasicFifo:
                 case Types.SqInodeType.BasicSocket:
+                case Types.SqInodeType.ExtendedFifo:
                 case Types.SqInodeType.ExtendedSocket:
-                    Metadata = ReadINodeMetadata(Ref, 0x18);
-                    return new Types.Nodes.BasicIPC(Metadata);
+                    {
+                        bool IsExtended = (UnknownNode.InodeType == Types.SqInodeType.ExtendedFifo) ||
+                                          (UnknownNode.InodeType == Types.SqInodeType.ExtendedSocket);
+
+                        Metadata = ReadINodeMetadata(Ref, IsExtended ? 0x18 : 0x14);
+                        return new Types.Nodes.BasicIPC(Metadata, IsExtended);
+                    }
 
                 case Types.SqInodeType.ExtendedDirectory:
                     {
@@ -220,6 +387,18 @@ namespace NyaFs.Filesystem.SquashFs
                     }
                 default: return UnknownNode;
             }
+        }
+
+        private Dictionary<string, byte[]> GetXAttrs(Types.SqInode Node)
+        {
+            if (Node == null)
+                return null;
+
+            uint Index = Node.XAttrIndex;
+            if (Index == Types.SqInode.InvalidXAttr)
+                return null;
+
+            return ReadXAttrs(Index);
         }
 
         private byte[] ReadINodeMetadata(Types.SqMetadataRef Ref, long Size)
@@ -234,6 +413,21 @@ namespace NyaFs.Filesystem.SquashFs
         /// <param name="Offset">Offset to data in unpacked block</param>
         /// <param name="Size">Size of data to readout</param>
         /// <returns></returns>
+        private byte[] GetMetadataBlock(long Address)
+        {
+            if (MetadataTable.TryGetValue(Address, out var Cached))
+                return Cached;
+
+            uint Header = ReadUInt16(Address);
+            long DataSize = Header & 0x7FFFu;
+            bool IsCompressed = (Header & 0x8000) == 0;
+            byte[] Raw = ReadArray(Address + 2, DataSize);
+            var Uncompressed = IsCompressed ? Comp.Decompress(Raw) : Raw;
+
+            MetadataTable[Address] = Uncompressed;
+            return Uncompressed;
+        }
+
         private byte[] ReadMetadata(long Address, long Offset, long Size)
         {
             var Res = new byte[Size];
@@ -241,20 +435,10 @@ namespace NyaFs.Filesystem.SquashFs
 
             while (true)
             {
-                byte[] Uncompressed;
                 uint Header = ReadUInt16(Address);
                 long DataSize = Header & 0x7FFFu;
+                var Uncompressed = GetMetadataBlock(Address);
 
-                if (MetadataTable.ContainsKey(Address))
-                    Uncompressed = MetadataTable[Address];
-                else
-                {
-                    bool IsCompressed = (Header & 0x8000) == 0;
-                    byte[] Raw = ReadArray(Address + 2, DataSize);
-                    Uncompressed = IsCompressed ? Comp.Decompress(Raw) : Raw;
-
-                    MetadataTable[Address] = Uncompressed;
-                }
                 if ((Uncompressed.Length - Offset) < Size)
                 {
                     long Copy = Uncompressed.Length - Offset;
@@ -287,7 +471,7 @@ namespace NyaFs.Filesystem.SquashFs
             long Offset = 0;
             var DirEntries = new List<Types.SqDirectoryEntry>();
 
-            while (Offset < Dir.FileSize - 3)
+            while (Offset < Convert.ToInt64(Dir.FileSize) - 3)
             {
                 var DirHeader = new Types.SqDirectoryHeader(Raw, Offset);
                 Offset += DirHeader.getLength();
@@ -305,6 +489,17 @@ namespace NyaFs.Filesystem.SquashFs
             return DirEntries.ToArray();
         }
 
+        internal Types.SqDirectoryEntry[] GetDirEntries(Types.SqInode Dir, string Name, uint INode)
+        {
+            if (Dir is Types.Nodes.ExtendedDirectory Extended)
+                return GetDirEntries(Extended, Name, INode);
+
+            if (Dir is Types.Nodes.BasicDirectory Basic)
+                return GetDirEntries(Basic, Name, INode);
+
+            return null;
+        }
+
         internal Types.SqDirectoryEntry[] GetDirEntries(Types.Nodes.BasicDirectory Dir, string Name, uint INode)
         {
             //if(DebugReader) Debug.WriteLine($"INode element read from DIR: {Superblock.DirectoryTableStart + Dir.DirBlockStart:X08}, offset {Dir.BlockOffset:X08} {Name} {INode}");
@@ -312,7 +507,7 @@ namespace NyaFs.Filesystem.SquashFs
             var Raw = ReadMetadata(Convert.ToInt64(Superblock.DirectoryTableStart) + Dir.DirBlockStart, Dir.BlockOffset, Dir.FileSize);
             long Offset = 0;
             var DirEntries = new List<Types.SqDirectoryEntry>();
-            while (Offset < Dir.FileSize - 6)
+            while (Offset < Convert.ToInt64(Dir.FileSize) - 6)
             {
                 var DirHeader = new Types.SqDirectoryHeader(Raw, Offset);
                 //if (DebugReader) Debug.WriteLine($"INode header read from DIR {INode}: start {DirHeader.Start:X08} node: {DirHeader.INodeNumber:X08} count:{DirHeader.Count:X08} at address {Offset:X08}");
@@ -339,12 +534,17 @@ namespace NyaFs.Filesystem.SquashFs
                 throw new ArgumentException($"{Path} is empty");
 
             var Root = GetRootDir();
+            if (Root == null)
+                return null;
+
             if ((Path == ".") || (Path == "/")) return Root;
 
             if (Path[0] == '/') Path = Path.Substring(1);
             var Parts = Path.Split('/');
 
             var Entries = GetDirEntries(Root, "/", 1);
+            if (Entries == null)
+                return null;
             for (int i = 0; i < Parts.Length; i++)
             {
                 var P = Parts[i];
@@ -360,15 +560,13 @@ namespace NyaFs.Filesystem.SquashFs
                         if (i == Parts.Length - 1)
                             return N;
 
-                        if (N.InodeType == Types.SqInodeType.BasicDirectory)
+                        if ((N.InodeType == Types.SqInodeType.BasicDirectory) ||
+                            (N.InodeType == Types.SqInodeType.ExtendedDirectory))
                         {
-                            Entries = GetDirEntries(N as Types.Nodes.BasicDirectory, I.Name, I.Inode);
-                            Found = true;
-                            break;
-                        }
-                        else if (N.InodeType == Types.SqInodeType.ExtendedDirectory)
-                        {
-                            Entries = GetDirEntries(N as Types.Nodes.ExtendedDirectory, I.Name, I.Inode);
+                            Entries = GetDirEntries(N, I.Name, I.Inode);
+                            if (Entries == null)
+                                return null;
+
                             Found = true;
                             break;
                         }
@@ -388,7 +586,11 @@ namespace NyaFs.Filesystem.SquashFs
             // The offset from the start of the archive where the data blocks are stored
             var BlockOffset = N.FragmentBlockOffset;
             var BlockSizes = N.BlockSizes;
-            var Res = new byte[N.FileSize];
+
+            if (N.FileSize > Int32.MaxValue)
+                throw new System.IO.IOException($"SquashFs: file {Path} is too large ({N.FileSize} bytes)");
+
+            var Res = new byte[Convert.ToInt32(N.FileSize)];
             long Offset = 0;
             long SrcOffset = N.BlocksStart;
 
@@ -430,7 +632,7 @@ namespace NyaFs.Filesystem.SquashFs
                 Offset += N.FragmentSize;
             }
 
-            if(Offset != N.FileSize)
+            if(Offset != Convert.ToInt64(N.FileSize))
                 Debug.WriteLine($"  Node invalid readed size: readed {Offset} size {N.FileSize}");
 
             //if (Path == "usr/bin/AvaloniaSyncer/Avalonia.Controls.dll")
@@ -566,21 +768,29 @@ namespace NyaFs.Filesystem.SquashFs
                     var N = GetNode(E.Reference);
                     var G = GetGID(N.GidIndex);
                     var U = GetUID(N.UidIndex);
+                    FilesystemEntry Entry;
+
                     // TODO: uid, gid conversion
                     switch (N.InodeType)
                     {
                         case Types.SqInodeType.BasicFile:
                         case Types.SqInodeType.ExtendedFile:
-                            Res.Add(new FilesystemEntry(E.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), U, G, N.Permissions, (N as Types.Nodes.BasicFile).FileSize));
+                            Entry = new FilesystemEntry(E.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), U, G, N.Permissions, Convert.ToUInt32((N as Types.Nodes.BasicFile).FileSize));
                             break;
                         case Types.SqInodeType.BasicSymlink:
                         case Types.SqInodeType.ExtendedSymlink:
-                            Res.Add(new FilesystemEntry(E.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), U, G, N.Permissions, (N as Types.Nodes.BasicSymLink).TargetSize));
+                            Entry = new FilesystemEntry(E.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), U, G, N.Permissions, (N as Types.Nodes.BasicSymLink).TargetSize);
                             break;
                         default:
-                            Res.Add(new FilesystemEntry(E.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), U, G, N.Permissions, 0));
+                            Entry = new FilesystemEntry(E.FsNodeType, Universal.Helper.FsHelper.CombinePath(Path, E.Name), U, G, N.Permissions, 0);
                             break;
                     }
+
+                    var Xattrs = GetXAttrs(N);
+                    if ((Xattrs != null) && (Xattrs.Count > 0))
+                        Entry.Xattrs = Xattrs;
+
+                    Res.Add(Entry);
                 }
 
                 return Res.ToArray();

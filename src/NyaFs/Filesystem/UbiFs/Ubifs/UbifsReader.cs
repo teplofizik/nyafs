@@ -11,7 +11,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
     /// UBIFS reader: reads the superblock and master node, walks the indexing B-tree,
     /// collects inode / dent / data nodes and exposes them as a filesystem.
     /// </summary>
-    public class UbifsReader : IFilesystemReader, IRootFsInfo
+    public class UbifsReader : IFilesystemReader, IRootFsInfo, IRootXattrs
     {
         public readonly UbiFsReader Ubi;
         public readonly UbiVolume Volume;
@@ -21,11 +21,13 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
 
         public readonly List<UbifsNode> Inodes = new List<UbifsNode>();
         public readonly List<UbifsNode> Dents = new List<UbifsNode>();
+        public readonly List<UbifsNode> Xents = new List<UbifsNode>();
         public readonly List<UbifsNode> Datas = new List<UbifsNode>();
 
         private readonly Dictionary<uint, byte[]> LebCache = new Dictionary<uint, byte[]>();
         private readonly Dictionary<uint, UbifsNode> InodeByInum = new Dictionary<uint, UbifsNode>();
         private readonly Dictionary<uint, List<UbifsNode>> DentsByParent = new Dictionary<uint, List<UbifsNode>>();
+        private readonly Dictionary<uint, List<UbifsNode>> XentsByHost = new Dictionary<uint, List<UbifsNode>>();
         private readonly Dictionary<uint, List<UbifsNode>> DataByInum = new Dictionary<uint, List<UbifsNode>>();
 
         public const uint RootInum = 1;
@@ -87,6 +89,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             {
                 case UbifsNodeType.Ino: Inodes.Add(Node); break;
                 case UbifsNodeType.Dent: Dents.Add(Node); break;
+                case UbifsNodeType.Xent: Xents.Add(Node); break;
                 case UbifsNodeType.Data: Datas.Add(Node); break;
             }
         }
@@ -101,6 +104,14 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                 uint Parent = N.Key.Inum;
                 if (!DentsByParent.TryGetValue(Parent, out var L))
                     DentsByParent[Parent] = L = new List<UbifsNode>();
+                L.Add(N);
+            }
+
+            foreach (var N in Xents)
+            {
+                uint Host = N.Key.Inum;
+                if (!XentsByHost.TryGetValue(Host, out var L))
+                    XentsByHost[Host] = L = new List<UbifsNode>();
                 L.Add(N);
             }
 
@@ -158,6 +169,26 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             Group = InoGid(N);
             Mode = InoMode(N) & 0xFFF;
             return true;
+        }
+
+        public Dictionary<string, byte[]> GetRootXattrs() => GetXAttrs(RootInum);
+
+        private Dictionary<string, byte[]> GetXAttrs(uint HostInum)
+        {
+            if (!XentsByHost.TryGetValue(HostInum, out var L))
+                return null;
+
+            var Res = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var X in L)
+            {
+                var Value = Inode((uint)DentInum(X));
+                if (Value == null)
+                    continue;
+
+                Res[DentName(X)] = InoInlineData(Value);
+            }
+
+            return (Res.Count > 0) ? Res : null;
         }
 
         // ---- path resolution ----
@@ -223,8 +254,14 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                         continue;
 
                     uint Mode = InoMode(Child);
-                    Res.Add(new FilesystemEntry(ModeToType(Mode), Universal.Helper.FsHelper.CombinePath(Path, DentName(D)),
-                        InoUid(Child), InoGid(Child), Mode & 0xFFF, Convert.ToUInt32(InoSize(Child))));
+                    var Entry = new FilesystemEntry(ModeToType(Mode), Universal.Helper.FsHelper.CombinePath(Path, DentName(D)),
+                        InoUid(Child), InoGid(Child), Mode & 0xFFF, Convert.ToUInt32(InoSize(Child)));
+
+                    var Xattrs = GetXAttrs((uint)DentInum(D));
+                    if (Xattrs != null)
+                        Entry.Xattrs = Xattrs;
+
+                    Res.Add(Entry);
                 }
             }
 

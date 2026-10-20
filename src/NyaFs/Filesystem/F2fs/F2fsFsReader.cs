@@ -12,7 +12,7 @@ namespace NyaFs.Filesystem.F2fs
     /// Currently supports regular directory/data blocks; inline dentry and inline data
     /// (used by mkfs/older default trees) are not parsed yet.
     /// </summary>
-    public class F2fsFsReader : IFilesystemReader
+    public class F2fsFsReader : IFilesystemReader, IRootXattrs
     {
         public readonly F2fsSuperblock Superblock;
         public readonly F2fsCheckpoint Checkpoint;
@@ -58,6 +58,8 @@ namespace NyaFs.Filesystem.F2fs
         public F2fsFsReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename)) { }
 
         public string Version => $"{Superblock.MajorVer}.{Superblock.MinorVer}";
+
+        public Dictionary<string, byte[]> GetRootXattrs() => ParseXattrs(ReadNode(Superblock.RootIno));
 
         // ---- low level ----
 

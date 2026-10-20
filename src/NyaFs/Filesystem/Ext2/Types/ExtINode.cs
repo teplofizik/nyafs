@@ -383,5 +383,10 @@ namespace NyaFs.Filesystem.Ext2.Types
             get { return ReadUInt16(0x7C); }
             set { WriteUInt16(0x7C, value); }
         }
+
+        public uint GetUInt16(long Offset) => ReadUInt16(Offset);
+        public uint GetUInt32(long Offset) => ReadUInt32(Offset);
+        public int GetByte(long Offset) => Convert.ToInt32(ReadByte(Offset));
+        public byte[] GetBytes(long Offset, long Size) => ReadArray(Offset, Size);
     }
 }

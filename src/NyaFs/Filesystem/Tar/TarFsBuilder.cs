@@ -10,7 +10,7 @@ namespace NyaFs.Filesystem.Tar
     /// <summary>
     /// Builder for ustar tar archives (with GNU long name/link fallback).
     /// </summary>
-    public class TarFsBuilder : IFilesystemBuilder
+    public class TarFsBuilder : IFilesystemBuilder, IXattrBuilder
     {
         private const int BlockingFactor = 20; // 20 * 512 = 10240 (standard tar record size)
 
@@ -29,6 +29,11 @@ namespace NyaFs.Filesystem.Tar
         }
 
         private readonly List<Entry> Files = new List<Entry>();
+
+        private bool HasRoot = false;
+        private uint RootUser = 0;
+        private uint RootGroup = 0;
+        private uint RootMode = 0x1ED;
 
         /// <summary>
         /// Get builded filesystem image
@@ -236,6 +241,20 @@ namespace NyaFs.Filesystem.Tar
                 Files[i].Xattrs[Name] = Value ?? Array.Empty<byte>();
                 return;
             }
+
+            if (N.Length == 0)
+            {
+                var Root = new Entry
+                {
+                    Path = "/",
+                    Type = FilesystemItemType.Directory,
+                    User = RootUser,
+                    Group = RootGroup,
+                    Mode = RootMode,
+                    Xattrs = new Dictionary<string, byte[]> { [Name] = Value ?? Array.Empty<byte>() }
+                };
+                Files.Insert(0, Root);
+            }
         }
 
         /// <summary>
@@ -259,7 +278,14 @@ namespace NyaFs.Filesystem.Tar
         /// </summary>
         public void Directory(string Path, uint User, uint Group, uint Mode)
         {
-            if ((Path == "") || (Path == "/")) return;
+            if ((Path == "") || (Path == "/"))
+            {
+                HasRoot = true;
+                RootUser = User;
+                RootGroup = Group;
+                RootMode = Mode;
+                return;
+            }
 
             Files.Add(new Entry { Path = Path, Type = FilesystemItemType.Directory, User = User, Group = Group, Mode = Mode });
         }

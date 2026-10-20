@@ -11,7 +11,7 @@ namespace NyaFs.Filesystem.Tar
     /// <summary>
     /// Reader for ustar (and GNU long name/link) tar archives.
     /// </summary>
-    public class TarFsReader : RawPacket, IFilesystemReader, IRootFsInfo
+    public class TarFsReader : RawPacket, IFilesystemReader, IRootFsInfo, IRootXattrs
     {
         private class Node
         {
@@ -34,6 +34,7 @@ namespace NyaFs.Filesystem.Tar
         private uint RootUser;
         private uint RootGroup;
         private uint RootMode;
+        private Dictionary<string, byte[]> RootXattrs;
 
         public TarFsReader(byte[] Data) : base(Data) { Init(); }
 
@@ -141,6 +142,7 @@ namespace NyaFs.Filesystem.Tar
                         RootUser = Convert.ToUInt32(Header.Uid);
                         RootGroup = Convert.ToUInt32(Header.Gid);
                         RootMode = Convert.ToUInt32(Header.Mode & 0xFFF);
+                        RootXattrs = PaxXattrs;
                         HasRoot = true;
                     }
                 }
@@ -225,6 +227,8 @@ namespace NyaFs.Filesystem.Tar
             Mode = RootMode;
             return HasRoot;
         }
+
+        public Dictionary<string, byte[]> GetRootXattrs() => RootXattrs;
 
         /// <summary>
         /// Read file by path

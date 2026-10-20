@@ -7,7 +7,7 @@ using NyaIO.Data;
 
 namespace NyaFs.Filesystem.Ext2
 {
-    public class Ext2FsReader : Ext2FsBase, Universal.IFilesystemReader, Universal.IRootFsInfo
+    public class Ext2FsReader : Ext2FsBase, Universal.IFilesystemReader, Universal.IRootFsInfo, Universal.IRootXattrs
     {
         public Ext2FsReader(byte[] Data) : base(Data) { }
 
@@ -138,19 +138,114 @@ namespace NyaFs.Filesystem.Ext2
             }
         }
 
+        public Dictionary<string, byte[]> GetRootXattrs() => ParseXattrs(GetRootDir());
+
+        /// <summary>
+        /// ext4 EA-inode value (e_value_inum): the value is stored as file data of a
+        /// separate inode, e_value_size is the value length.
+        /// </summary>
+        private byte[] ReadXattrInode(uint Inum, uint Size)
+        {
+            if (Size > Int32.MaxValue)
+                return null;
+
+            var N = GetINode(Inum);
+            if (N == null)
+                return null;
+
+            var Data = GetINodeContent(N);
+            if (Data == null)
+                return null;
+
+            int Len = Convert.ToInt32(Size);
+            if (Data.Length == Len)
+                return Data;
+
+            var Res = new byte[Len];
+            Array.Copy(Data, Res, Math.Min(Data.Length, Len));
+            return Res;
+        }
+
         private Dictionary<string, byte[]> ParseXattrs(Types.ExtINode N)
         {
+            Dictionary<string, byte[]> Res = null;
+            ParseInlineXattrs(N, ref Res);
+            ParseBlockXattrs(N, ref Res);
+            return Res;
+        }
+
+        /// <summary>
+        /// Inline (ibody) xattrs: header at 0x80 + i_extra_isize, entries after
+        /// the 4-byte magic, values addressed relative to the first entry.
+        /// </summary>
+        private void ParseInlineXattrs(Types.ExtINode N, ref Dictionary<string, byte[]> Res)
+        {
+            if (INodeSize <= 0xA2)
+                return;
+
+            int ExtraIsize = Convert.ToInt32(N.GetUInt16(0x80));
+            int HeaderOff = 0x80 + ExtraIsize;
+            int End = Convert.ToInt32(INodeSize);
+
+            if ((ExtraIsize < 4) || (HeaderOff + 4 > End))
+                return;
+
+            if (N.GetUInt32(HeaderOff) != 0xEA020000)
+                return;
+
+            int First = HeaderOff + 4;
+            int Off = First;
+
+            while (Off + 16 <= End)
+            {
+                if (N.GetUInt32(Off) == 0)
+                    break;
+
+                int NameLen = N.GetByte(Off);
+                int Index = N.GetByte(Off + 1);
+                int ValueOff = Convert.ToInt32(N.GetUInt16(Off + 2));
+                uint ValueInum = N.GetUInt32(Off + 4);
+                uint ValueSize = N.GetUInt32(Off + 8);
+
+                var Prefix = XattrPrefix((byte)Index);
+                if ((Prefix != null) && (NameLen >= 0) && (Off + 16 + NameLen <= End))
+                {
+                    byte[] Value = null;
+                    if (ValueInum != 0)
+                        Value = ReadXattrInode(ValueInum, ValueSize);
+                    else if (ValueSize <= (uint)End)
+                    {
+                        int ValuePos = First + ValueOff;
+                        if ((ValuePos >= First) && (ValuePos + Convert.ToInt32(ValueSize) <= End))
+                            Value = N.GetBytes(ValuePos, Convert.ToInt32(ValueSize));
+                    }
+
+                    if (Value != null)
+                    {
+                        var Name = N.GetBytes(Off + 16, NameLen);
+                        (Res ?? (Res = new Dictionary<string, byte[]>()))[Prefix + UTF8Encoding.UTF8.GetString(Name)] = Value;
+                    }
+                }
+
+                if (NameLen == 0)
+                    break;
+
+                Off += 16 + ((NameLen + 3) & ~3);
+            }
+        }
+
+        private void ParseBlockXattrs(Types.ExtINode N, ref Dictionary<string, byte[]> Res)
+        {
             if (N.FileAcl == 0)
-                return null;
+                return;
 
             long Base = (long)N.FileAcl * Superblock.BlockSize;
             if (ReadUInt32(Base) != 0xEA020000)
-                return null;
+                return;
 
-            Dictionary<string, byte[]> Res = null;
             int Off = 32;
 
-            while (Off + 4 <= Superblock.BlockSize)
+            while (Off + 16 <= Superblock.BlockSize)
             {
                 if (ReadUInt32(Base + Off) == 0)
                     break;
@@ -158,20 +253,30 @@ namespace NyaFs.Filesystem.Ext2
                 int NameLen = ReadByte(Base + Off);
                 int Index = ReadByte(Base + Off + 1);
                 int ValueOff = ReadUInt16(Base + Off + 2);
+                uint ValueInum = ReadUInt32(Base + Off + 4);
                 uint ValueSize = ReadUInt32(Base + Off + 8);
 
                 var Prefix = XattrPrefix((byte)Index);
-                if ((Prefix != null) && (NameLen >= 0) && (ValueSize < Superblock.BlockSize))
+                if ((Prefix != null) && (NameLen >= 0))
                 {
-                    var Name = ReadArray(Base + Off + 16, NameLen);
-                    var Value = ReadArray(Base + ValueOff, (int)ValueSize);
-                    (Res ?? (Res = new Dictionary<string, byte[]>()))[Prefix + UTF8Encoding.UTF8.GetString(Name)] = Value;
+                    byte[] Value = null;
+                    if (ValueInum != 0)
+                        Value = ReadXattrInode(ValueInum, ValueSize);
+                    else if ((ValueSize < Superblock.BlockSize) && (ValueOff + ValueSize <= Superblock.BlockSize))
+                        Value = ReadArray(Base + ValueOff, (int)ValueSize);
+
+                    if (Value != null)
+                    {
+                        var Name = ReadArray(Base + Off + 16, NameLen);
+                        (Res ?? (Res = new Dictionary<string, byte[]>()))[Prefix + UTF8Encoding.UTF8.GetString(Name)] = Value;
+                    }
                 }
+
+                if (NameLen == 0)
+                    break;
 
                 Off += 16 + (((NameLen + 3) & ~3));
             }
-
-            return Res;
         }
 
         internal Types.ExtINode GetINodeByPath(string Path)
@@ -279,3 +384,4 @@ namespace NyaFs.Filesystem.Ext2
         }
     }
 }
+

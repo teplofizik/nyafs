@@ -1,4 +1,4 @@
-﻿using NyaIO.Data;
+using NyaIO.Data;
 using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
@@ -7,15 +7,20 @@ using System.Text;
 
 namespace NyaFs.Filesystem.CramFs
 {
-    class CramFsReader : RawPacket, IFilesystemReader, IRootFsInfo
+    class CramFsReader : RawPacket, IFilesystemReader, IRootFsInfo, ICramFsEndian
     {
         private int BlockSize = 4096;
         private Types.CrSuperblock Superblock;
         private bool Loaded = false;
 
+        public bool BigEndian { get; }
+
         public CramFsReader(byte[] Data) : base(Data)
         {
-            Superblock = new Types.CrSuperblock(Data, 0);
+            var Magic = (Data.Length >= 4) ? Data.ReadUInt32BE(0) : 0;
+            BigEndian = (Magic == 0x28cd3d45u);
+
+            Superblock = new Types.CrSuperblock(Data, 0, BigEndian);
 
             var Copy = ReadArray(0, Raw.Length);
             Copy.WriteUInt32(0x20, 0);
@@ -28,7 +33,7 @@ namespace NyaFs.Filesystem.CramFs
             }
         }
 
-        private Types.CrNode GetRootNode() => new Types.CrNode(Raw, 0x40);
+        private Types.CrNode GetRootNode() => new Types.CrNode(Raw, 0x40, BigEndian);
 
         public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
         {
@@ -57,7 +62,7 @@ namespace NyaFs.Filesystem.CramFs
             long Offset = 0x00;
             while (Offset < Dir.Size)
             {
-                var Node = new Types.CrNode(Raw, Dir.Offset + Offset);
+                var Node = new Types.CrNode(Raw, Dir.Offset + Offset, BigEndian);
 
                 Nodes.Add(Node);
                 Offset += Node.NodeSize;
@@ -179,19 +184,24 @@ namespace NyaFs.Filesystem.CramFs
         {
             if (Loaded)
             {
+                if (Size == 0)
+                    return new byte[0];
+
                 long BlockCount = (Size - 1) / BlockSize + 1;
                 // Array of pointer to blocks end
-                uint[] Pointers = ReadUInt32Array(Offset, BlockCount);
+                uint[] Pointers = BigEndian ? ReadUInt32BEArray(Offset, BlockCount) : ReadUInt32Array(Offset, BlockCount);
 
                 var Res = new List<byte>();
                 // Start of first block
                 long Start = Offset + BlockCount * 4;
                 for (long i = 0; i < BlockCount; i++)
                 {
-                    var Data = ReadArray(Start, Pointers[i] - Start);
+                    long End = Pointers[i];
+                    var Data = ReadArray(Start, End - Start);
                     var Uncompressed = Compression.Gzip.Decompress(Data);
 
                     Res.AddRange(Uncompressed);
+                    Start = End;
                 }
 
                 return Res.ToArray();

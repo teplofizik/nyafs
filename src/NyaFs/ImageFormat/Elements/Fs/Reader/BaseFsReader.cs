@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text;
 
@@ -49,6 +49,9 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
 
             Dst.FilesystemType = FsType;
             Dst.FsSize = FsSize;
+
+            if (FsReader is Filesystem.CramFs.ICramFsEndian Endian)
+                Dst.CramFsBigEndian = Endian.BigEndian;
         }
 
         private void ImportDir(Filesystem.Universal.Items.Dir Dir, string Path)

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
@@ -48,7 +48,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
                 case Types.FsType.Cpio: return new CpioFsWriter();
                 case Types.FsType.Ext2: return new Ext2FsWriter(DetectFixDiskSize(Fs, 0x800000));
                 case Types.FsType.SquashFs: return new SquashFsWriter(Fs.SquashFsCompression);
-                case Types.FsType.CramFs: return new CramFsWriter();
+                case Types.FsType.CramFs: return new CramFsWriter(Fs.CramFsBigEndian);
                 case Types.FsType.RomFs: return new RomFsWriter();
                 case Types.FsType.Tar: return new BaseFsWriter(new NyaFs.Filesystem.Tar.TarFsBuilder());
 

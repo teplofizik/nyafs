@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
@@ -30,7 +30,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
             if (Magic == 0x68737173) // hsqs magic
                 return Types.FsType.SquashFs;
 
-            if (Magic == 0x453dcd28u) // cramfs magic
+            if ((Magic == 0x453dcd28u) || (Magic == 0x28cd3d45u)) // cramfs magic (LE/BE)
                 return Types.FsType.CramFs;
 
             if (Magic == 0x2d726f6du) // romfs magic

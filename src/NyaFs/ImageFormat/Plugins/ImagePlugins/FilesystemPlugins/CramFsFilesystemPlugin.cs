@@ -1,4 +1,4 @@
-﻿using NyaFs.ImageFormat.Elements.Fs;
+using NyaFs.ImageFormat.Elements.Fs;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -18,7 +18,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         /// </summary>
         /// <param name="Image"></param>
         /// <returns></returns>
-        public override bool DetectFilesystem(ImageData Image) => (Image.Length >= 4) && (Image.ReadUInt32BE(0) == 0x453dcd28u);
+        public override bool DetectFilesystem(ImageData Image) =>
+            (Image.Length >= 4) && ((Image.ReadUInt32BE(0) == 0x453dcd28u) || (Image.ReadUInt32BE(0) == 0x28cd3d45u));
 
         /// <summary>
         /// Get reader
@@ -32,7 +33,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         /// </summary>
         /// <returns></returns>
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) =>
-            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.CramFs.CramFsBuilder());
+            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.CramFs.CramFsBuilder(Fs.CramFsBigEndian));
 
         public override bool CheckFilesystem(LinuxFilesystem Fs)
         {

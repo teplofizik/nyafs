@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -17,7 +17,7 @@ namespace NyaFs.Processor.Scripting.Commands
         {
             public SetScriptArgsConfig() : base(0, new ScriptArgsParam[] {
                     new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all" }),
-                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "size" }),
+                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "size" }),
                     new Params.StringScriptArgsParam("value")
                 })
             {
@@ -42,10 +42,10 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
-                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size");
+                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, cramfs.endian, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size");
                         return false;
                     }
                 }
@@ -164,6 +164,30 @@ namespace NyaFs.Processor.Scripting.Commands
                             }
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
+                        }
+                    case "cramfs.endian":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set cramfs endian to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            var Endian = (Value ?? "").ToLowerInvariant();
+                            if ((Endian == "big") || (Endian == "be"))
+                            {
+                                Fs.CramFsBigEndian = true;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, "Set cramfs endian ok: big!");
+                            }
+
+                            if ((Endian == "little") || (Endian == "le"))
+                            {
+                                Fs.CramFsBigEndian = false;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, "Set cramfs endian ok: little!");
+                            }
+
+                            return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown cramfs endian: {Value}!");
                         }
                     case "size":
                         {

@@ -1,4 +1,4 @@
-﻿using NyaFs.Filesystem.Universal;
+using NyaFs.Filesystem.Universal;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -8,7 +8,13 @@ namespace NyaFs.Filesystem.CramFs
 {
     public class CramFsBuilder : IFilesystemBuilder
     {
+        private readonly bool BigEndian;
         private int BlockSize = 4096;
+
+        public CramFsBuilder(bool BigEndian = false)
+        {
+            this.BigEndian = BigEndian;
+        }
 
         List<uint> InvalidGid = new List<uint>();
         private List<Builder.Node> Nodes = new List<Builder.Node>();
@@ -155,7 +161,7 @@ namespace NyaFs.Filesystem.CramFs
 
         private void AppendSuperblock(List<byte> Res)
         {
-            var SB = new Types.CrSuperblock();
+            var SB = new Types.CrSuperblock(BigEndian);
 
             Res.AddRange(SB.getPacket());
         }
@@ -190,7 +196,7 @@ namespace NyaFs.Filesystem.CramFs
         private void WriteNode(List<byte> Res, Builder.Node N)
         {
             N.RelevantNodeOffset = Convert.ToUInt32(Res.Count);
-            var Data = N.GenerateNode();
+            var Data = N.GenerateNode(BigEndian);
 
             Res.AddRange(Data.getPacket());
         }
@@ -252,7 +258,10 @@ namespace NyaFs.Filesystem.CramFs
             {
                 BlocksOffset = Convert.ToUInt32(BlocksOffset + Blocks[i].Length);
 
-                Res.WriteUInt32(i * 4, BlocksOffset);
+                if (BigEndian)
+                    Res.WriteUInt32BE(i * 4, BlocksOffset);
+                else
+                    Res.WriteUInt32(i * 4, BlocksOffset);
             }
             return Res;
         }
@@ -280,7 +289,7 @@ namespace NyaFs.Filesystem.CramFs
 
         private void UpdateSuperblock(byte[] preparedImage)
         {
-            var SB = new Types.CrSuperblock(preparedImage, 0);
+            var SB = new Types.CrSuperblock(preparedImage, 0, BigEndian);
 
             SB.Flags = 3;
             SB.FsIDFiles = Convert.ToUInt32(Nodes.Count);
@@ -295,7 +304,7 @@ namespace NyaFs.Filesystem.CramFs
         {
             foreach(var N in Nodes)
             {
-                var Node = new Types.CrNode(preparedImage, N.RelevantNodeOffset);
+                var Node = new Types.CrNode(preparedImage, N.RelevantNodeOffset, BigEndian);
 
                 Node.Offset = N.DataOffset;
                 if (Node.FsNodeType == Universal.Types.FilesystemItemType.Directory)

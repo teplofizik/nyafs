@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -198,7 +198,7 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "cpio": return new ImageFormat.Elements.Fs.Writer.CpioFsWriter(Path);
                     case "ext2": return new ImageFormat.Elements.Fs.Writer.Ext2FsWriter(ImageFormat.Elements.Fs.Writer.Writer.DetectFixDiskSize(Fs, 0x800000), Path);
                     case "squashfs": return new ImageFormat.Elements.Fs.Writer.SquashFsWriter(Fs.SquashFsCompression, Path);
-                    case "cramfs": return new ImageFormat.Elements.Fs.Writer.CramFsWriter(Path);
+                    case "cramfs": return new ImageFormat.Elements.Fs.Writer.CramFsWriter(Fs.CramFsBigEndian, Path);
                     case "romfs": return new ImageFormat.Elements.Fs.Writer.RomFsWriter(Path);
                     case "tar": return new ImageFormat.Elements.Fs.Writer.TarFsWriter(Path);
                     case "tar.gz":

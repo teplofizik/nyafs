@@ -1,4 +1,4 @@
-﻿using NyaFs.Filesystem.Universal;
+using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Items;
 using System;
 using System.Collections.Generic;
@@ -17,6 +17,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// Filesystem type
         /// </summary>
         public Filesystem.SquashFs.Types.SqCompressionType SquashFsCompression = Filesystem.SquashFs.Types.SqCompressionType.Gzip;
+
+        /// <summary>Write CramFS with big-endian field encoding.</summary>
+        public bool CramFsBigEndian = false;
 
         /// <summary>
         /// Compression for regular file data nodes when writing a UBIFS image.

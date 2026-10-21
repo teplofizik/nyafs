@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
@@ -7,16 +7,29 @@ namespace NyaFs.Filesystem.CramFs.Types
 {
     class CrSuperblock : ArrayWrapper
     {
-        public CrSuperblock() : base(0x40)
+        private readonly bool BigEndian;
+
+        public CrSuperblock(bool BigEndian = false) : base(0x40)
         {
+            this.BigEndian = BigEndian;
             Magic = 0x28cd3d45;
             Signature = "Compressed ROMFS";
             Name = "cramfs";
         }
 
-        public CrSuperblock(byte[] Data, long Offset) : base(Data, Offset, 0x40)
+        public CrSuperblock(byte[] Data, long Offset, bool BigEndian = false) : base(Data, Offset, 0x40)
         {
+            this.BigEndian = BigEndian;
+        }
 
+        private uint ReadU32(long Offset) => BigEndian ? ReadUInt32BE(Offset) : ReadUInt32(Offset);
+
+        private void WriteU32(long Offset, uint Value)
+        {
+            if (BigEndian)
+                WriteUInt32BE(Offset, Value);
+            else
+                WriteUInt32(Offset, Value);
         }
 
         /// <summary>
@@ -24,8 +37,8 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// </summary>
         public uint Magic
         {
-            get { return ReadUInt32(0); }
-            set { WriteUInt32(0, value); }
+            get { return ReadU32(0); }
+            set { WriteU32(0, value); }
         }
 
         /// <summary>
@@ -38,8 +51,8 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// </summary>
         public uint Size
         {
-            get { return ReadUInt32(0x04); }
-            set { WriteUInt32(0x04, value); }
+            get { return ReadU32(0x04); }
+            set { WriteU32(0x04, value); }
         }
 
         /// <summary>
@@ -47,8 +60,8 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// </summary>
         public uint Flags
         {
-            get { return ReadUInt32(0x08); }
-            set { WriteUInt32(0x08, value); }
+            get { return ReadU32(0x08); }
+            set { WriteU32(0x08, value); }
         }
 
         /// <summary>
@@ -56,8 +69,8 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// </summary>
         public uint Future
         {
-            get { return ReadUInt32(0x0C); }
-            set { WriteUInt32(0x0C, value); }
+            get { return ReadU32(0x0C); }
+            set { WriteU32(0x0C, value); }
         }
 
         /// <summary>
@@ -74,8 +87,8 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// </summary>
         public uint FsIDCrc
         {
-            get { return ReadUInt32(0x20); }
-            set { WriteUInt32(0x20, value); }
+            get { return ReadU32(0x20); }
+            set { WriteU32(0x20, value); }
         }
 
         /// <summary>
@@ -83,8 +96,8 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// </summary>
         public uint FsIDEdition
         {
-            get { return ReadUInt32(0x24); }
-            set { WriteUInt32(0x24, value); }
+            get { return ReadU32(0x24); }
+            set { WriteU32(0x24, value); }
         }
 
         /// <summary>
@@ -92,8 +105,8 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// </summary>
         public uint FsIDBlocks
         {
-            get { return ReadUInt32(0x28); }
-            set { WriteUInt32(0x28, value); }
+            get { return ReadU32(0x28); }
+            set { WriteU32(0x28, value); }
         }
 
         /// <summary>
@@ -101,8 +114,8 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// </summary>
         public uint FsIDFiles
         {
-            get { return ReadUInt32(0x2C); }
-            set { WriteUInt32(0x2C, value); }
+            get { return ReadU32(0x2C); }
+            set { WriteU32(0x2C, value); }
         }
 
         /// <summary>

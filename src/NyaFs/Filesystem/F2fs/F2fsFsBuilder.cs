@@ -258,16 +258,19 @@ namespace NyaFs.Filesystem.F2fs
             (Minor & 0xFF) | (Major << 8) | ((Minor & ~0xFFu) << 12);
 
         // ---- geometry ----
-        // NOTE: fixed geometry (segs_per_sec=1, secs_per_zone=1, constant rsvd/overprov)
-        // is only valid for small images (< 512 MiB); larger images need mkfs-like
-        // section/zone/overprovision calculation.
+        // Small images keep the original layout (and its exact byte output).
+        // Images >= 512 MiB use the mkfs.f2fs section/overprovision calculation.
+
+        private const long LargeImageThreshold = 512L * 1024 * 1024;
+        private const int SegsPerSec = 1;
+        private const int SecsPerZone = 1;
 
         private static int AlignUp(int V, int A) => ((V + A - 1) / A) * A;
 
         private void ComputeGeometry()
         {
             int SegmentSizeBytes = BlockSize * BlocksPerSeg;
-            int ZoneSizeBytes = SegmentSizeBytes;
+            int ZoneSizeBytes = SegmentSizeBytes * SegsPerSec * SecsPerZone;
 
             int ZoneAlign = ((2 * BlockSize + ZoneSizeBytes - 1) / ZoneSizeBytes) * ZoneSizeBytes;
             Segment0Blkaddr = ZoneAlign / BlockSize;
@@ -279,20 +282,97 @@ namespace NyaFs.Filesystem.F2fs
             int BlocksForSit = AlignUp(SegmentCount, SitsPerBlock);
             SegSit = ((BlocksForSit + BlocksPerSeg - 1) / BlocksPerSeg) * 2;
 
+            if (TotalBytes >= LargeImageThreshold)
+                ComputeLargeGeometry();
+            else
+                ComputeSmallGeometry();
+
+            SitBlkaddr = Segment0Blkaddr + SegCkpt * BlocksPerSeg;
+            NatBlkaddr = SitBlkaddr + SegSit * BlocksPerSeg;
+            SsaBlkaddr = NatBlkaddr + SegNat * BlocksPerSeg;
+            MainBlkaddr = SsaBlkaddr + SegSsa * BlocksPerSeg;
+        }
+
+        private void ComputeSmallGeometry()
+        {
             int BlocksForNat = AlignUp(SegmentCount, NatsPerBlock);
             SegNat = ((BlocksForNat + BlocksPerSeg - 1) / BlocksPerSeg) * 2;
 
             int AfterMeta = SegmentCount - (SegCkpt + SegSit + SegNat);
             SegSsa = (AfterMeta + BlocksPerSeg - 1) / BlocksPerSeg;
 
-            SitBlkaddr = Segment0Blkaddr + SegCkpt * BlocksPerSeg;
-            NatBlkaddr = SitBlkaddr + SegSit * BlocksPerSeg;
-            SsaBlkaddr = NatBlkaddr + SegNat * BlocksPerSeg;
-            MainBlkaddr = SsaBlkaddr + SegSsa * BlocksPerSeg;
-
             int TotalMeta = SegCkpt + SegSit + SegNat + SegSsa;
             SectionCount = SegmentCount - TotalMeta;
             SegMain = SectionCount;
+        }
+
+        private void ComputeLargeGeometry()
+        {
+            int BlocksForSit = (SegmentCount + SitsPerBlock - 1) / SitsPerBlock;
+            SegSit = ((BlocksForSit + BlocksPerSeg - 1) / BlocksPerSeg) * 2;
+
+            int ValidForNat = (SegmentCount - SegCkpt - SegSit) * BlocksPerSeg;
+            int BlocksForNat = (ValidForNat + NatsPerBlock - 1) / NatsPerBlock;
+            SegNat = ((BlocksForNat + BlocksPerSeg - 1) / BlocksPerSeg) * 2;
+
+            int ValidForSsa = (SegmentCount - SegCkpt - SegSit - SegNat) * BlocksPerSeg;
+            int BlocksForSsa = ValidForSsa / BlocksPerSeg + 1;
+            SegSsa = (BlocksForSsa + BlocksPerSeg - 1) / BlocksPerSeg;
+
+            int ZoneSegments = SegsPerSec * SecsPerZone;
+            int TotalMeta = SegCkpt + SegSit + SegNat + SegSsa;
+            int Align = TotalMeta % ZoneSegments;
+            if (Align != 0)
+            {
+                SegSsa += ZoneSegments - Align;
+                TotalMeta += ZoneSegments - Align;
+            }
+
+            SectionCount = (SegmentCount - TotalMeta) / SegsPerSec;
+            SegMain = SectionCount * SegsPerSec;
+
+            double Ratio = GetBestOverprovision(SegMain);
+            ReservedSegments = (uint)GetReserved(Ratio);
+            int Overprovision = (int)((SegMain - (int)ReservedSegments) * Ratio / 100.0);
+            if (Overprovision < (int)ReservedSegments)
+                Overprovision = (int)ReservedSegments;
+
+            OverprovisionSegments = (uint)(Overprovision + 2 * SegsPerSec);
+        }
+
+        private static int GetReserved(double Overprovision)
+        {
+            if (Overprovision <= 0)
+                return 0;
+
+            int Reserved = (int)(100.0 / Overprovision + 1 + 6);
+            return AlignUp(Reserved, SegsPerSec);
+        }
+
+        private static double GetBestOverprovision(int SegmentCountMain)
+        {
+            double Candidate = (SegmentCountMain < 256) ? 10.0 : 0.01;
+            double End = (SegmentCountMain < 256) ? 95.0 : 10.0;
+            double Diff = (SegmentCountMain < 256) ? 5.0 : 0.01;
+            double MaxOverprovision = 0;
+            double MaxSpace = 0;
+
+            for (; Candidate <= End; Candidate += Diff)
+            {
+                int Reserved = GetReserved(Candidate);
+                double Overprovision = (SegmentCountMain - Reserved) * Candidate / 100.0;
+                if (Overprovision < 0)
+                    continue;
+
+                double Space = SegmentCountMain - Math.Max(Reserved, Overprovision) - 6 * SegsPerSec;
+                if (Space > MaxSpace)
+                {
+                    MaxSpace = Space;
+                    MaxOverprovision = Candidate;
+                }
+            }
+
+            return (MaxOverprovision > 0) ? MaxOverprovision : 1;
         }
 
         // ---- build ----

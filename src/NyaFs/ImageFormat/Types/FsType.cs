@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -21,6 +21,7 @@ namespace NyaFs.ImageFormat.Types
         Fat,
         F2fs,
         Iso9660,
-        ExFat
+        ExFat,
+        EroFs
     }
 }

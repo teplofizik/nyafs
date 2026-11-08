@@ -147,46 +147,58 @@ namespace NyaFs.Filesystem.EroFs
                 return;
 
             var Bytes = ReadInodeData(Directory.Inode);
-            if (Bytes.Length < 12)
-                return;
 
-            int FirstName = (int)EroFsShared.ReadU16(Bytes, 8);
-            int Count = (FirstName > 0) ? (FirstName / 12) : 0;
-
-            for (int i = 0; i < Count; i++)
+            for (int BlockOffset = 0; BlockOffset < Bytes.Length; BlockOffset += BlockSize)
             {
-                int Offset = i * 12;
-                if (Offset + 12 > FirstName)
+                int BlockLength = Math.Min(BlockSize, Bytes.Length - BlockOffset);
+                if (BlockLength < 12)
                     break;
 
-                ulong Nid = EroFsShared.ReadU64(Bytes, Offset);
-                int NameOffset = (int)EroFsShared.ReadU16(Bytes, Offset + 8);
-                int NameEnd = (i + 1 < Count) ? (int)EroFsShared.ReadU16(Bytes, (i + 1) * 12 + 8) : Bytes.Length;
-
-                if ((NameOffset < FirstName) || (NameOffset >= Bytes.Length))
+                int FirstName = (int)EroFsShared.ReadU16(Bytes, BlockOffset + 8);
+                if ((FirstName <= 0) || (FirstName > BlockLength) || ((FirstName % 12) != 0))
                     continue;
 
-                NameEnd = Math.Min(NameEnd, Bytes.Length);
-                var Name = Encoding.UTF8.GetString(Bytes, NameOffset, Math.Max(0, NameEnd - NameOffset)).TrimEnd('\0');
-                if (String.IsNullOrEmpty(Name) || (Name == ".") || (Name == ".."))
-                    continue;
-
-                var ChildInode = ReadInode(Nid);
-                var Child = new Node
+                int Count = FirstName / 12;
+                for (int i = 0; i < Count; i++)
                 {
-                    Name = Name,
-                    Path = ExFatPath.Combine(Directory.Path, Name),
-                    Inode = ChildInode
-                };
+                    int Offset = BlockOffset + i * 12;
+                    if (Offset + 12 > BlockOffset + FirstName)
+                        break;
 
-                Directory.Children.Add(Child);
-                Nodes[Child.Path] = Child;
+                    ulong Nid = EroFsShared.ReadU64(Bytes, Offset);
+                    int NameOffset = (int)EroFsShared.ReadU16(Bytes, Offset + 8);
+                    int NameEnd = (i + 1 < Count) ?
+                        (int)EroFsShared.ReadU16(Bytes, BlockOffset + (i + 1) * 12 + 8) :
+                        BlockLength;
 
-                if (IsDirectory(ChildInode))
-                    ReadDirectory(Child, Visited);
+                    NameOffset += BlockOffset;
+                    NameEnd += BlockOffset;
+
+                    if ((NameOffset < BlockOffset + FirstName) || (NameOffset >= BlockOffset + BlockLength))
+                        continue;
+
+                    NameEnd = Math.Min(NameEnd, BlockOffset + BlockLength);
+                    var Name = Encoding.UTF8.GetString(Bytes, NameOffset,
+                        Math.Max(0, NameEnd - NameOffset)).TrimEnd('\0');
+                    if (String.IsNullOrEmpty(Name) || (Name == ".") || (Name == ".."))
+                        continue;
+
+                    var ChildInode = ReadInode(Nid);
+                    var Child = new Node
+                    {
+                        Name = Name,
+                        Path = ExFatPath.Combine(Directory.Path, Name),
+                        Inode = ChildInode
+                    };
+
+                    Directory.Children.Add(Child);
+                    Nodes[Child.Path] = Child;
+
+                    if (IsDirectory(ChildInode))
+                        ReadDirectory(Child, Visited);
+                }
             }
         }
-
         private Inode ReadInode(ulong Nid)
         {
             int Offset = MetaBlockAddress * BlockSize + (int)(Nid * 32);

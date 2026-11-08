@@ -1,4 +1,4 @@
-﻿using NyaFs.ImageFormat.Elements.Fs;
+using NyaFs.ImageFormat.Elements.Fs;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -7,7 +7,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class EroFsFilesystemPlugin : Base.FilesystemPlugin
     {
-        public EroFsFilesystemPlugin() : base("fs.erofs", "erofs", true, false, true)
+        public EroFsFilesystemPlugin() : base("fs.erofs", "erofs", true, true, true)
         {
         }
 
@@ -17,7 +17,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         public override Elements.Fs.Reader.Reader GetFilesystemReader(byte[] Data) =>
             new Elements.Fs.Reader.BaseFsReader(Types.FsType.EroFs, new Filesystem.EroFs.EroFsReader(Data));
 
-        public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) => null;
+        public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) =>
+            new Elements.Fs.Writer.EroFsWriter();
 
         public override bool CheckFilesystem(LinuxFilesystem Fs) => true;
     }

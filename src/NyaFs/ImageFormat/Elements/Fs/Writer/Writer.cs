@@ -53,6 +53,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
                 case Types.FsType.Tar: return new BaseFsWriter(new NyaFs.Filesystem.Tar.TarFsBuilder());
                 case Types.FsType.Iso9660: return new BaseFsWriter(new NyaFs.Filesystem.Iso9660.Iso9660Builder());
                 case Types.FsType.ExFat: return new ExFatWriter(ExFatWriter.GetSize(Fs));
+                case Types.FsType.EroFs: return new EroFsWriter();
 
                 default: throw new InvalidOperationException($"Unsupported filesystem: {Fs.FilesystemType}");
             }

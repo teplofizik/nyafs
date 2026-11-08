@@ -124,29 +124,38 @@ namespace NyaFs.Filesystem.EroFs
             return Result;
         }
 
-        private byte[] ReadWholeFragment(Inode Inode, CompressedMap Map)
+        private byte[] GetPackedFragmentData(ulong PackedNid)
         {
-            if (Map.PackedNid == 0)
+            if (PackedNid == 0)
             {
-                NyaFs.Log.Warning(0, $"EROFS: inode {Inode.Nid} refers to a missing packed fragment inode");
-                return Array.Empty<byte>();
+                NyaFs.Log.Warning(0, "EROFS: missing packed fragment inode");
+                return null;
             }
 
-            if ((PackedFragmentData == null) || (PackedFragmentNid != Map.PackedNid))
+            if ((PackedFragmentData == null) || (PackedFragmentNid != PackedNid))
             {
-                PackedFragmentNid = Map.PackedNid;
-                var PackedInode = ReadInode(Map.PackedNid);
+                PackedFragmentNid = PackedNid;
+                var PackedInode = ReadInode(PackedNid);
                 PackedFragmentData = ReadInodeData(PackedInode);
             }
+
+            return PackedFragmentData;
+        }
+
+        private byte[] ReadWholeFragment(Inode Inode, CompressedMap Map)
+        {
+            var PackedData = GetPackedFragmentData(Map.PackedNid);
+            if (PackedData == null)
+                return Array.Empty<byte>();
 
             if (Inode.Size > Int32.MaxValue)
                 throw new InvalidOperationException("EROFS: file is too large");
 
             var Result = new byte[(int)Inode.Size];
             long Source = (long)Map.FragmentOffset;
-            int Available = (int)Math.Min((long)Result.Length, Math.Max(0L, PackedFragmentData.Length - Source));
+            int Available = (int)Math.Min((long)Result.Length, Math.Max(0L, PackedData.Length - Source));
             if (Available > 0)
-                Array.Copy(PackedFragmentData, Source, Result, 0, Available);
+                Array.Copy(PackedData, Source, Result, 0, Available);
             return Result;
         }
 
@@ -214,7 +223,12 @@ namespace NyaFs.Filesystem.EroFs
                 Result.TailPackOffset = Tail != null ? Tail.NextPackOffset : 0;
             }
             if (Result.HasFragments)
-                NyaFs.Log.Warning(0, $"EROFS: inode {Inode.Nid} uses fragment packing; tail fragments may be unavailable");
+            {
+                Result.FragmentOffset = EroFsShared.ReadU32(Data, Header);
+                Result.PackedNid = EroFsShared.ReadU64(Data, EroFsShared.SuperblockOffset + 96);
+                if (Inode.Layout == 1)
+                    NyaFs.Log.Warning(0, $"EROFS: inode {Inode.Nid} uses legacy fragment indexes; high fragment offset may be unavailable");
+            }
 
             return Result;
         }
@@ -490,6 +504,19 @@ namespace NyaFs.Filesystem.EroFs
         {
             if (Head.Hole)
                 return;
+
+            if (LastExtent && Map.HasFragments)
+            {
+                var PackedData = GetPackedFragmentData(Map.PackedNid);
+                if (PackedData == null)
+                    return;
+
+                long FragmentSource = (long)Map.FragmentOffset;
+                int FragmentAvailable = (int)Math.Min((long)Length, Math.Max(0L, PackedData.Length - FragmentSource));
+                if (FragmentAvailable > 0)
+                    Array.Copy(PackedData, FragmentSource, Output, OutputOffset, FragmentAvailable);
+                return;
+            }
 
             bool Inline = LastExtent && (Map.InlineSize > 0);
             if (!Inline && (Head.PhysicalBlock < 0))

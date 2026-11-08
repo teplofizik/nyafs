@@ -19,6 +19,7 @@ namespace NyaFs.Filesystem.EroFs
             public ushort Mode;
             public ulong Size;
             public uint RawU;
+            public ulong StartBlock;
             public uint User;
             public uint Group;
             public DateTime Modified;
@@ -36,11 +37,12 @@ namespace NyaFs.Filesystem.EroFs
         private readonly byte[] Data;
         private readonly int BlockSize;
         private readonly int MetaBlockAddress;
-        private readonly long Blocks;
+        private readonly ulong Blocks;
+        private readonly ulong FeatureIncompat;
         private readonly Dictionary<string, Node> Nodes = new Dictionary<string, Node>(StringComparer.Ordinal);
         private readonly Node Root;
 
-        public long VolumeBytes => Blocks * BlockSize;
+        public long VolumeBytes => (long)(Blocks * (ulong)BlockSize);
 
         public EroFsReader(byte[] Data)
         {
@@ -51,8 +53,13 @@ namespace NyaFs.Filesystem.EroFs
 
             int Sb = EroFsShared.SuperblockOffset;
             BlockSize = 1 << Data[Sb + 12];
-            uint RootNid = EroFsShared.ReadU16(Data, Sb + 14);
-            Blocks = EroFsShared.ReadU32(Data, Sb + 36);
+            ulong Incompat = EroFsShared.ReadU32(Data, Sb + 80);
+            FeatureIncompat = Incompat;
+            bool Has48Bit = (Incompat & 0x80) != 0;
+            ulong RootNid = Has48Bit ? EroFsShared.ReadU64(Data, Sb + 112) : EroFsShared.ReadU16(Data, Sb + 14);
+            Blocks = Has48Bit
+                ? (EroFsShared.ReadU32(Data, Sb + 36) | ((ulong)EroFsShared.ReadU16(Data, Sb + 14) << 32))
+                : EroFsShared.ReadU32(Data, Sb + 36);
             MetaBlockAddress = (int)EroFsShared.ReadU32(Data, Sb + 40);
 
             Root = new Node
@@ -222,6 +229,10 @@ namespace NyaFs.Filesystem.EroFs
                 Result.Modified = DateTime.Now;
             }
 
+            Result.StartBlock = Result.RawU;
+            if (Extended && ((FeatureIncompat & 0x80) != 0) && ((Layout == 0) || (Layout == 2)))
+                Result.StartBlock |= (ulong)EroFsShared.ReadU16(Data, Offset + 6) << 32;
+
             return Result;
         }
 
@@ -243,7 +254,7 @@ namespace NyaFs.Filesystem.EroFs
 
             if (Inode.Layout == 0)
             {
-                long Source = (long)Inode.RawU * BlockSize;
+                long Source = (long)Inode.StartBlock * BlockSize;
                 long Available = Math.Min((long)Result.Length, Data.Length - Source);
                 if (Available > 0)
                     Array.Copy(Data, Source, Result, 0, Available);
@@ -254,7 +265,7 @@ namespace NyaFs.Filesystem.EroFs
             {
                 int FullBlocks = Result.Length / BlockSize;
                 int Tail = Result.Length % BlockSize;
-                long Source = (long)Inode.RawU * BlockSize;
+                long Source = (long)Inode.StartBlock * BlockSize;
 
                 if (FullBlocks > 0)
                 {

@@ -8,7 +8,7 @@ using System.Text;
 
 namespace NyaFs.Filesystem.EroFs
 {
-    public class EroFsBuilder : IFilesystemBuilder
+    public class EroFsBuilder : IFilesystemBuilder, IXattrBuilder
     {
         private const int BlockSize = 4096;
         private const int InodeUnit = 32;
@@ -45,6 +45,11 @@ namespace NyaFs.Filesystem.EroFs
             public int InlineLength;
             public int InlineLcn;
             public int MetaSize = 64;
+            public int HeaderRel = 64;
+            public int XattrSize;
+            public int XattrCount;
+            public byte[] XattrData;
+            public readonly List<XattrEntry> Xattrs = new List<XattrEntry>();
             public int TotalLclusters;
             public readonly List<CompressedGroup> Groups = new List<CompressedGroup>();
         }
@@ -54,6 +59,14 @@ namespace NyaFs.Filesystem.EroFs
             public byte[] Name;
             public ulong Nid;
             public byte FileType;
+        }
+
+        private sealed class XattrEntry
+        {
+            public string Name;
+            public byte[] Value;
+            public int Index;
+            public byte[] ShortName;
         }
 
         private sealed class CompressedGroup
@@ -104,6 +117,22 @@ namespace NyaFs.Filesystem.EroFs
         public void SymLink(string Path, string Target, uint User, uint Group, uint Mode) =>
             Add(Path, FilesystemItemType.SymLink, User, Group, Mode, null, Target ?? "", 0, 0);
 
+        public void Xattr(string Path, string Name, byte[] Value)
+        {
+            var Node = Find(Path);
+            if (Node == null)
+                throw new InvalidOperationException($"EROFS: xattr target {Path} is not found");
+
+            var Existing = Node.Xattrs.Find(E => E.Name == Name);
+            if (Existing != null)
+                Existing.Value = Value ?? Array.Empty<byte>();
+            else
+                Node.Xattrs.Add(new XattrEntry
+                {
+                    Name = Name,
+                    Value = Value ?? Array.Empty<byte>()
+                });
+        }
         private void Add(string Path, FilesystemItemType Type, uint User, uint Group, uint Mode,
             byte[] Content, string Target, uint Major, uint Minor)
         {
@@ -159,6 +188,7 @@ namespace NyaFs.Filesystem.EroFs
         {
             PrepareCompression();
             PrepareFragments();
+            PrepareXattrs();
             ConfigureMetadata();
             AssignNids();
 
@@ -217,6 +247,9 @@ namespace NyaFs.Filesystem.EroFs
                     int Block = (int)N.StartBlock;
                     foreach (var Group in N.Groups)
                     {
+                        if (N.Inline && (Group.Lcn == N.InlineLcn))
+                            continue;
+
                         Array.Copy(Group.Data, 0, Result, (long)Block * BlockSize, Group.Data.Length);
                         Block += Group.PhysicalBlocks;
                     }
@@ -265,6 +298,112 @@ namespace NyaFs.Filesystem.EroFs
             };
 
             Nodes.Add(Packed);
+        }
+        private void PrepareXattrs()
+        {
+            foreach (var Node in Nodes)
+            {
+                Node.XattrData = null;
+                Node.XattrSize = 0;
+                Node.XattrCount = 0;
+                Node.HeaderRel = InodeSize;
+
+                if (Node.Xattrs.Count == 0)
+                    continue;
+
+                var Entries = new List<XattrEntry>();
+                foreach (var Entry in Node.Xattrs)
+                {
+                    if (!ParseXattrName(Entry.Name, out Entry.Index, out string ShortName))
+                    {
+                        NyaFs.Log.Warning(0, $"EROFS: unsupported xattr name {Entry.Name}");
+                        continue;
+                    }
+
+                    Entry.ShortName = Encoding.UTF8.GetBytes(ShortName);
+                    if ((Entry.ShortName.Length > 255) || (Entry.Value.Length > 65535))
+                    {
+                        NyaFs.Log.Warning(0, $"EROFS: xattr {Entry.Name} is too large");
+                        continue;
+                    }
+
+                    Entries.Add(Entry);
+                }
+
+                if (Entries.Count == 0)
+                    continue;
+
+                Entries.Sort((A, B) =>
+                {
+                    int IndexDiff = A.Index - B.Index;
+                    return (IndexDiff != 0) ? IndexDiff : CompareBytes(A.ShortName, B.ShortName);
+                });
+
+                int Size = 12;
+                foreach (var Entry in Entries)
+                    Size += Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
+
+                var Body = new byte[Size];
+                int Offset = 12;
+                foreach (var Entry in Entries)
+                {
+                    Body[Offset] = (byte)Entry.ShortName.Length;
+                    Body[Offset + 1] = (byte)Entry.Index;
+                    WriteU16(Body, Offset + 2, (uint)Entry.Value.Length);
+                    Array.Copy(Entry.ShortName, 0, Body, Offset + 4, Entry.ShortName.Length);
+                    Array.Copy(Entry.Value, 0, Body, Offset + 4 + Entry.ShortName.Length, Entry.Value.Length);
+                    Offset += Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
+                }
+
+                Node.XattrData = Body;
+                Node.XattrSize = Body.Length;
+                Node.XattrCount = 1 + (Body.Length - 12) / 4;
+                Node.HeaderRel = Align(InodeSize + Body.Length, 8);
+            }
+        }
+
+        private static bool ParseXattrName(string Name, out int Index, out string ShortName)
+        {
+            if (Name.StartsWith("user.", StringComparison.Ordinal))
+            {
+                Index = 1;
+                ShortName = Name.Substring(5);
+                return true;
+            }
+            if (Name.StartsWith("trusted.", StringComparison.Ordinal))
+            {
+                Index = 4;
+                ShortName = Name.Substring(8);
+                return true;
+            }
+            if (Name.StartsWith("lustre.", StringComparison.Ordinal))
+            {
+                Index = 5;
+                ShortName = Name.Substring(7);
+                return true;
+            }
+            if (Name.StartsWith("security.", StringComparison.Ordinal))
+            {
+                Index = 6;
+                ShortName = Name.Substring(9);
+                return true;
+            }
+            if (Name == "system.posix_acl_access")
+            {
+                Index = 2;
+                ShortName = "";
+                return true;
+            }
+            if (Name == "system.posix_acl_default")
+            {
+                Index = 3;
+                ShortName = "";
+                return true;
+            }
+
+            Index = 0;
+            ShortName = null;
+            return false;
         }
         private void ConfigureMetadata()
         {
@@ -386,14 +525,14 @@ namespace NyaFs.Filesystem.EroFs
         private int CalculateMetaSize(Node Node, int Offset)
         {
             if (Node.WholeFragment)
-                return Align(72, 32);
+                return Align(Node.HeaderRel + 8, 32);
 
             if (!Node.Compressed)
-                return InodeSize;
+                return Align(Node.HeaderRel, 32);
 
             int Base = Node.BigPclusters
-                ? 80 + Node.TotalLclusters * 8
-                : 72 + CompactIndexBytes(Node.TotalLclusters);
+                ? Node.HeaderRel + 16 + Node.TotalLclusters * 8
+                : Node.HeaderRel + 8 + CompactIndexBytes(Node.TotalLclusters);
             int End = Offset + Base;
             var Last = Node.Groups.Count > 0 ? Node.Groups[Node.Groups.Count - 1] : null;
 
@@ -564,6 +703,13 @@ namespace NyaFs.Filesystem.EroFs
             WriteU64(Data, Sb + 120, 0);
         }
 
+        private static void WriteXattrs(byte[] Image, Node Node, int InodeOffset)
+        {
+            if ((Node.XattrData == null) || (Node.XattrData.Length == 0))
+                return;
+
+            Array.Copy(Node.XattrData, 0, Image, InodeOffset + InodeSize, Node.XattrData.Length);
+        }
         private void WriteInode(byte[] Image, Node Node, int Index)
         {
             int Offset = (int)(Node.Nid * InodeUnit);
@@ -571,7 +717,7 @@ namespace NyaFs.Filesystem.EroFs
             if (Node.WholeFragment)
             {
                 WriteU16(Image, Offset, 3);
-                WriteU16(Image, Offset + 2, 0);
+                WriteU16(Image, Offset + 2, (uint)Node.XattrCount);
                 WriteU16(Image, Offset + 4, (uint)((Node.Mode & 0xFFF) | TypeBits(Node.Type)));
                 WriteU16(Image, Offset + 6, 0);
                 WriteU64(Image, Offset + 8, (ulong)Node.Data.Length);
@@ -582,12 +728,13 @@ namespace NyaFs.Filesystem.EroFs
                 WriteU64(Image, Offset + 32, 0);
                 WriteU32(Image, Offset + 40, 0);
                 WriteU32(Image, Offset + 44, Node.Nlink);
-                WriteU64(Image, Offset + InodeSize, Node.FragmentOffset | (1UL << 63));
+                WriteXattrs(Image, Node, Offset);
+                WriteU64(Image, Offset + Node.HeaderRel, Node.FragmentOffset | (1UL << 63));
                 return;
             }
 
             WriteU16(Image, Offset, Node.Compressed ? (Node.BigPclusters ? 3u : 7u) : 1u);
-            WriteU16(Image, Offset + 2, 0);
+            WriteU16(Image, Offset + 2, (uint)Node.XattrCount);
             WriteU16(Image, Offset + 4, (uint)((Node.Mode & 0xFFF) | TypeBits(Node.Type)));
             WriteU16(Image, Offset + 6, 0);
             WriteU64(Image, Offset + 8, (ulong)Node.Data.Length);
@@ -598,10 +745,11 @@ namespace NyaFs.Filesystem.EroFs
             WriteU64(Image, Offset + 32, 0);
             WriteU32(Image, Offset + 40, 0);
             WriteU32(Image, Offset + 44, Node.Nlink);
+            WriteXattrs(Image, Node, Offset);
 
             if (Node.Compressed)
             {
-                int Header = Offset + InodeSize;
+                int Header = Offset + Node.HeaderRel;
                 uint Advise = (uint)(Node.BigPclusters ? 2 : 1);
                 if (Node.Inline)
                     Advise |= 8;

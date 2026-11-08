@@ -6,7 +6,7 @@ using System.Text;
 
 namespace NyaFs.Filesystem.EroFs
 {
-    internal sealed partial class EroFsReader : IFilesystemReader, IRootFsInfo
+    internal sealed partial class EroFsReader : IFilesystemReader, IRootFsInfo, IRootXattrs
     {
         private sealed class Inode
         {
@@ -24,6 +24,7 @@ namespace NyaFs.Filesystem.EroFs
             public uint Group;
             public DateTime Modified;
             public bool Compressed;
+            public Dictionary<string, byte[]> Xattrs;
         }
 
         private sealed class Node
@@ -115,13 +116,16 @@ namespace NyaFs.Filesystem.EroFs
             var Result = new List<FilesystemEntry>();
             foreach (var Child in Node.Children)
             {
-                Result.Add(new FilesystemEntry(
+                var Entry = new FilesystemEntry(
                     TypeOf(Child.Inode),
                     ExFatPath.Combine(ExFatPath.Normalize(Path), Child.Name),
                     Child.Inode.User,
                     Child.Inode.Group,
                     (uint)(Child.Inode.Mode & 0xFFF),
-                    IsDirectory(Child.Inode) ? 0u : (uint)Math.Min(Child.Inode.Size, UInt32.MaxValue)));
+                    IsDirectory(Child.Inode) ? 0u : (uint)Math.Min(Child.Inode.Size, UInt32.MaxValue));
+                if (Child.Inode.Xattrs != null)
+                    Entry.Xattrs = Child.Inode.Xattrs;
+                Result.Add(Entry);
             }
 
             return Result.ToArray();
@@ -134,6 +138,8 @@ namespace NyaFs.Filesystem.EroFs
             Mode = (uint)(Root.Inode.Mode & 0xFFF);
             return true;
         }
+
+        public Dictionary<string, byte[]> GetRootXattrs() => Root.Inode.Xattrs;
 
         private Node Find(string Path)
         {
@@ -241,6 +247,7 @@ namespace NyaFs.Filesystem.EroFs
                 Result.Modified = DateTime.Now;
             }
 
+            Result.Xattrs = ReadXattrs(Result);
             Result.StartBlock = Result.RawU;
             if (Extended && ((FeatureIncompat & 0x80) != 0) && ((Layout == 0) || (Layout == 2)))
                 Result.StartBlock |= (ulong)EroFsShared.ReadU16(Data, Offset + 6) << 32;
@@ -248,6 +255,57 @@ namespace NyaFs.Filesystem.EroFs
             return Result;
         }
 
+        private Dictionary<string, byte[]> ReadXattrs(Inode Inode)
+        {
+            if (Inode.XattrSize <= 12)
+                return null;
+
+            int Base = Inode.Offset + Inode.InodeSize;
+            int End = Base + Inode.XattrSize;
+            if (End > Data.Length)
+                return null;
+
+            int Shared = Data[Base + 4];
+            int Offset = Base + 12 + Shared * 4;
+            var Result = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+
+            while (Offset + 4 <= End)
+            {
+                int NameLength = Data[Offset];
+                int NameIndex = Data[Offset + 1];
+                int ValueLength = (int)EroFsShared.ReadU16(Data, Offset + 2);
+                Offset += 4;
+
+                if ((Offset + NameLength + ValueLength) > End)
+                    break;
+
+                string Name = Encoding.UTF8.GetString(Data, Offset, NameLength);
+                Offset += NameLength;
+                var Value = new byte[ValueLength];
+                Array.Copy(Data, Offset, Value, 0, ValueLength);
+                Offset = (Offset + ValueLength + 3) & ~3;
+
+                string FullName = PrefixForXattr(NameIndex, Name);
+                if (FullName != null)
+                    Result[FullName] = Value;
+            }
+
+            return Result.Count > 0 ? Result : null;
+        }
+
+        private static string PrefixForXattr(int Index, string Name)
+        {
+            switch (Index)
+            {
+                case 1: return "user." + Name;
+                case 2: return "system.posix_acl_access";
+                case 3: return "system.posix_acl_default";
+                case 4: return "trusted." + Name;
+                case 5: return "lustre." + Name;
+                case 6: return "security." + Name;
+                default: return null;
+            }
+        }
         private byte[] ReadInodeData(Inode Inode)
         {
             if (Inode.Compressed)

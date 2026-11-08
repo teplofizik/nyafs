@@ -179,7 +179,7 @@ namespace NyaFs.Processor.Scripting.Commands
             {
                 var Res = new List<string> {
                     "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd",
-                    "legacy", "ext2", "squashfs", "cramfs", "romfs", "iso9660", "iso", "exfat",
+                    "legacy", "ext2", "squashfs", "cramfs", "romfs", "iso9660", "iso", "exfat", "erofs",
                     "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma"
                 };
 
@@ -203,6 +203,7 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "iso9660":
                     case "iso": return new ImageFormat.Elements.Fs.Writer.BaseFsWriter(new Filesystem.Iso9660.Iso9660Builder(), Path);
                     case "exfat": return new ImageFormat.Elements.Fs.Writer.ExFatWriter(ImageFormat.Elements.Fs.Writer.ExFatWriter.GetSize(Fs), Path);
+                    case "erofs": return new ImageFormat.Elements.Fs.Writer.EroFsWriter(Fs, Path);
                     case "tar": return new ImageFormat.Elements.Fs.Writer.TarFsWriter(Path);
                     case "tar.gz":
                     case "tar.xz":

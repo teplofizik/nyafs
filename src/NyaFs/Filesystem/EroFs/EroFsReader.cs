@@ -39,6 +39,7 @@ namespace NyaFs.Filesystem.EroFs
         private readonly int BlockSize;
         private readonly int MetaBlockAddress;
         private readonly int XattrBlockAddress;
+        private readonly string[] XattrPrefixes;
         private readonly ulong Blocks;
         private readonly ulong FeatureIncompat;
         private readonly Dictionary<string, Node> Nodes = new Dictionary<string, Node>(StringComparer.Ordinal);
@@ -64,6 +65,7 @@ namespace NyaFs.Filesystem.EroFs
                 : EroFsShared.ReadU32(Data, Sb + 36);
             MetaBlockAddress = (int)EroFsShared.ReadU32(Data, Sb + 40);
             XattrBlockAddress = (int)EroFsShared.ReadU32(Data, Sb + 44);
+            XattrPrefixes = ReadXattrPrefixes(Sb);
 
             Root = new Node
             {
@@ -257,6 +259,47 @@ namespace NyaFs.Filesystem.EroFs
             return Result;
         }
 
+        private string[] ReadXattrPrefixes(int Sb)
+        {
+            int Count = Data[Sb + 91];
+            if (Count == 0)
+                return null;
+
+            int Offset = (int)(EroFsShared.ReadU32(Data, Sb + 92) << 2);
+            var Result = new string[Count];
+
+            for (int i = 0; i < Count; i++)
+            {
+                Offset = Align(Offset, 4);
+                if (Offset + 3 > Data.Length)
+                    return Result;
+
+                int Length = (int)EroFsShared.ReadU16(Data, Offset);
+                if ((Length < 1) || (Offset + 2 + Length > Data.Length))
+                    return Result;
+
+                int BaseIndex = Data[Offset + 2];
+                string Infix = Encoding.UTF8.GetString(Data, Offset + 3, Length - 1);
+                Result[i] = BasePrefix(BaseIndex) + Infix;
+                Offset += 2 + Length;
+            }
+
+            return Result;
+        }
+
+        private static string BasePrefix(int Index)
+        {
+            switch (Index)
+            {
+                case 1: return "user.";
+                case 2: return "system.posix_acl_access";
+                case 3: return "system.posix_acl_default";
+                case 4: return "trusted.";
+                case 5: return "lustre.";
+                case 6: return "security.";
+                default: return "";
+            }
+        }
         private Dictionary<string, byte[]> ReadXattrs(Inode Inode)
         {
             if (Inode.XattrSize <= 12)
@@ -321,8 +364,16 @@ namespace NyaFs.Filesystem.EroFs
 
         private static int Align(int Value, int Alignment) =>
             (Value + Alignment - 1) / Alignment * Alignment;
-        private static string PrefixForXattr(int Index, string Name)
+        private string PrefixForXattr(int Index, string Name)
         {
+            if ((Index & 0x80) != 0)
+            {
+                int Prefix = Index & 0x7F;
+                if ((XattrPrefixes != null) && (Prefix < XattrPrefixes.Length))
+                    return XattrPrefixes[Prefix] + Name;
+                return null;
+            }
+
             switch (Index)
             {
                 case 1: return "user." + Name;

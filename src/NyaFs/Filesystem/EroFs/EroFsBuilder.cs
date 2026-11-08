@@ -88,8 +88,24 @@ namespace NyaFs.Filesystem.EroFs
         public bool TailFragments { get; set; } = false;
         public bool SharedXattrs { get; set; } = false;
 
+        public void AddXattrPrefix(string Prefix)
+        {
+            if (String.IsNullOrEmpty(Prefix) || !HasStandardXattrBase(Prefix))
+                throw new ArgumentException("EROFS long xattr prefix must start with a standard xattr prefix", nameof(Prefix));
+
+            if (XattrPrefixes.Count >= 127)
+                throw new InvalidOperationException("EROFS supports at most 127 long xattr prefixes");
+
+            if (!XattrPrefixes.Contains(Prefix))
+                XattrPrefixes.Add(Prefix);
+        }
+        public int CompressionLevel { get; set; } = 10;
+
         private byte[] SharedXattrData;
         private int SharedXattrBlock;
+        private byte[] XattrPrefixData;
+        private int XattrPrefixBlock;
+        private readonly List<string> XattrPrefixes = new List<string>();
 
         public EroFsBuilder()
         {
@@ -212,6 +228,13 @@ namespace NyaFs.Filesystem.EroFs
                 NextBlock += (SharedXattrData.Length + BlockSize - 1) / BlockSize;
             }
 
+            XattrPrefixBlock = 0;
+            if (XattrPrefixData != null)
+            {
+                XattrPrefixBlock = NextBlock;
+                NextBlock += (XattrPrefixData.Length + BlockSize - 1) / BlockSize;
+            }
+
             foreach (var N in Nodes)
             {
                 if (N.Type == FilesystemItemType.Directory)
@@ -256,6 +279,8 @@ namespace NyaFs.Filesystem.EroFs
 
             if (SharedXattrData != null)
                 Array.Copy(SharedXattrData, 0, Result, (long)SharedXattrBlock * BlockSize, SharedXattrData.Length);
+            if (XattrPrefixData != null)
+                Array.Copy(XattrPrefixData, 0, Result, (long)XattrPrefixBlock * BlockSize, XattrPrefixData.Length);
 
             foreach (var N in Nodes)
             {
@@ -349,6 +374,7 @@ namespace NyaFs.Filesystem.EroFs
 
             SharedXattrData = null;
             SharedXattrBlock = 0;
+            BuildXattrPrefixData();
 
             var SharedEntries = new List<XattrEntry>();
             var SharedKeys = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -438,6 +464,45 @@ namespace NyaFs.Filesystem.EroFs
             }
         }
 
+        private void BuildXattrPrefixData()
+        {
+            XattrPrefixData = null;
+            XattrPrefixBlock = 0;
+            if (XattrPrefixes.Count == 0)
+                return;
+
+            var Data = new MemoryStream();
+            foreach (var Prefix in XattrPrefixes)
+            {
+                int Base = StandardXattrBase(Prefix);
+                string BaseString = StandardBaseString(Base);
+                string Infix = Prefix.Substring(BaseString.Length);
+                byte[] InfixData = Encoding.UTF8.GetBytes(Infix);
+
+                Data.WriteByte((byte)((1 + InfixData.Length) & 0xFF));
+                Data.WriteByte((byte)((1 + InfixData.Length) >> 8));
+                Data.WriteByte((byte)Base);
+                Data.Write(InfixData, 0, InfixData.Length);
+                while ((Data.Length & 3) != 0)
+                    Data.WriteByte(0);
+            }
+
+            XattrPrefixData = Data.ToArray();
+        }
+
+        private static string StandardBaseString(int Index)
+        {
+            switch (Index)
+            {
+                case 1: return "user.";
+                case 2: return "system.posix_acl_access";
+                case 3: return "system.posix_acl_default";
+                case 4: return "trusted.";
+                case 5: return "lustre.";
+                case 6: return "security.";
+                default: return "";
+            }
+        }
         private static string XattrKey(XattrEntry Entry) =>
             Entry.Index + ":" + Convert.ToBase64String(Entry.ShortName) + ":" + Convert.ToBase64String(Entry.Value);
 
@@ -473,8 +538,18 @@ namespace NyaFs.Filesystem.EroFs
             Array.Copy(Entry.Value, 0, Data, Offset + 4 + Entry.ShortName.Length, Entry.Value.Length);
             return Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
         }
-        private static bool ParseXattrName(string Name, out int Index, out string ShortName)
+        private bool ParseXattrName(string Name, out int Index, out string ShortName)
         {
+            for (int i = 0; i < XattrPrefixes.Count; i++)
+            {
+                if (Name.StartsWith(XattrPrefixes[i], StringComparison.Ordinal))
+                {
+                    Index = 0x80 | i;
+                    ShortName = Name.Substring(XattrPrefixes[i].Length);
+                    return true;
+                }
+            }
+
             if (Name.StartsWith("user.", StringComparison.Ordinal))
             {
                 Index = 1;
@@ -558,7 +633,7 @@ namespace NyaFs.Filesystem.EroFs
                         try
                         {
                             int Written = FT.LZ4.LZ4Codec.Encode(N.Content, Offset, Length,
-                                Compressed, 0, Compressed.Length, FT.LZ4.LZ4Level.L10_OPT);
+                                Compressed, 0, Compressed.Length, (FT.LZ4.LZ4Level)CompressionLevel);
                             if ((Written > 0) && (Written < Length))
                             {
                                 Chosen = Count;
@@ -633,6 +708,26 @@ namespace NyaFs.Filesystem.EroFs
             }
         }
 
+        private static bool HasStandardXattrBase(string Prefix)
+        {
+            return Prefix.StartsWith("user.", StringComparison.Ordinal) ||
+                Prefix.StartsWith("trusted.", StringComparison.Ordinal) ||
+                Prefix.StartsWith("lustre.", StringComparison.Ordinal) ||
+                Prefix.StartsWith("security.", StringComparison.Ordinal) ||
+                Prefix.StartsWith("system.posix_acl_access", StringComparison.Ordinal) ||
+                Prefix.StartsWith("system.posix_acl_default", StringComparison.Ordinal);
+        }
+
+        private static int StandardXattrBase(string Prefix)
+        {
+            if (Prefix.StartsWith("user.", StringComparison.Ordinal)) return 1;
+            if (Prefix.StartsWith("trusted.", StringComparison.Ordinal)) return 4;
+            if (Prefix.StartsWith("lustre.", StringComparison.Ordinal)) return 5;
+            if (Prefix.StartsWith("security.", StringComparison.Ordinal)) return 6;
+            if (Prefix.StartsWith("system.posix_acl_access", StringComparison.Ordinal)) return 2;
+            if (Prefix.StartsWith("system.posix_acl_default", StringComparison.Ordinal)) return 3;
+            return 0;
+        }
         private int CalculateMetaSize(Node Node, int Offset)
         {
             if (Node.WholeFragment)
@@ -766,7 +861,7 @@ namespace NyaFs.Filesystem.EroFs
 
             WriteU32(Data, Sb, EroFsShared.Magic);
             WriteU32(Data, Sb + 4, 0);
-            WriteU32(Data, Sb + 8, 0);
+            WriteU32(Data, Sb + 8, XattrPrefixData != null ? 0x10u : 0u);
             Data[Sb + 12] = 12;
             Data[Sb + 13] = 0;
             WriteU16(Data, Sb + 14, (uint)RootNid);
@@ -788,6 +883,8 @@ namespace NyaFs.Filesystem.EroFs
                 Features |= 2;
             if (Nodes.Exists(N => N.Inline))
                 Features |= 0x10;
+            if (XattrPrefixData != null)
+                Features |= 0x40;
             bool HasFragments = Nodes.Exists(N => N.Hidden);
             if (HasFragments)
                 Features |= 0x20;
@@ -804,8 +901,8 @@ namespace NyaFs.Filesystem.EroFs
             WriteU16(Data, Sb + 86, 0);
             WriteU16(Data, Sb + 88, 0);
             Data[Sb + 90] = 0;
-            Data[Sb + 91] = 0;
-            WriteU32(Data, Sb + 92, 0);
+            Data[Sb + 91] = XattrPrefixData != null ? (byte)XattrPrefixes.Count : (byte)0;
+            WriteU32(Data, Sb + 92, XattrPrefixData != null ? (uint)(XattrPrefixBlock * BlockSize / 4) : 0u);
             WriteU64(Data, Sb + 96, HasFragments ? Nodes.First(N => N.Hidden).Nid : 0);
             Data[Sb + 104] = 0;
             Data[Sb + 105] = 0;

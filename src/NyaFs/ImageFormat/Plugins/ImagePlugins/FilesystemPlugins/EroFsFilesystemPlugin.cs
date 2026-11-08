@@ -18,7 +18,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             new Elements.Fs.Reader.BaseFsReader(Types.FsType.EroFs, new Filesystem.EroFs.EroFsReader(Data));
 
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) =>
-            new Elements.Fs.Writer.EroFsWriter();
+            new Elements.Fs.Writer.EroFsWriter(Fs);
 
         public override bool CheckFilesystem(LinuxFilesystem Fs) => true;
     }

@@ -17,7 +17,7 @@ namespace NyaFs.Processor.Scripting.Commands
         {
             public SetScriptArgsConfig() : base(0, new ScriptArgsParam[] {
                     new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all" }),
-                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "size" }),
+                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix" }),
                     new Params.StringScriptArgsParam("value")
                 })
             {
@@ -42,7 +42,7 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
                         Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, cramfs.endian, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size");
@@ -167,8 +167,94 @@ namespace NyaFs.Processor.Scripting.Commands
                                 Fs.FilesystemType = ImageFormat.Types.FsType.Iso9660;
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: iso9660!");
                             }
+                            else if (Value == "erofs")
+                            {
+                                Fs.FilesystemType = ImageFormat.Types.FsType.EroFs;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: erofs!");
+                            }
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
+                        }
+                    case "erofs.fragments":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS fragments to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.EroFsFragments = Enabled;
+                            if (Enabled) Fs.EroFsTailFragments = false;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set EROFS whole-file fragments: {Enabled}!");
+                        }
+                    case "erofs.tail-fragments":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS tail fragments to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.EroFsTailFragments = Enabled;
+                            if (Enabled) Fs.EroFsFragments = false;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set EROFS tail fragments: {Enabled}!");
+                        }
+                    case "erofs.shared-xattrs":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS shared xattrs to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.EroFsSharedXattrs = Enabled;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set EROFS shared xattrs: {Enabled}!");
+                        }
+                    case "erofs.xattr-prefix":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS xattr prefix to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            string Prefix = (Value ?? "").Trim();
+                            if ((Prefix.Length == 0) || (!Prefix.StartsWith("user.") && !Prefix.StartsWith("trusted.") &&
+                                !Prefix.StartsWith("lustre.") && !Prefix.StartsWith("security.") &&
+                                !Prefix.StartsWith("system.posix_acl_access") && !Prefix.StartsWith("system.posix_acl_default")))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid EROFS xattr prefix: {Value}!");
+
+                            if (!Fs.EroFsXattrPrefixes.Contains(Prefix))
+                                Fs.EroFsXattrPrefixes.Add(Prefix);
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Added EROFS xattr prefix: {Prefix}!");
+                        }
+                    case "erofs.compression-level":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS compression level to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!Int32.TryParse(Value, out int Level) || !((Level == 0) || ((Level >= 3) && (Level <= 12))))
+                                return new ScriptStepResult(ScriptStepStatus.Error, "EROFS LZ4 level must be 0 or 3..12!");
+
+                            Fs.EroFsCompressionLevel = Level;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set EROFS compression level: {Level}!");
                         }
                     case "cramfs.endian":
                         {
@@ -528,6 +614,27 @@ namespace NyaFs.Processor.Scripting.Commands
                 }
             }
 
+            static bool ParseBool(string Value, out bool Result)
+            {
+                switch ((Value ?? "").ToLowerInvariant())
+                {
+                    case "on":
+                    case "true":
+                    case "yes":
+                    case "1":
+                        Result = true;
+                        return true;
+                    case "off":
+                    case "false":
+                    case "no":
+                    case "0":
+                        Result = false;
+                        return true;
+                    default:
+                        Result = false;
+                        return false;
+                }
+            }
             ImageFormat.Types.OS ParseOS(string OS)
             {
                 switch (OS.ToLower())

@@ -21,6 +21,12 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// <summary>Write CramFS with big-endian field encoding.</summary>
         public bool CramFsBigEndian = false;
 
+        public bool EroFsFragments = false;
+        public bool EroFsTailFragments = false;
+        public bool EroFsSharedXattrs = false;
+        public int EroFsCompressionLevel = 10;
+        public readonly List<string> EroFsXattrPrefixes = new List<string>();
+
         /// <summary>
         /// Compression for regular file data nodes when writing a UBIFS image.
         /// </summary>

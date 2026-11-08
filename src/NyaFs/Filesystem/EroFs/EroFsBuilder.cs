@@ -291,7 +291,7 @@ namespace NyaFs.Filesystem.EroFs
                 if (AnyCompressed)
                 {
                     N.Compressed = true;
-                    N.MetaSize = Align(72 + ((Total + 1) / 2) * 8, 32);
+                    N.MetaSize = Align(72 + CompactIndexBytes(Total), 32);
                 }
                 else
                 {
@@ -463,12 +463,33 @@ namespace NyaFs.Filesystem.EroFs
             {
                 int Header = Offset + InodeSize;
                 WriteU32(Image, Header, 0);
-                WriteU16(Image, Header + 4, 0);
+                WriteU16(Image, Header + 4, 1);
                 Image[Header + 6] = 0;
                 Image[Header + 7] = 0;
 
                 WriteCompactIndexes(Image, Node, Header);
             }
+        }
+
+        private static int CompactIndexBytes(int Total)
+        {
+            GetCompactLayout(Total, out int Initial, out int TwoB, out int FourBEnd);
+            return Initial * 4 + TwoB * 2 + ((FourBEnd + 1) / 2) * 8;
+        }
+
+        private static void GetCompactLayout(int Total, out int Initial, out int TwoB, out int FourBEnd)
+        {
+            if (Total < 6)
+            {
+                Initial = 0;
+                TwoB = 0;
+                FourBEnd = Total;
+                return;
+            }
+
+            Initial = 6;
+            TwoB = ((Total - Initial) / 16) * 16;
+            FourBEnd = Total - Initial - TwoB;
         }
 
         private void WriteCompactIndexes(byte[] Image, Node Node, int Header)
@@ -488,10 +509,10 @@ namespace NyaFs.Filesystem.EroFs
                     Physical[Group.Lcn] = (int)Node.StartBlock + Block;
                     for (int i = 1; i < Group.Count; i++)
                     {
-                        int Lcn = Group.Lcn + i;
-                        Types[Lcn] = 2;
-                        Delta0[Lcn] = i;
-                        Delta1[Lcn] = Group.Count - i;
+                        int EntryLcn = Group.Lcn + i;
+                        Types[EntryLcn] = 2;
+                        Delta0[EntryLcn] = i;
+                        Delta1[EntryLcn] = Group.Count - i;
                     }
                 }
                 else
@@ -503,46 +524,98 @@ namespace NyaFs.Filesystem.EroFs
                 Block++;
             }
 
-            int PackStart = Header + 8;
+            GetCompactLayout(Total, out int Initial, out int TwoB, out int FourBEnd);
+
+            int PackOffset = Header + 8;
+            int Lcn = 0;
             int BlkAddr = (int)Node.StartBlock - 1;
             bool DummyHead = true;
 
-            for (int Pack = 0; Pack < (Total + 1) / 2; Pack++)
+            while (Initial > 0)
             {
-                int Base = BlkAddr;
-                for (int i = 0; i < 2; i++)
+                WriteCompactPack(Image, ref PackOffset, Types, Physical, Delta0, Delta1,
+                    ref Lcn, 2, 4, false, ref BlkAddr, ref DummyHead);
+                Initial -= 2;
+            }
+
+            while (TwoB > 0)
+            {
+                WriteCompactPack(Image, ref PackOffset, Types, Physical, Delta0, Delta1,
+                    ref Lcn, 16, 2, false, ref BlkAddr, ref DummyHead);
+                TwoB -= 16;
+            }
+
+            while (FourBEnd > 1)
+            {
+                WriteCompactPack(Image, ref PackOffset, Types, Physical, Delta0, Delta1,
+                    ref Lcn, 2, 4, false, ref BlkAddr, ref DummyHead);
+                FourBEnd -= 2;
+            }
+
+            if (FourBEnd > 0)
+            {
+                WriteCompactPack(Image, ref PackOffset, Types, Physical, Delta0, Delta1,
+                    ref Lcn, 2, 4, true, ref BlkAddr, ref DummyHead);
+            }
+        }
+
+        private void WriteCompactPack(byte[] Image, ref int PackOffset, int[] Types, int[] Physical,
+            int[] Delta0, int[] Delta1, ref int Lcn, int Count, int EntrySize, bool Final,
+            ref int BlkAddr, ref bool DummyHead)
+        {
+            int Lobits = 12;
+            int EncodeBits = (Count * EntrySize * 8 - 32) / Count;
+            int PackSize = Count * EntrySize;
+            int Base = BlkAddr;
+            int Bit = 0;
+
+            for (int i = 0; i < Count; i++)
+            {
+                int Value = 0;
+                if (Lcn < Types.Length)
                 {
-                    int Index = Pack * 2 + i;
-                    int Value = 0;
-
-                    if (Index < Total)
+                    if (Types[Lcn] == 2)
                     {
-                        if (Types[Index] == 2)
-                        {
-                            int Offset = (i == 1) ? Delta1[Index] : Delta0[Index];
-                            Value = (2 << 12) | (Offset & 0x7FF);
-                        }
-                        else
-                        {
-                            if (DummyHead)
-                                BlkAddr++;
-
-                            DummyHead = true;
-                            Value = (Types[Index] << 12);
-                        }
+                        int Offset = (i + 1 == Count) ? Delta1[Lcn] : Delta0[Lcn];
+                        Value = (2 << Lobits) | (Offset & (0x7FF));
                     }
                     else
                     {
                         if (DummyHead)
                             BlkAddr++;
+
+                        DummyHead = true;
+                        Value = Types[Lcn] << Lobits;
+
+                        if (Physical[Lcn] != BlkAddr && !Final)
+                            throw new InvalidOperationException("EROFS: compact index blkaddr mismatch");
                     }
 
-                    WriteU16(Image, PackStart + i * 2, (uint)Value);
+                    Lcn++;
+                }
+                else if (DummyHead)
+                {
+                    BlkAddr++;
                 }
 
-                WriteU32(Image, PackStart + 4, (uint)Base);
-                PackStart += 8;
+                WriteBits(Image, PackOffset, ref Bit, Value, EncodeBits);
             }
+
+            WriteU32(Image, PackOffset + PackSize - 4, (uint)Base);
+            PackOffset += PackSize;
+        }
+
+        private static void WriteBits(byte[] Data, int Offset, ref int Bit, int Value, int Count)
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                if ((Value & (1 << i)) != 0)
+                {
+                    int Pos = Offset + ((Bit + i) / 8);
+                    Data[Pos] |= (byte)(1 << ((Bit + i) % 8));
+                }
+            }
+            Bit += Count;
         }
         private uint DataAddress(Node Node)
         {

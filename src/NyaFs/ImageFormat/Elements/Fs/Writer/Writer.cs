@@ -51,6 +51,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
                 case Types.FsType.CramFs: return new CramFsWriter(Fs.CramFsBigEndian);
                 case Types.FsType.RomFs: return new RomFsWriter();
                 case Types.FsType.Tar: return new BaseFsWriter(new NyaFs.Filesystem.Tar.TarFsBuilder());
+                case Types.FsType.Iso9660: return new BaseFsWriter(new NyaFs.Filesystem.Iso9660.Iso9660Builder());
 
                 default: throw new InvalidOperationException($"Unsupported filesystem: {Fs.FilesystemType}");
             }

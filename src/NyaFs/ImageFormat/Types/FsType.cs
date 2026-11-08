@@ -19,6 +19,7 @@ namespace NyaFs.ImageFormat.Types
         Spiffs,
         UbiFs,
         Fat,
-        F2fs
+        F2fs,
+        Iso9660
     }
 }

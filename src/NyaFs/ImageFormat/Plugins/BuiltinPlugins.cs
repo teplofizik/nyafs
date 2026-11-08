@@ -33,7 +33,8 @@ namespace NyaFs.ImageFormat.Plugins
             new TarFilesystemPlugin(),
             new UbifsFilesystemPlugin(),
             new FatFilesystemPlugin(),
-            new F2fsFilesystemPlugin()
+            new F2fsFilesystemPlugin(),
+            new Iso9660FilesystemPlugin()
         };
 
         public static readonly Base.KernelPlugin[] Kernels = new Base.KernelPlugin[]

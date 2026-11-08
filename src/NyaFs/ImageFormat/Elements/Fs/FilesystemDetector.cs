@@ -27,6 +27,12 @@ namespace NyaFs.ImageFormat.Elements.Fs
             if (Magic == 0x30373037u) // CPIO start of block
                 return Types.FsType.Cpio;
 
+            if ((Raw.Length >= 0x8006) &&
+                (Raw[0x8001] == (byte)'C') && (Raw[0x8002] == (byte)'D') &&
+                (Raw[0x8003] == (byte)'0') && (Raw[0x8004] == (byte)'0') &&
+                (Raw[0x8005] == (byte)'1'))
+                return Types.FsType.Iso9660;
+
             if (Magic == 0x68737173) // hsqs magic
                 return Types.FsType.SquashFs;
 
@@ -74,6 +80,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                 case Types.FsType.Tar: return "Tar";
                 case Types.FsType.Fat: return "Fat";
                 case Types.FsType.F2fs: return "F2FS";
+                case Types.FsType.Iso9660: return "ISO9660";
                 default: return "Unknown";
             }
         }

@@ -162,6 +162,11 @@ namespace NyaFs.Processor.Scripting.Commands
                                 Fs.FilesystemType = ImageFormat.Types.FsType.RomFs;
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: romfs!");
                             }
+                            else if (Value == "iso9660")
+                            {
+                                Fs.FilesystemType = ImageFormat.Types.FsType.Iso9660;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: iso9660!");
+                            }
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
                         }

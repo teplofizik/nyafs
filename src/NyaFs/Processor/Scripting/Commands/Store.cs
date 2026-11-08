@@ -13,7 +13,7 @@ namespace NyaFs.Processor.Scripting.Commands
 
             AddConfig(new Configs.ImageScriptArgsConfig(1, "ramfs",
                 new string[] { "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd", "legacy", "ext2", "squashfs", "cramfs", "romfs",
-                    "littlefs", "spiffs", "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma" }));
+                    "iso9660", "iso", "littlefs", "spiffs", "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(2, "devtree",
                 new string[] { "dtb", "dts" }));
@@ -179,7 +179,7 @@ namespace NyaFs.Processor.Scripting.Commands
             {
                 var Res = new List<string> {
                     "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd",
-                    "legacy", "ext2", "squashfs", "cramfs", "romfs",
+                    "legacy", "ext2", "squashfs", "cramfs", "romfs", "iso9660", "iso",
                     "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma"
                 };
 
@@ -200,6 +200,8 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "squashfs": return new ImageFormat.Elements.Fs.Writer.SquashFsWriter(Fs.SquashFsCompression, Path);
                     case "cramfs": return new ImageFormat.Elements.Fs.Writer.CramFsWriter(Fs.CramFsBigEndian, Path);
                     case "romfs": return new ImageFormat.Elements.Fs.Writer.RomFsWriter(Path);
+                    case "iso9660":
+                    case "iso": return new ImageFormat.Elements.Fs.Writer.BaseFsWriter(new Filesystem.Iso9660.Iso9660Builder(), Path);
                     case "tar": return new ImageFormat.Elements.Fs.Writer.TarFsWriter(Path);
                     case "tar.gz":
                     case "tar.xz":

@@ -38,6 +38,7 @@ namespace NyaFs.Filesystem.EroFs
         private readonly byte[] Data;
         private readonly int BlockSize;
         private readonly int MetaBlockAddress;
+        private readonly int XattrBlockAddress;
         private readonly ulong Blocks;
         private readonly ulong FeatureIncompat;
         private readonly Dictionary<string, Node> Nodes = new Dictionary<string, Node>(StringComparer.Ordinal);
@@ -62,6 +63,7 @@ namespace NyaFs.Filesystem.EroFs
                 ? (EroFsShared.ReadU32(Data, Sb + 36) | ((ulong)EroFsShared.ReadU16(Data, Sb + 14) << 32))
                 : EroFsShared.ReadU32(Data, Sb + 36);
             MetaBlockAddress = (int)EroFsShared.ReadU32(Data, Sb + 40);
+            XattrBlockAddress = (int)EroFsShared.ReadU32(Data, Sb + 44);
 
             Root = new Node
             {
@@ -266,33 +268,59 @@ namespace NyaFs.Filesystem.EroFs
                 return null;
 
             int Shared = Data[Base + 4];
-            int Offset = Base + 12 + Shared * 4;
             var Result = new Dictionary<string, byte[]>(StringComparer.Ordinal);
 
-            while (Offset + 4 <= End)
+            for (int i = 0; i < Shared; i++)
             {
-                int NameLength = Data[Offset];
-                int NameIndex = Data[Offset + 1];
-                int ValueLength = (int)EroFsShared.ReadU16(Data, Offset + 2);
-                Offset += 4;
-
-                if ((Offset + NameLength + ValueLength) > End)
+                int IdOffset = Base + 12 + i * 4;
+                if (IdOffset + 4 > End)
                     break;
 
-                string Name = Encoding.UTF8.GetString(Data, Offset, NameLength);
-                Offset += NameLength;
-                var Value = new byte[ValueLength];
-                Array.Copy(Data, Offset, Value, 0, ValueLength);
-                Offset = (Offset + ValueLength + 3) & ~3;
+                int Id = (int)EroFsShared.ReadU32(Data, IdOffset);
+                int SharedOffset = XattrBlockAddress * BlockSize + Id * 4;
+                ReadXattrEntry(SharedOffset, Data.Length, Result);
+            }
 
-                string FullName = PrefixForXattr(NameIndex, Name);
-                if (FullName != null)
-                    Result[FullName] = Value;
+            int Offset = Base + 12 + Shared * 4;
+            while (Offset + 4 <= End)
+            {
+                if (!ReadXattrEntry(Offset, End, Result))
+                    break;
+
+                int NameLength = Data[Offset];
+                int ValueLength = (int)EroFsShared.ReadU16(Data, Offset + 2);
+                Offset += Align(4 + NameLength + ValueLength, 4);
             }
 
             return Result.Count > 0 ? Result : null;
         }
 
+        private bool ReadXattrEntry(int Offset, int End, Dictionary<string, byte[]> Result)
+        {
+            if (Offset + 4 > End)
+                return false;
+
+            int NameLength = Data[Offset];
+            int NameIndex = Data[Offset + 1];
+            int ValueLength = (int)EroFsShared.ReadU16(Data, Offset + 2);
+            Offset += 4;
+
+            if (Offset + NameLength + ValueLength > End)
+                return false;
+
+            string Name = Encoding.UTF8.GetString(Data, Offset, NameLength);
+            Offset += NameLength;
+            var Value = new byte[ValueLength];
+            Array.Copy(Data, Offset, Value, 0, ValueLength);
+
+            string FullName = PrefixForXattr(NameIndex, Name);
+            if (FullName != null)
+                Result[FullName] = Value;
+            return true;
+        }
+
+        private static int Align(int Value, int Alignment) =>
+            (Value + Alignment - 1) / Alignment * Alignment;
         private static string PrefixForXattr(int Index, string Name)
         {
             switch (Index)

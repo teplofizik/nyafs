@@ -40,6 +40,7 @@ namespace NyaFs.Filesystem.EroFs
             public bool Inline;
             public bool Hidden;
             public bool WholeFragment;
+            public bool PartialFragment;
             public ulong FragmentOffset;
             public int InlineOffset;
             public int InlineLength;
@@ -50,6 +51,7 @@ namespace NyaFs.Filesystem.EroFs
             public int XattrCount;
             public byte[] XattrData;
             public readonly List<XattrEntry> Xattrs = new List<XattrEntry>();
+            public readonly List<string> SharedXattrKeys = new List<string>();
             public int TotalLclusters;
             public readonly List<CompressedGroup> Groups = new List<CompressedGroup>();
         }
@@ -83,6 +85,11 @@ namespace NyaFs.Filesystem.EroFs
         private Node Root;
 
         public bool Fragments { get; set; } = false;
+        public bool TailFragments { get; set; } = false;
+        public bool SharedXattrs { get; set; } = false;
+
+        private byte[] SharedXattrData;
+        private int SharedXattrBlock;
 
         public EroFsBuilder()
         {
@@ -198,6 +205,13 @@ namespace NyaFs.Filesystem.EroFs
             int MetaBlocks = (MetaBytes + BlockSize - 1) / BlockSize;
             int NextBlock = Math.Max(1, MetaBlocks);
 
+            SharedXattrBlock = 0;
+            if (SharedXattrData != null)
+            {
+                SharedXattrBlock = NextBlock;
+                NextBlock += (SharedXattrData.Length + BlockSize - 1) / BlockSize;
+            }
+
             foreach (var N in Nodes)
             {
                 if (N.Type == FilesystemItemType.Directory)
@@ -240,6 +254,9 @@ namespace NyaFs.Filesystem.EroFs
             for (int i = 0; i < Nodes.Count; i++)
                 WriteInode(Result, Nodes[i], i);
 
+            if (SharedXattrData != null)
+                Array.Copy(SharedXattrData, 0, Result, (long)SharedXattrBlock * BlockSize, SharedXattrData.Length);
+
             foreach (var N in Nodes)
             {
                 if (N.Compressed)
@@ -247,7 +264,7 @@ namespace NyaFs.Filesystem.EroFs
                     int Block = (int)N.StartBlock;
                     foreach (var Group in N.Groups)
                     {
-                        if (N.Inline && (Group.Lcn == N.InlineLcn))
+                        if (Group.PhysicalBlocks == 0)
                             continue;
 
                         Array.Copy(Group.Data, 0, Result, (long)Block * BlockSize, Group.Data.Length);
@@ -266,8 +283,10 @@ namespace NyaFs.Filesystem.EroFs
 
         private void PrepareFragments()
         {
-            if (!Fragments)
+            if (!Fragments && !TailFragments)
                 return;
+            if (Fragments && TailFragments)
+                throw new InvalidOperationException("EROFS: Fragments and TailFragments are mutually exclusive");
 
             var Files = Nodes.Where(N => (N.Type == FilesystemItemType.File) &&
                 !N.Hidden && (N.Content != null) && (N.Content.Length > 0)).ToList();
@@ -277,14 +296,32 @@ namespace NyaFs.Filesystem.EroFs
             var PackedData = new MemoryStream();
             foreach (var File in Files)
             {
-                File.WholeFragment = true;
-                File.Compressed = true;
-                File.BigPclusters = false;
-                File.Inline = false;
-                File.Groups.Clear();
-                File.FragmentOffset = (ulong)PackedData.Length;
-                PackedData.Write(File.Content, 0, File.Content.Length);
+                if (Fragments)
+                {
+                    File.WholeFragment = true;
+                    File.Compressed = true;
+                    File.BigPclusters = false;
+                    File.Inline = false;
+                    File.Groups.Clear();
+                    File.FragmentOffset = (ulong)PackedData.Length;
+                    PackedData.Write(File.Content, 0, File.Content.Length);
+                }
+                else if (File.Compressed && (File.Groups.Count > 0))
+                {
+                    var Last = File.Groups[File.Groups.Count - 1];
+                    int Offset = Last.Lcn * BlockSize;
+                    int Length = Math.Min(Last.Count * BlockSize, File.Content.Length - Offset);
+
+                    File.PartialFragment = true;
+                    File.Inline = false;
+                    File.FragmentOffset = (ulong)PackedData.Length;
+                    PackedData.Write(File.Content, Offset, Length);
+                    Last.PhysicalBlocks = 0;
+                }
             }
+
+            if (PackedData.Length == 0)
+                return;
 
             var Packed = new Node
             {
@@ -306,8 +343,18 @@ namespace NyaFs.Filesystem.EroFs
                 Node.XattrData = null;
                 Node.XattrSize = 0;
                 Node.XattrCount = 0;
+                Node.SharedXattrKeys.Clear();
                 Node.HeaderRel = InodeSize;
+            }
 
+            SharedXattrData = null;
+            SharedXattrBlock = 0;
+
+            var SharedEntries = new List<XattrEntry>();
+            var SharedKeys = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            foreach (var Node in Nodes)
+            {
                 if (Node.Xattrs.Count == 0)
                     continue;
 
@@ -339,29 +386,93 @@ namespace NyaFs.Filesystem.EroFs
                     return (IndexDiff != 0) ? IndexDiff : CompareBytes(A.ShortName, B.ShortName);
                 });
 
-                int Size = 12;
-                foreach (var Entry in Entries)
-                    Size += Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
-
-                var Body = new byte[Size];
-                int Offset = 12;
-                foreach (var Entry in Entries)
+                if (SharedXattrs)
                 {
-                    Body[Offset] = (byte)Entry.ShortName.Length;
-                    Body[Offset + 1] = (byte)Entry.Index;
-                    WriteU16(Body, Offset + 2, (uint)Entry.Value.Length);
-                    Array.Copy(Entry.ShortName, 0, Body, Offset + 4, Entry.ShortName.Length);
-                    Array.Copy(Entry.Value, 0, Body, Offset + 4 + Entry.ShortName.Length, Entry.Value.Length);
-                    Offset += Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
+                    foreach (var Entry in Entries)
+                    {
+                        string Key = XattrKey(Entry);
+                        if (!SharedKeys.ContainsKey(Key))
+                        {
+                            SharedKeys[Key] = SharedEntries.Count;
+                            SharedEntries.Add(Entry);
+                        }
+                        Node.SharedXattrKeys.Add(Key);
+                    }
+                    continue;
                 }
 
+                Node.XattrData = BuildInlineXattrBody(Entries);
+                Node.XattrSize = Node.XattrData.Length;
+                Node.XattrCount = 1 + (Node.XattrSize - 12) / 4;
+                Node.HeaderRel = Align(InodeSize + Node.XattrSize, 8);
+            }
+
+            if (!SharedXattrs || (SharedEntries.Count == 0))
+                return;
+
+            var SharedOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
+            var SharedData = new MemoryStream();
+            foreach (var Entry in SharedEntries)
+            {
+                SharedOffsets[XattrKey(Entry)] = (int)SharedData.Length / 4;
+                WriteXattrEntry(SharedData, Entry);
+            }
+
+            SharedXattrData = SharedData.ToArray();
+
+            foreach (var Node in Nodes)
+            {
+                if (Node.SharedXattrKeys.Count == 0)
+                    continue;
+
+                int Size = 12 + Node.SharedXattrKeys.Count * 4;
+                var Body = new byte[Size];
+                Body[4] = (byte)Node.SharedXattrKeys.Count;
+                for (int i = 0; i < Node.SharedXattrKeys.Count; i++)
+                    WriteU32(Body, 12 + i * 4, (uint)SharedOffsets[Node.SharedXattrKeys[i]]);
+
                 Node.XattrData = Body;
-                Node.XattrSize = Body.Length;
-                Node.XattrCount = 1 + (Body.Length - 12) / 4;
-                Node.HeaderRel = Align(InodeSize + Body.Length, 8);
+                Node.XattrSize = Size;
+                Node.XattrCount = 1 + Node.SharedXattrKeys.Count;
+                Node.HeaderRel = Align(InodeSize + Size, 8);
             }
         }
 
+        private static string XattrKey(XattrEntry Entry) =>
+            Entry.Index + ":" + Convert.ToBase64String(Entry.ShortName) + ":" + Convert.ToBase64String(Entry.Value);
+
+        private static byte[] BuildInlineXattrBody(List<XattrEntry> Entries)
+        {
+            int Size = 12;
+            foreach (var Entry in Entries)
+                Size += Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
+
+            var Body = new byte[Size];
+            int Offset = 12;
+            foreach (var Entry in Entries)
+            {
+                int EntrySize = WriteXattrEntry(Body, Offset, Entry);
+                Offset += EntrySize;
+            }
+            return Body;
+        }
+
+        private static void WriteXattrEntry(MemoryStream Stream, XattrEntry Entry)
+        {
+            var Data = new byte[Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4)];
+            WriteXattrEntry(Data, 0, Entry);
+            Stream.Write(Data, 0, Data.Length);
+        }
+
+        private static int WriteXattrEntry(byte[] Data, int Offset, XattrEntry Entry)
+        {
+            Data[Offset] = (byte)Entry.ShortName.Length;
+            Data[Offset + 1] = (byte)Entry.Index;
+            WriteU16(Data, Offset + 2, (uint)Entry.Value.Length);
+            Array.Copy(Entry.ShortName, 0, Data, Offset + 4, Entry.ShortName.Length);
+            Array.Copy(Entry.Value, 0, Data, Offset + 4 + Entry.ShortName.Length, Entry.Value.Length);
+            return Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
+        }
         private static bool ParseXattrName(string Name, out int Index, out string ShortName)
         {
             if (Name.StartsWith("user.", StringComparison.Ordinal))
@@ -536,7 +647,7 @@ namespace NyaFs.Filesystem.EroFs
             int End = Offset + Base;
             var Last = Node.Groups.Count > 0 ? Node.Groups[Node.Groups.Count - 1] : null;
 
-            if ((Last != null) && Last.Compressed && (Last.EncodedLength > 0) &&
+            if (!Node.PartialFragment && (Last != null) && Last.Compressed && (Last.EncodedLength > 0) &&
                 (Last.EncodedLength <= BlockSize) &&
                 ((End % BlockSize) + Last.EncodedLength <= BlockSize))
             {
@@ -664,7 +775,7 @@ namespace NyaFs.Filesystem.EroFs
             WriteU32(Data, Sb + 32, 0);
             WriteU32(Data, Sb + 36, (uint)Blocks);
             WriteU32(Data, Sb + 40, 0);
-            WriteU32(Data, Sb + 44, 0);
+            WriteU32(Data, Sb + 44, (uint)SharedXattrBlock);
 
             var Uuid = new Guid("6e79732d-6572-6f66-732d-696d61676500").ToByteArray();
             Array.Copy(Uuid, 0, Data, Sb + 48, 16);
@@ -753,8 +864,10 @@ namespace NyaFs.Filesystem.EroFs
                 uint Advise = (uint)(Node.BigPclusters ? 2 : 1);
                 if (Node.Inline)
                     Advise |= 8;
+                if (Node.PartialFragment)
+                    Advise |= 0x20;
 
-                WriteU32(Image, Header, 0);
+                WriteU32(Image, Header, Node.PartialFragment ? (uint)Node.FragmentOffset : 0);
                 WriteU16(Image, Header + 4, Advise);
                 if (Node.Inline)
                     WriteU16(Image, Header + 2, (uint)Node.InlineLength);
@@ -783,7 +896,7 @@ namespace NyaFs.Filesystem.EroFs
             foreach (var Group in Node.Groups)
             {
                 int EntryOffset = EntryBase + Group.Lcn * 8;
-                int Physical = (Node.Inline && (Group.Lcn == Node.InlineLcn)) ? 0 : (int)Node.StartBlock + BlockOffset;
+                int Physical = (Group.PhysicalBlocks == 0) ? 0 : (int)Node.StartBlock + BlockOffset;
 
                 if (Group.Compressed)
                 {
@@ -849,7 +962,7 @@ namespace NyaFs.Filesystem.EroFs
                 if (Group.Compressed)
                 {
                     Types[Group.Lcn] = 1;
-                    Physical[Group.Lcn] = (Node.Inline && (Group.Lcn == Node.InlineLcn)) ? 0 : (int)Node.StartBlock + Block;
+                    Physical[Group.Lcn] = (Group.PhysicalBlocks == 0) ? 0 : (int)Node.StartBlock + Block;
                     for (int i = 1; i < Group.Count; i++)
                     {
                         int EntryLcn = Group.Lcn + i;
@@ -861,7 +974,7 @@ namespace NyaFs.Filesystem.EroFs
                 else
                 {
                     Types[Group.Lcn] = 0;
-                    Physical[Group.Lcn] = (Node.Inline && (Group.Lcn == Node.InlineLcn)) ? 0 : (int)Node.StartBlock + Block;
+                    Physical[Group.Lcn] = (Group.PhysicalBlocks == 0) ? 0 : (int)Node.StartBlock + Block;
                 }
 
                 Block++;

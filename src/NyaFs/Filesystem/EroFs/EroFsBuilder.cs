@@ -33,6 +33,10 @@ namespace NyaFs.Filesystem.EroFs
             public uint Nlink;
             public uint StartBlock;
             public byte[] Data;
+            public bool Compressed;
+            public int MetaSize = 64;
+            public int TotalLclusters;
+            public readonly List<CompressedGroup> Groups = new List<CompressedGroup>();
         }
 
         private sealed class DirEntry
@@ -40,6 +44,14 @@ namespace NyaFs.Filesystem.EroFs
             public byte[] Name;
             public ulong Nid;
             public byte FileType;
+        }
+
+        private sealed class CompressedGroup
+        {
+            public int Lcn;
+            public int Count;
+            public bool Compressed;
+            public byte[] Block;
         }
 
         private readonly List<Node> Nodes = new List<Node>();
@@ -131,9 +143,12 @@ namespace NyaFs.Filesystem.EroFs
 
         public byte[] GetFilesystemImage()
         {
+            PrepareCompression();
             AssignNids();
 
-            int MetaBytes = MetadataStart + Nodes.Count * InodeSize;
+            int MetaBytes = MetadataStart;
+            foreach (var N in Nodes)
+                MetaBytes += N.MetaSize;
             int MetaBlocks = (MetaBytes + BlockSize - 1) / BlockSize;
             int NextBlock = Math.Max(1, MetaBlocks);
 
@@ -160,7 +175,12 @@ namespace NyaFs.Filesystem.EroFs
                     N.Nlink = 1;
                 }
 
-                if (N.Data.Length > 0)
+                if (N.Compressed)
+                {
+                    N.StartBlock = (uint)NextBlock;
+                    NextBlock += N.Groups.Count;
+                }
+                else if (N.Data.Length > 0)
                 {
                     N.StartBlock = (uint)NextBlock;
                     NextBlock += (N.Data.Length + BlockSize - 1) / BlockSize;
@@ -175,7 +195,12 @@ namespace NyaFs.Filesystem.EroFs
 
             foreach (var N in Nodes)
             {
-                if (N.Data.Length > 0)
+                if (N.Compressed)
+                {
+                    for (int i = 0; i < N.Groups.Count; i++)
+                        Array.Copy(N.Groups[i].Block, 0, Result, ((long)N.StartBlock + i) * BlockSize, BlockSize);
+                }
+                else if (N.Data.Length > 0)
                 {
                     long Offset = (long)N.StartBlock * BlockSize;
                     Array.Copy(N.Data, 0, Result, Offset, N.Data.Length);
@@ -185,6 +210,95 @@ namespace NyaFs.Filesystem.EroFs
             return Result;
         }
 
+        private void PrepareCompression()
+        {
+            foreach (var N in Nodes)
+            {
+                N.Compressed = false;
+                N.Groups.Clear();
+                N.TotalLclusters = 0;
+                N.MetaSize = InodeSize;
+
+                if ((N.Type != FilesystemItemType.File) || (N.Content == null) || (N.Content.Length < BlockSize))
+                    continue;
+
+                int Total = (N.Content.Length + BlockSize - 1) / BlockSize;
+                N.TotalLclusters = Total;
+                bool AnyCompressed = false;
+                int Lcn = 0;
+
+                while (Lcn < Total)
+                {
+                    int Max = Math.Min(Total - Lcn, 128);
+                    int Chosen = 0;
+                    byte[] ChosenData = null;
+                    int ChosenLength = 0;
+
+                    for (int Count = Max; Count >= 1; Count /= 2)
+                    {
+                        int Offset = Lcn * BlockSize;
+                        int Length = Math.Min(Count * BlockSize, N.Content.Length - Offset);
+                        var Compressed = new byte[BlockSize];
+
+                        try
+                        {
+                            int Written = FT.LZ4.LZ4Codec.Encode(N.Content, Offset, Length,
+                                Compressed, 0, Compressed.Length, FT.LZ4.LZ4Level.L10_OPT);
+                            if ((Written > 0) && (Written < Length))
+                            {
+                                Chosen = Count;
+                                ChosenData = Compressed;
+                                ChosenLength = Written;
+                                break;
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    if (Chosen > 0)
+                    {
+                        var Block = new byte[BlockSize];
+                        Array.Copy(ChosenData, 0, Block, BlockSize - ChosenLength, ChosenLength);
+                        N.Groups.Add(new CompressedGroup
+                        {
+                            Lcn = Lcn,
+                            Count = Chosen,
+                            Compressed = true,
+                            Block = Block
+                        });
+                        AnyCompressed = true;
+                        Lcn += Chosen;
+                    }
+                    else
+                    {
+                        var Block = new byte[BlockSize];
+                        int Offset = Lcn * BlockSize;
+                        int Length = Math.Min(BlockSize, N.Content.Length - Offset);
+                        Array.Copy(N.Content, Offset, Block, 0, Length);
+                        N.Groups.Add(new CompressedGroup
+                        {
+                            Lcn = Lcn,
+                            Count = 1,
+                            Compressed = false,
+                            Block = Block
+                        });
+                        Lcn++;
+                    }
+                }
+
+                if (AnyCompressed)
+                {
+                    N.Compressed = true;
+                    N.MetaSize = Align(72 + ((Total + 1) / 2) * 8, 32);
+                }
+                else
+                {
+                    N.Groups.Clear();
+                }
+            }
+        }
         private void AssignNids()
         {
             int Slot = RootNid;
@@ -192,10 +306,9 @@ namespace NyaFs.Filesystem.EroFs
             {
                 Nodes[i].Nid = (ulong)Slot;
                 Nodes[i].Ino = (uint)(i + 1);
-                Slot += InodeSize / InodeUnit;
+                Slot += Nodes[i].MetaSize / InodeUnit;
             }
         }
-
         private int CountSubdirectories(Node Dir)
         {
             int Result = 0;
@@ -314,7 +427,7 @@ namespace NyaFs.Filesystem.EroFs
             var Uuid = new Guid("6e79732d-6572-6f66-732d-696d61676500").ToByteArray();
             Array.Copy(Uuid, 0, Data, Sb + 48, 16);
 
-            WriteU32(Data, Sb + 80, 0);
+            WriteU32(Data, Sb + 80, Nodes.Exists(N => N.Compressed) ? 1u : 0u);
             WriteU16(Data, Sb + 84, 0);
             WriteU16(Data, Sb + 86, 0);
             WriteU16(Data, Sb + 88, 0);
@@ -331,22 +444,106 @@ namespace NyaFs.Filesystem.EroFs
 
         private void WriteInode(byte[] Image, Node Node, int Index)
         {
-            int Offset = MetadataStart + Index * InodeSize;
+            int Offset = (int)(Node.Nid * InodeUnit);
 
-            WriteU16(Image, Offset, 1);
+            WriteU16(Image, Offset, Node.Compressed ? 7u : 1u);
             WriteU16(Image, Offset + 2, 0);
             WriteU16(Image, Offset + 4, (uint)((Node.Mode & 0xFFF) | TypeBits(Node.Type)));
             WriteU16(Image, Offset + 6, 0);
             WriteU64(Image, Offset + 8, (ulong)Node.Data.Length);
-            WriteU32(Image, Offset + 16, DataAddress(Node));
+            WriteU32(Image, Offset + 16, Node.Compressed ? (uint)Node.Groups.Count : DataAddress(Node));
             WriteU32(Image, Offset + 20, Node.Ino);
             WriteU32(Image, Offset + 24, Node.User);
             WriteU32(Image, Offset + 28, Node.Group);
             WriteU64(Image, Offset + 32, 0);
             WriteU32(Image, Offset + 40, 0);
             WriteU32(Image, Offset + 44, Node.Nlink);
+
+            if (Node.Compressed)
+            {
+                int Header = Offset + InodeSize;
+                WriteU32(Image, Header, 0);
+                WriteU16(Image, Header + 4, 0);
+                Image[Header + 6] = 0;
+                Image[Header + 7] = 0;
+
+                WriteCompactIndexes(Image, Node, Header);
+            }
         }
 
+        private void WriteCompactIndexes(byte[] Image, Node Node, int Header)
+        {
+            int Total = Node.TotalLclusters;
+            var Types = new int[Total];
+            var Physical = new int[Total];
+            var Delta0 = new int[Total];
+            var Delta1 = new int[Total];
+
+            int Block = 0;
+            foreach (var Group in Node.Groups)
+            {
+                if (Group.Compressed)
+                {
+                    Types[Group.Lcn] = 1;
+                    Physical[Group.Lcn] = (int)Node.StartBlock + Block;
+                    for (int i = 1; i < Group.Count; i++)
+                    {
+                        int Lcn = Group.Lcn + i;
+                        Types[Lcn] = 2;
+                        Delta0[Lcn] = i;
+                        Delta1[Lcn] = Group.Count - i;
+                    }
+                }
+                else
+                {
+                    Types[Group.Lcn] = 0;
+                    Physical[Group.Lcn] = (int)Node.StartBlock + Block;
+                }
+
+                Block++;
+            }
+
+            int PackStart = Header + 8;
+            int BlkAddr = (int)Node.StartBlock - 1;
+            bool DummyHead = true;
+
+            for (int Pack = 0; Pack < (Total + 1) / 2; Pack++)
+            {
+                int Base = BlkAddr;
+                for (int i = 0; i < 2; i++)
+                {
+                    int Index = Pack * 2 + i;
+                    int Value = 0;
+
+                    if (Index < Total)
+                    {
+                        if (Types[Index] == 2)
+                        {
+                            int Offset = (i == 1) ? Delta1[Index] : Delta0[Index];
+                            Value = (2 << 12) | (Offset & 0x7FF);
+                        }
+                        else
+                        {
+                            if (DummyHead)
+                                BlkAddr++;
+
+                            DummyHead = true;
+                            Value = (Types[Index] << 12);
+                        }
+                    }
+                    else
+                    {
+                        if (DummyHead)
+                            BlkAddr++;
+                    }
+
+                    WriteU16(Image, PackStart + i * 2, (uint)Value);
+                }
+
+                WriteU32(Image, PackStart + 4, (uint)Base);
+                PackStart += 8;
+            }
+        }
         private uint DataAddress(Node Node)
         {
             if ((Node.Type == FilesystemItemType.Character) || (Node.Type == FilesystemItemType.Block))
@@ -388,6 +585,9 @@ namespace NyaFs.Filesystem.EroFs
                 default: return 0;
             }
         }
+
+        private static int Align(int Value, int Alignment) =>
+            (Value + Alignment - 1) / Alignment * Alignment;
 
         private static string Normalize(string Path)
         {

@@ -20,6 +20,7 @@ namespace NyaFs.ImageFormat.Types
         UbiFs,
         Fat,
         F2fs,
-        Iso9660
+        Iso9660,
+        ExFat
     }
 }

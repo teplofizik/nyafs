@@ -27,6 +27,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
             if (Magic == 0x30373037u) // CPIO start of block
                 return Types.FsType.Cpio;
 
+            if (Filesystem.ExFat.ExFatShared.IsExFat(Raw))
+                return Types.FsType.ExFat;
+
             if ((Raw.Length >= 0x8006) &&
                 (Raw[0x8001] == (byte)'C') && (Raw[0x8002] == (byte)'D') &&
                 (Raw[0x8003] == (byte)'0') && (Raw[0x8004] == (byte)'0') &&
@@ -81,6 +84,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                 case Types.FsType.Fat: return "Fat";
                 case Types.FsType.F2fs: return "F2FS";
                 case Types.FsType.Iso9660: return "ISO9660";
+                case Types.FsType.ExFat: return "exFAT";
                 default: return "Unknown";
             }
         }

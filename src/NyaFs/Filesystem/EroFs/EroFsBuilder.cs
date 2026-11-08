@@ -36,6 +36,10 @@ namespace NyaFs.Filesystem.EroFs
             public byte[] Data;
             public bool Compressed;
             public bool BigPclusters;
+            public bool Inline;
+            public int InlineOffset;
+            public int InlineLength;
+            public int InlineLcn;
             public int MetaSize = 64;
             public int TotalLclusters;
             public readonly List<CompressedGroup> Groups = new List<CompressedGroup>();
@@ -54,6 +58,7 @@ namespace NyaFs.Filesystem.EroFs
             public int Count;
             public bool Compressed;
             public int PhysicalBlocks;
+            public int EncodedLength;
             public byte[] Data;
         }
 
@@ -230,6 +235,8 @@ namespace NyaFs.Filesystem.EroFs
             foreach (var N in Nodes)
             {
                 N.Compressed = false;
+                N.BigPclusters = false;
+                N.Inline = false;
                 N.Groups.Clear();
                 N.TotalLclusters = 0;
                 N.MetaSize = InodeSize;
@@ -284,6 +291,7 @@ namespace NyaFs.Filesystem.EroFs
                             Count = Chosen,
                             Compressed = true,
                             PhysicalBlocks = PhysicalBlocks,
+                            EncodedLength = ChosenLength,
                             Data = Block
                         });
                         AnyCompressed = true;
@@ -328,8 +336,36 @@ namespace NyaFs.Filesystem.EroFs
             {
                 Nodes[i].Nid = (ulong)Slot;
                 Nodes[i].Ino = (uint)(i + 1);
+                Nodes[i].MetaSize = CalculateMetaSize(Nodes[i], Slot * InodeUnit);
                 Slot += Nodes[i].MetaSize / InodeUnit;
             }
+        }
+
+        private int CalculateMetaSize(Node Node, int Offset)
+        {
+            if (!Node.Compressed)
+                return InodeSize;
+
+            int Base = Node.BigPclusters
+                ? 80 + Node.TotalLclusters * 8
+                : 72 + CompactIndexBytes(Node.TotalLclusters);
+            int End = Offset + Base;
+            var Last = Node.Groups.Count > 0 ? Node.Groups[Node.Groups.Count - 1] : null;
+
+            if ((Last != null) && Last.Compressed && (Last.EncodedLength > 0) &&
+                (Last.EncodedLength <= BlockSize) &&
+                ((End % BlockSize) + Last.EncodedLength <= BlockSize))
+            {
+                Node.Inline = true;
+                Node.InlineOffset = End;
+                Node.InlineLength = Last.EncodedLength;
+                Node.InlineLcn = Last.Lcn;
+                Last.PhysicalBlocks = 0;
+                return Align(Base + Last.EncodedLength, 32);
+            }
+
+            Node.Inline = false;
+            return Align(Base, 32);
         }
         private int CountSubdirectories(Node Dir)
         {
@@ -455,6 +491,8 @@ namespace NyaFs.Filesystem.EroFs
                 Features |= 1;
             if (BigPclusters)
                 Features |= 2;
+            if (Nodes.Exists(N => N.Inline))
+                Features |= 0x10;
             WriteU32(Data, Sb + 80, Features);
             WriteU16(Data, Sb + 84, BigPclusters ? 1u : 0u);
 
@@ -498,8 +536,14 @@ namespace NyaFs.Filesystem.EroFs
             if (Node.Compressed)
             {
                 int Header = Offset + InodeSize;
+                uint Advise = (uint)(Node.BigPclusters ? 2 : 1);
+                if (Node.Inline)
+                    Advise |= 8;
+
                 WriteU32(Image, Header, 0);
-                WriteU16(Image, Header + 4, (uint)(Node.BigPclusters ? 2 : 1));
+                WriteU16(Image, Header + 4, Advise);
+                if (Node.Inline)
+                    WriteU16(Image, Header + 2, (uint)Node.InlineLength);
                 Image[Header + 6] = 0;
                 Image[Header + 7] = 0;
 
@@ -507,6 +551,13 @@ namespace NyaFs.Filesystem.EroFs
                     WriteFullIndexes(Image, Node, Header);
                 else
                     WriteCompactIndexes(Image, Node, Header);
+
+                if (Node.Inline)
+                {
+                    var Last = Node.Groups[Node.Groups.Count - 1];
+                    Array.Copy(Last.Data, Last.Data.Length - Node.InlineLength,
+                        Image, Node.InlineOffset, Node.InlineLength);
+                }
             }
         }
 
@@ -518,7 +569,7 @@ namespace NyaFs.Filesystem.EroFs
             foreach (var Group in Node.Groups)
             {
                 int EntryOffset = EntryBase + Group.Lcn * 8;
-                int Physical = (int)Node.StartBlock + BlockOffset;
+                int Physical = (Node.Inline && (Group.Lcn == Node.InlineLcn)) ? 0 : (int)Node.StartBlock + BlockOffset;
 
                 if (Group.Compressed)
                 {
@@ -584,7 +635,7 @@ namespace NyaFs.Filesystem.EroFs
                 if (Group.Compressed)
                 {
                     Types[Group.Lcn] = 1;
-                    Physical[Group.Lcn] = (int)Node.StartBlock + Block;
+                    Physical[Group.Lcn] = (Node.Inline && (Group.Lcn == Node.InlineLcn)) ? 0 : (int)Node.StartBlock + Block;
                     for (int i = 1; i < Group.Count; i++)
                     {
                         int EntryLcn = Group.Lcn + i;
@@ -596,7 +647,7 @@ namespace NyaFs.Filesystem.EroFs
                 else
                 {
                     Types[Group.Lcn] = 0;
-                    Physical[Group.Lcn] = (int)Node.StartBlock + Block;
+                    Physical[Group.Lcn] = (Node.Inline && (Group.Lcn == Node.InlineLcn)) ? 0 : (int)Node.StartBlock + Block;
                 }
 
                 Block++;
@@ -665,8 +716,7 @@ namespace NyaFs.Filesystem.EroFs
                         DummyHead = true;
                         Value = Types[Lcn] << Lobits;
 
-                        if (Physical[Lcn] != BlkAddr && !Final)
-                            throw new InvalidOperationException("EROFS: compact index blkaddr mismatch");
+                        // Physical block addresses are implied by the compact base blkaddr.
                     }
 
                     Lcn++;

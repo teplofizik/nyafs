@@ -6,7 +6,7 @@ using System.Text;
 
 namespace NyaFs.Filesystem.EroFs
 {
-    internal sealed class EroFsReader : IFilesystemReader, IRootFsInfo
+    internal sealed partial class EroFsReader : IFilesystemReader, IRootFsInfo
     {
         private sealed class Inode
         {
@@ -227,11 +227,11 @@ namespace NyaFs.Filesystem.EroFs
 
         private byte[] ReadInodeData(Inode Inode)
         {
-            if (Inode.Compressed || (Inode.Layout == 4))
-            {
-                NyaFs.Log.Warning(0, $"EROFS: inode {Inode.Nid} uses {(Inode.Layout == 4 ? "chunk-based" : "compressed")} layout, data is not available");
-                return Array.Empty<byte>();
-            }
+            if (Inode.Compressed)
+                return ReadCompressedInodeData(Inode);
+
+            if (Inode.Layout == 4)
+                return ReadChunkBasedInodeData(Inode);
 
             if (Inode.Size == 0)
                 return Array.Empty<byte>();

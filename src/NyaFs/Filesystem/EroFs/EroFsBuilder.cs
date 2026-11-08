@@ -2,6 +2,7 @@ using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -37,6 +38,9 @@ namespace NyaFs.Filesystem.EroFs
             public bool Compressed;
             public bool BigPclusters;
             public bool Inline;
+            public bool Hidden;
+            public bool WholeFragment;
+            public ulong FragmentOffset;
             public int InlineOffset;
             public int InlineLength;
             public int InlineLcn;
@@ -64,6 +68,8 @@ namespace NyaFs.Filesystem.EroFs
 
         private readonly List<Node> Nodes = new List<Node>();
         private Node Root;
+
+        public bool Fragments { get; set; } = false;
 
         public EroFsBuilder()
         {
@@ -152,6 +158,7 @@ namespace NyaFs.Filesystem.EroFs
         public byte[] GetFilesystemImage()
         {
             PrepareCompression();
+            PrepareFragments();
             ConfigureMetadata();
             AssignNids();
 
@@ -224,6 +231,41 @@ namespace NyaFs.Filesystem.EroFs
             return Result;
         }
 
+        private void PrepareFragments()
+        {
+            if (!Fragments)
+                return;
+
+            var Files = Nodes.Where(N => (N.Type == FilesystemItemType.File) &&
+                !N.Hidden && (N.Content != null) && (N.Content.Length > 0)).ToList();
+            if (Files.Count == 0)
+                return;
+
+            var PackedData = new MemoryStream();
+            foreach (var File in Files)
+            {
+                File.WholeFragment = true;
+                File.Compressed = true;
+                File.BigPclusters = false;
+                File.Inline = false;
+                File.Groups.Clear();
+                File.FragmentOffset = (ulong)PackedData.Length;
+                PackedData.Write(File.Content, 0, File.Content.Length);
+            }
+
+            var Packed = new Node
+            {
+                Path = "/$packed",
+                Name = "$packed",
+                Type = FilesystemItemType.File,
+                Mode = 0x1A4,
+                Content = PackedData.ToArray(),
+                Hidden = true,
+                Nlink = 1
+            };
+
+            Nodes.Add(Packed);
+        }
         private void ConfigureMetadata()
         {
             RootNid = Nodes.Exists(N => N.Compressed && N.BigPclusters) ? 37 : 36;
@@ -343,6 +385,9 @@ namespace NyaFs.Filesystem.EroFs
 
         private int CalculateMetaSize(Node Node, int Offset)
         {
+            if (Node.WholeFragment)
+                return Align(72, 32);
+
             if (!Node.Compressed)
                 return InodeSize;
 
@@ -493,6 +538,9 @@ namespace NyaFs.Filesystem.EroFs
                 Features |= 2;
             if (Nodes.Exists(N => N.Inline))
                 Features |= 0x10;
+            bool HasFragments = Nodes.Exists(N => N.Hidden);
+            if (HasFragments)
+                Features |= 0x20;
             WriteU32(Data, Sb + 80, Features);
             WriteU16(Data, Sb + 84, BigPclusters ? 1u : 0u);
 
@@ -508,7 +556,7 @@ namespace NyaFs.Filesystem.EroFs
             Data[Sb + 90] = 0;
             Data[Sb + 91] = 0;
             WriteU32(Data, Sb + 92, 0);
-            WriteU64(Data, Sb + 96, 0);
+            WriteU64(Data, Sb + 96, HasFragments ? Nodes.First(N => N.Hidden).Nid : 0);
             Data[Sb + 104] = 0;
             Data[Sb + 105] = 0;
             WriteU32(Data, Sb + 108, 0);
@@ -519,6 +567,24 @@ namespace NyaFs.Filesystem.EroFs
         private void WriteInode(byte[] Image, Node Node, int Index)
         {
             int Offset = (int)(Node.Nid * InodeUnit);
+
+            if (Node.WholeFragment)
+            {
+                WriteU16(Image, Offset, 3);
+                WriteU16(Image, Offset + 2, 0);
+                WriteU16(Image, Offset + 4, (uint)((Node.Mode & 0xFFF) | TypeBits(Node.Type)));
+                WriteU16(Image, Offset + 6, 0);
+                WriteU64(Image, Offset + 8, (ulong)Node.Data.Length);
+                WriteU32(Image, Offset + 16, 0);
+                WriteU32(Image, Offset + 20, Node.Ino);
+                WriteU32(Image, Offset + 24, Node.User);
+                WriteU32(Image, Offset + 28, Node.Group);
+                WriteU64(Image, Offset + 32, 0);
+                WriteU32(Image, Offset + 40, 0);
+                WriteU32(Image, Offset + 44, Node.Nlink);
+                WriteU64(Image, Offset + InodeSize, Node.FragmentOffset | (1UL << 63));
+                return;
+            }
 
             WriteU16(Image, Offset, Node.Compressed ? (Node.BigPclusters ? 3u : 7u) : 1u);
             WriteU16(Image, Offset + 2, 0);

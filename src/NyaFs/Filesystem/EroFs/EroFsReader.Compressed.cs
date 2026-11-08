@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.IO.Compression;
 
 namespace NyaFs.Filesystem.EroFs
 {
@@ -21,6 +23,9 @@ namespace NyaFs.Filesystem.EroFs
         private const int LclusterPartialRef = 0x8000;
         private const int LclusterHole = 0x4000;
         private const int CompressionLz4 = 0;
+        private const int CompressionLzma = 1;
+        private const int CompressionDeflate = 2;
+        private const int CompressionZstd = 3;
         private const uint NullBlockAddress = 0xFFFFFFFF;
 
         private sealed class CompressedMap
@@ -61,6 +66,12 @@ namespace NyaFs.Filesystem.EroFs
 
         private byte[] PackedFragmentData;
         private ulong PackedFragmentNid;
+        private bool CompressionConfigsLoaded;
+        private bool HasCompressionConfigs;
+        private int AvailableCompressionAlgorithms;
+        private int LzmaDictionarySize = 1 << 20;
+        private int DeflateWindowBits = 15;
+        private int ZstdWindowLog = 17;
 
         private byte[] ReadCompressedInodeData(Inode Inode)
         {
@@ -497,9 +508,10 @@ namespace NyaFs.Filesystem.EroFs
             }
 
             int Algorithm = Head.Type == LclusterTypeHead2 ? Map.Algorithm1 : Map.Algorithm0;
-            if (Algorithm != CompressionLz4)
+            EnsureCompressionConfigs();
+            if ((AvailableCompressionAlgorithms & (1 << Algorithm)) == 0)
             {
-                NyaFs.Log.Warning(0, $"EROFS: compression algorithm {Algorithm} is not supported (only LZ4)");
+                NyaFs.Log.Warning(0, $"EROFS: compression algorithm {Algorithm} is not available");
                 return;
             }
 
@@ -525,7 +537,7 @@ namespace NyaFs.Filesystem.EroFs
             }
 
             CompressedLength = Math.Min(CompressedLength, (int)(Data.Length - SourceOffset));
-            if (Map.Lz4ZeroPadding)
+            if (Map.Lz4ZeroPadding || (Algorithm != CompressionLz4))
             {
                 int Skipped = 0;
                 while ((Skipped < CompressedLength) && (Skipped < BlockSize) && (Data[SourceOffset + Skipped] == 0))
@@ -539,16 +551,137 @@ namespace NyaFs.Filesystem.EroFs
                 return;
 
             var Decompressed = new byte[Length];
-            int Decoded = FT.LZ4.LZ4Codec.Decode(Data, (int)SourceOffset, CompressedLength,
-                Decompressed, 0, Decompressed.Length);
+            int Decoded = DecompressExtent(Algorithm, SourceOffset, CompressedLength, Decompressed);
 
             if (Decoded <= 0)
             {
-                NyaFs.Log.Warning(0, $"EROFS: failed to decompress LZ4 extent at lcluster {HeadLcn}");
+                NyaFs.Log.Warning(0, $"EROFS: failed to decompress algorithm {Algorithm} extent at lcluster {HeadLcn}");
                 return;
             }
 
             Array.Copy(Decompressed, 0, Output, OutputOffset, Math.Min(Decoded, Length));
+        }
+
+        private void EnsureCompressionConfigs()
+        {
+            if (CompressionConfigsLoaded)
+                return;
+
+            CompressionConfigsLoaded = true;
+            int Sb = EroFsShared.SuperblockOffset;
+            int Incompat = (int)EroFsShared.ReadU32(Data, Sb + 80);
+            HasCompressionConfigs = (Incompat & 2) != 0;
+            if (!HasCompressionConfigs)
+            {
+                AvailableCompressionAlgorithms = 1 << CompressionLz4;
+                return;
+            }
+
+            AvailableCompressionAlgorithms = (int)EroFsShared.ReadU16(Data, Sb + 84);
+            int Offset = Sb + 128 + Data[Sb + 13] * 16;
+
+            for (int Alg = 0; Alg < 4; Alg++)
+            {
+                if ((AvailableCompressionAlgorithms & (1 << Alg)) == 0)
+                    continue;
+
+                Offset = (int)Align(Offset, 4);
+                if (Offset + 2 > Data.Length)
+                    break;
+
+                int Length = (int)EroFsShared.ReadU16(Data, Offset);
+                int Payload = Offset + 2;
+                if ((Length <= 0) || (Payload + Length > Data.Length))
+                    break;
+
+                switch (Alg)
+                {
+                    case CompressionLzma:
+                        if (Length >= 4)
+                        {
+                            int Dict = (int)EroFsShared.ReadU32(Data, Payload);
+                            if (Dict >= 4096)
+                                LzmaDictionarySize = Dict;
+                        }
+                        break;
+                    case CompressionDeflate:
+                        if (Length >= 1)
+                            DeflateWindowBits = Data[Payload];
+                        break;
+                    case CompressionZstd:
+                        if (Length >= 2)
+                            ZstdWindowLog = Data[Payload + 1];
+                        break;
+                }
+
+                Offset = Payload + Length;
+            }
+        }
+
+        private int DecompressExtent(int Algorithm, long SourceOffset, int CompressedLength, byte[] Output)
+        {
+            switch (Algorithm)
+            {
+                case CompressionLz4:
+                    return FT.LZ4.LZ4Codec.Decode(Data, (int)SourceOffset, CompressedLength, Output, 0, Output.Length);
+
+                case CompressionDeflate:
+                {
+                    using (var Input = new MemoryStream(Data, (int)SourceOffset, CompressedLength, false))
+                    using (var Inflater = new DeflateStream(Input, CompressionMode.Decompress))
+                    {
+                        int Total = 0;
+                        while (Total < Output.Length)
+                        {
+                            int Read = Inflater.Read(Output, Total, Output.Length - Total);
+                            if (Read <= 0)
+                                break;
+                            Total += Read;
+                        }
+                        return Total;
+                    }
+                }
+
+                case CompressionZstd:
+                {
+                    using (var Decompressor = new ZstdSharp.Decompressor())
+                        return Decompressor.Unwrap(Data, (int)SourceOffset, CompressedLength, Output, 0, Output.Length);
+                }
+
+                case CompressionLzma:
+                {
+                    EnsureCompressionConfigs();
+                    if (CompressedLength < 5)
+                        return -1;
+
+                    int Properties = (~Data[SourceOffset]) & 0xFF;
+                    byte[] LzmaProperties =
+                    {
+                        (byte)Properties,
+                        (byte)(LzmaDictionarySize & 0xFF),
+                        (byte)((LzmaDictionarySize >> 8) & 0xFF),
+                        (byte)((LzmaDictionarySize >> 16) & 0xFF),
+                        (byte)((LzmaDictionarySize >> 24) & 0xFF)
+                    };
+
+                    var LzmaInput = new byte[CompressedLength];
+                    LzmaInput[0] = 0;
+                    Array.Copy(Data, SourceOffset + 1, LzmaInput, 1, CompressedLength - 1);
+
+                    using (var Input = new MemoryStream(LzmaInput, false))
+                    using (var Decoded = new MemoryStream(Output.Length))
+                    {
+                        var Decoder = new SevenZip.Compression.LZMA.Decoder();
+                        Decoder.SetDecoderProperties(LzmaProperties);
+                        Decoder.Code(Input, Decoded, LzmaInput.Length, Output.Length, null);
+                        var Bytes = Decoded.ToArray();
+                        Array.Copy(Bytes, 0, Output, 0, Math.Min(Bytes.Length, Output.Length));
+                        return Math.Min(Bytes.Length, Output.Length);
+                    }
+                }
+            }
+
+            return -1;
         }
 
         private byte[] ReadChunkBasedInodeData(Inode Inode)

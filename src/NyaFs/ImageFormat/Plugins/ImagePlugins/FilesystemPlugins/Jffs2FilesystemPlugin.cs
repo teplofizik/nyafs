@@ -19,6 +19,6 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             new Elements.Fs.Reader.BaseFsReader(Types.FsType.Jffs2, new Filesystem.Jffs2.Jffs2Reader(Data));
 
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(Elements.Fs.LinuxFilesystem Fs) =>
-            new Elements.Fs.Writer.Jffs2Writer();
+            new Elements.Fs.Writer.Jffs2Writer(Fs);
     }
 }

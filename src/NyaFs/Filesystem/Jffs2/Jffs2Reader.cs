@@ -361,6 +361,9 @@ namespace NyaFs.Filesystem.Jffs2
                     return RtimeDecompress(Raw, I.Dsize);
                 case 6: // ZLIB
                     return ZlibDecompress(Raw);
+                case 7: // LZO
+                    try { return NyaLZO.LZO1xDecompressor.Decompress(Raw); }
+                    catch { return Array.Empty<byte>(); }
                 default:
                     return Raw.Length == I.Dsize ? Raw : Array.Empty<byte>();
             }

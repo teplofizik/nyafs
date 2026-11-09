@@ -17,7 +17,7 @@ namespace NyaFs.Processor.Scripting.Commands
         {
             public SetScriptArgsConfig() : base(0, new ScriptArgsParam[] {
                     new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all" }),
-                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable" }),
+                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable", "jffs2.compression", "jffs2.pagesize", "jffs2.eraseblock" }),
                     new Params.StringScriptArgsParam("value")
                 })
             {
@@ -42,10 +42,10 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable", "jffs2.compression", "jffs2.pagesize", "jffs2.eraseblock" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
-                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, cramfs.endian, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size, udf.vat, udf.sparable");
+                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, cramfs.endian, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size, udf.vat, udf.sparable, jffs2.compression, jffs2.pagesize, jffs2.eraseblock");
                         return false;
                     }
                 }
@@ -435,6 +435,49 @@ namespace NyaFs.Processor.Scripting.Commands
                             catch (Exception)
                             {
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid cluster size: {Value}!");
+                            }
+                        }
+                    case "jffs2.compression":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set JFFS2 compression to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            switch ((Value ?? "").ToLower())
+                            {
+                                case "none": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.None; break;
+                                case "zlib": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.Zlib; break;
+                                case "rtime": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.Rtime; break;
+                                case "lzo": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.Lzo; break;
+                                case "priority": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.Priority; break;
+                                default: return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown JFFS2 compression: {Value}!");
+                            }
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set JFFS2 compression: {Value}!");
+                        }
+                    case "jffs2.pagesize":
+                    case "jffs2.eraseblock":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set JFFS2 geometry to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            try
+                            {
+                                int Size = (int)ParseSize(Value);
+                                if (Size <= 0) throw new ArgumentException();
+                                if (Param == "jffs2.pagesize") Fs.Jffs2PageSize = Size;
+                                else Fs.Jffs2EraseBlockSize = Size;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set JFFS2 {Param}: {Size}!");
+                            }
+                            catch
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid JFFS2 geometry: {Value}!");
                             }
                         }
                     case "compression":

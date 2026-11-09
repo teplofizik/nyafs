@@ -30,6 +30,15 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// <summary>Write UDF with a virtual allocation table (VAT).</summary>
         public bool UdfVat = false;
 
+        /// <summary>JFFS2 data compression mode.</summary>
+        public Filesystem.Jffs2.Jffs2Compression Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.None;
+
+        /// <summary>JFFS2 max data node/page size.</summary>
+        public int Jffs2PageSize = 4096;
+
+        /// <summary>JFFS2 erase-block size used for image padding.</summary>
+        public int Jffs2EraseBlockSize = 0x10000;
+
         /// <summary>Write UDF with a sparable partition map.</summary>
         public bool UdfSparable = false;
 

@@ -2,10 +2,21 @@ using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
 using System.Text;
 
 namespace NyaFs.Filesystem.Jffs2
 {
+    public enum Jffs2Compression
+    {
+        None,
+        Zlib,
+        Rtime,
+        Lzo,
+        Priority
+    }
+
     /// <summary>
     /// Basic JFFS2 writer: one inode version per object, no compression,
     /// no garbage collection and no cleanmarker/bad-block handling.
@@ -38,11 +49,17 @@ namespace NyaFs.Filesystem.Jffs2
         private readonly Node Root;
         private uint NextIno = 2;
         private uint NextVersion = 1;
+        private uint NextInodeVersion = 1;
         private List<byte> Image;
 
-        public Jffs2Builder(int EraseBlockSize = 0x10000)
+        public Jffs2Compression Compression { get; set; } = Jffs2Compression.None;
+        public int PageSize { get; set; } = 4096;
+
+        public Jffs2Builder(int EraseBlockSize = 0x10000, int PageSize = 4096, Jffs2Compression Compression = Jffs2Compression.None)
         {
             this.EraseBlockSize = EraseBlockSize;
+            this.PageSize = PageSize;
+            this.Compression = Compression;
             Root = new Node
             {
                 Path = "/",
@@ -184,44 +201,169 @@ namespace NyaFs.Filesystem.Jffs2
                 ? Encoding.UTF8.GetBytes(N.Target ?? "")
                 : (N.Type == FilesystemItemType.File ? (N.Content ?? Array.Empty<byte>()) : SpecialPayload(N));
 
-            int Length = Align(68 + Payload.Length, 4);
-            int Offset = Image.Count;
+            if (Payload.Length == 0)
+            {
+                WriteInodeNode(N, 0, 0, 0, Array.Empty<byte>(), 0);
+                return;
+            }
+
+            for (int Offset = 0; Offset < Payload.Length; Offset += PageSize)
+            {
+                int DataLength = Math.Min(PageSize, Payload.Length - Offset);
+                var Chunk = new byte[DataLength];
+                Array.Copy(Payload, Offset, Chunk, 0, DataLength);
+
+                byte[] Stored;
+                byte Compr;
+                Compress(Chunk, out Stored, out Compr);
+                WriteInodeNode(N, Offset, (uint)Payload.Length, DataLength, Stored, Compr);
+            }
+        }
+
+        private void WriteInodeNode(Node N, int Offset, uint Isize, int DataLength, byte[] Stored, byte Compr)
+        {
+            int Length = Align(68 + Stored.Length, 4);
+            int NodeOffset = Image.Count;
 
             WriteU16(Image, MAGIC);
             WriteU16(Image, INODE);
             WriteU32(Image, (uint)Length);
             WriteU32(Image, 0);
             WriteU32(Image, N.Ino);
-            WriteU32(Image, 1);
+            WriteU32(Image, NextInodeVersion++);
             WriteU32(Image, ModeValue(N));
             WriteU16(Image, N.User & 0xFFFF);
             WriteU16(Image, N.Group & 0xFFFF);
-            WriteU32(Image, (uint)Payload.Length);
+            WriteU32(Image, Isize);
             uint NowValue = Now();
             WriteU32(Image, NowValue);
             WriteU32(Image, NowValue);
             WriteU32(Image, NowValue);
-            WriteU32(Image, 0);
-            WriteU32(Image, (uint)Payload.Length);
-            WriteU32(Image, (uint)Payload.Length);
-            Image.Add(0); // compression NONE
+            WriteU32(Image, (uint)Offset);
+            WriteU32(Image, (uint)Stored.Length);
+            WriteU32(Image, (uint)DataLength);
+            Image.Add(Compr);
             Image.Add(0);
             WriteU16(Image, 0);
             WriteU32(Image, 0); // data_crc
             WriteU32(Image, 0); // node_crc
-            Image.AddRange(Payload);
-            while ((Image.Count - Offset) < Length)
+            Image.AddRange(Stored);
+            while ((Image.Count - NodeOffset) < Length)
                 Image.Add(0);
 
             var Data = Image.ToArray();
-            uint HdrCrc = Crc(Data, Offset, 8);
-            WriteU32At(Image, Offset + 8, HdrCrc);
+            uint HdrCrc = Crc(Data, NodeOffset, 8);
+            WriteU32At(Image, NodeOffset + 8, HdrCrc);
             Data = Image.ToArray();
-            uint NodeCrc = Crc(Data, Offset, 60);
-            uint DataCrc = Crc(Data, Offset + 68, Payload.Length);
-            WriteU32At(Image, Offset + 60, DataCrc);
-            WriteU32At(Image, Offset + 64, NodeCrc);
+            uint NodeCrc = Crc(Data, NodeOffset, 60);
+            uint DataCrc = Crc(Data, NodeOffset + 68, Stored.Length);
+            WriteU32At(Image, NodeOffset + 60, DataCrc);
+            WriteU32At(Image, NodeOffset + 64, NodeCrc);
         }
+
+        private void Compress(byte[] Data, out byte[] Stored, out byte Compr)
+        {
+            Stored = Data;
+            Compr = 0;
+            if (Compression == Jffs2Compression.None || Data.Length < 128)
+                return;
+
+            if (Compression == Jffs2Compression.Priority)
+            {
+                TryCompression(Data, 6, ZlibCompress, out Stored, out Compr);
+                byte[] Best = Stored;
+                byte BestType = Compr;
+                TryCompression(Data, 2, RtimeCompress, out Stored, out Compr);
+                if (Stored.Length < Best.Length) { Best = Stored; BestType = Compr; }
+                TryCompression(Data, 7, LzoCompress, out Stored, out Compr);
+                if (Stored.Length < Best.Length) { Best = Stored; BestType = Compr; }
+                Stored = Best;
+                Compr = BestType;
+                if (Stored.Length >= Data.Length) { Stored = Data; Compr = 0; }
+                return;
+            }
+
+            if (Compression == Jffs2Compression.Zlib)
+                TryCompression(Data, 6, ZlibCompress, out Stored, out Compr);
+            else if (Compression == Jffs2Compression.Rtime)
+                TryCompression(Data, 2, RtimeCompress, out Stored, out Compr);
+            else if (Compression == Jffs2Compression.Lzo)
+                TryCompression(Data, 7, LzoCompress, out Stored, out Compr);
+        }
+
+        private static void TryCompression(byte[] Data, byte Type, Func<byte[], byte[]> Compressor,
+            out byte[] Stored, out byte Compr)
+        {
+            Stored = Data;
+            Compr = 0;
+            try
+            {
+                var Packed = Compressor(Data);
+                if ((Packed != null) && (Packed.Length < Data.Length))
+                {
+                    Stored = Packed;
+                    Compr = Type;
+                }
+            }
+            catch
+            {
+                // Compression is optional; fall back to an uncompressed node.
+            }
+        }
+
+        private static byte[] ZlibCompress(byte[] Data)
+        {
+            using (var Output = new MemoryStream())
+            {
+                Output.WriteByte(0x78);
+                Output.WriteByte(0x9C);
+                using (var Deflate = new DeflateStream(Output, CompressionLevel.Optimal, true))
+                    Deflate.Write(Data, 0, Data.Length);
+
+                uint Adler = Adler32(Data);
+                Output.WriteByte((byte)(Adler >> 24));
+                Output.WriteByte((byte)(Adler >> 16));
+                Output.WriteByte((byte)(Adler >> 8));
+                Output.WriteByte((byte)Adler);
+                return Output.ToArray();
+            }
+        }
+
+        private static uint Adler32(byte[] Data)
+        {
+            uint A = 1;
+            uint B = 0;
+            foreach (var V in Data)
+            {
+                A = (A + V) % 65521;
+                B = (B + A) % 65521;
+            }
+            return (B << 16) | A;
+        }
+
+        private static byte[] RtimeCompress(byte[] Data)
+        {
+            var Positions = new ushort[256];
+            var Output = new List<byte>(Data.Length);
+            int Pos = 0;
+            while (Pos < Data.Length)
+            {
+                byte Value = Data[Pos++];
+                Output.Add(Value);
+                int Back = Positions[Value];
+                Positions[Value] = (ushort)Pos;
+                int Run = 0;
+                while ((Back < Pos) && (Pos < Data.Length) && (Data[Pos] == Data[Back++]) && (Run < 255))
+                {
+                    Pos++;
+                    Run++;
+                }
+                Output.Add((byte)Run);
+            }
+            return Output.ToArray();
+        }
+
+        private static byte[] LzoCompress(byte[] Data) => NyaLZO.LZO1xCompressor.Compress(Data);
 
         private byte[] SpecialPayload(Node N)
         {

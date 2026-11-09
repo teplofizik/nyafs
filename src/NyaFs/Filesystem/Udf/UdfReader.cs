@@ -12,6 +12,7 @@ namespace NyaFs.Filesystem.Udf
         {
             public uint Length;
             public uint Position;
+            public ushort PartitionRef;
         }
 
         private sealed class Inode
@@ -27,6 +28,7 @@ namespace NyaFs.Filesystem.Udf
             public int AllocOffset;
             public int AllocLength;
             public int LengthExtendedAttr;
+            public ushort PartitionRef;
             public readonly List<Extent> Extents = new List<Extent>();
             public byte[] InlineData;
         }
@@ -40,9 +42,22 @@ namespace NyaFs.Filesystem.Udf
             public readonly List<Node> Children = new List<Node>();
         }
 
+        private sealed class PartitionMapInfo
+        {
+            public int Type;
+            public ushort PartitionNumber;
+            public bool Virtual;
+            public bool Sparable;
+        }
+
         private readonly byte[] Data;
         private readonly int BlockSize;
         private readonly uint PartitionStart;
+        private readonly Dictionary<ushort, PartitionMapInfo> PartitionMaps = new Dictionary<ushort, PartitionMapInfo>();
+        private readonly Dictionary<ushort, int> PartitionStarts = new Dictionary<ushort, int>();
+        private readonly Dictionary<uint, uint> VatMap = new Dictionary<uint, uint>();
+        private readonly Dictionary<uint, uint> SparingMap = new Dictionary<uint, uint>();
+        private uint SparingPacketLength = 32;
         private readonly Dictionary<string, Node> Nodes = new Dictionary<string, Node>(StringComparer.Ordinal);
         private readonly Node Root;
 
@@ -79,7 +94,11 @@ namespace NyaFs.Filesystem.Udf
                 if (Descriptor == 6)
                     LvdOffset = Offset;
                 else if (Descriptor == 5)
+                {
                     PdOffset = Offset;
+                    int PartitionNumber = (int)ReadU16(Data, Offset + 22);
+                    PartitionStarts[(ushort)PartitionNumber] = (int)ReadU32(Data, Offset + 188);
+                }
             }
 
             if ((LvdOffset < 0) || (PdOffset < 0))
@@ -90,18 +109,21 @@ namespace NyaFs.Filesystem.Udf
             if (LogicalBlockSize != 0)
                 BlockSize = (int)LogicalBlockSize;
 
-            long FsdLocation = ReadU32(Data, LvdOffset + 252);
-            int FsdOffset = (int)((PartitionStart + FsdLocation) * BlockSize);
+            ReadPartitionMaps(LvdOffset, PdOffset);
+            ushort FsdPartitionRef = (ushort)ReadU16(Data, LvdOffset + 256);
+            uint FsdLocation = ReadU32(Data, LvdOffset + 252);
+            int FsdOffset = ResolveBlock(FsdPartitionRef, FsdLocation);
             if (FsdOffset + 416 > Data.Length)
                 throw new InvalidOperationException("UDF: file set descriptor is out of image");
 
-            long RootLocation = ReadU32(Data, FsdOffset + 404);
-            int RootOffset = (int)((PartitionStart + RootLocation) * BlockSize);
+            ushort RootPartitionRef = (ushort)ReadU16(Data, FsdOffset + 408);
+            uint RootLocation = ReadU32(Data, FsdOffset + 404);
+            int RootOffset = ResolveBlock(RootPartitionRef, RootLocation);
             Root = new Node
             {
                 Name = "",
                 Path = "",
-                Inode = ReadInodeAt(RootOffset)
+                Inode = ReadInodeAt(RootOffset, RootPartitionRef)
             };
             Nodes[""] = Root;
             ReadDirectory(Root, new HashSet<long>());
@@ -173,6 +195,104 @@ namespace NyaFs.Filesystem.Udf
             return true;
         }
 
+        private void ReadPartitionMaps(int LvdOffset, int PdOffset)
+        {
+            int MapLength = (int)ReadU32(Data, LvdOffset + 264);
+            int MapCount = (int)ReadU32(Data, LvdOffset + 268);
+            int Offset = LvdOffset + 440;
+            int End = Offset + MapLength;
+
+            for (int Index = 0; (Index < MapCount) && (Offset + 2 <= End); Index++)
+            {
+                int Type = Data[Offset];
+                int Length = Data[Offset + 1];
+                if (Length < 2)
+                    break;
+
+                var Map = new PartitionMapInfo { Type = Type };
+                if (Type == 1)
+                {
+                    Map.PartitionNumber = (ushort)ReadU16(Data, Offset + 4);
+                }
+                else if (Type == 2)
+                {
+                    string Ident = ReadRegid(Data, Offset + 4);
+                    Map.PartitionNumber = (ushort)ReadU16(Data, Offset + 38);
+                    Map.Virtual = Ident.StartsWith("*UDF Virtual", StringComparison.Ordinal);
+                    Map.Sparable = Ident.StartsWith("*UDF Sparable", StringComparison.Ordinal);
+                    if (Map.Sparable)
+                    {
+                        SparingPacketLength = ReadU16(Data, Offset + 40);
+                        if ((SparingPacketLength == 0) || ((SparingPacketLength & (SparingPacketLength - 1)) != 0))
+                            SparingPacketLength = 32;
+                        ReadSparingTable(Offset);
+                    }
+                }
+
+                PartitionMaps[(ushort)Index] = Map;
+                Offset += Length;
+            }
+
+            if (!PartitionStarts.ContainsKey(0) && (PdOffset >= 0))
+                PartitionStarts[0] = (int)ReadU32(Data, PdOffset + 188);
+        }
+
+        private void ReadSparingTable(int MapOffset)
+        {
+            int Count = Data[MapOffset + 42];
+            int Size = (int)ReadU32(Data, MapOffset + 44);
+            if ((Count <= 0) || (Size < 56))
+                return;
+
+            for (int Table = 0; Table < Count && Table < 4; Table++)
+            {
+                uint Location = ReadU32(Data, MapOffset + 48 + Table * 4);
+                int Offset = (int)(Location * BlockSize) + 56;
+                int Entries = (int)ReadU16(Data, (int)(Location * BlockSize) + 48);
+                for (int Entry = 0; Entry < Entries; Entry++)
+                {
+                    if (Offset + 8 > Data.Length)
+                        break;
+
+                    uint Original = ReadU32(Data, Offset);
+                    uint Mapped = ReadU32(Data, Offset + 4);
+                    if ((Original != Mapped) && (Original != 0xFFFFFFFF))
+                        SparingMap[Original] = Mapped;
+                    Offset += 8;
+                }
+            }
+        }
+
+        private int ResolveBlock(ushort PartitionRef, uint Location)
+        {
+            uint Mapped = Location;
+            int Start = (int)PartitionStart;
+
+            if (PartitionMaps.TryGetValue(PartitionRef, out PartitionMapInfo Map))
+            {
+                if (Map.Virtual && VatMap.TryGetValue(Location, out uint Vat))
+                    Mapped = Vat;
+                else if (Map.Sparable)
+                {
+                    uint Packet = Location & ~(SparingPacketLength - 1);
+                    if (SparingMap.TryGetValue(Packet, out uint Sparing))
+                        return (int)((Sparing + (Location & (SparingPacketLength - 1))) * BlockSize);
+                }
+
+                if (PartitionStarts.TryGetValue(Map.PartitionNumber, out int StartByMap))
+                    Start = StartByMap;
+            }
+            else if (PartitionStarts.TryGetValue(PartitionRef, out int StartByRef))
+            {
+                Start = StartByRef;
+            }
+
+            if (SparingMap.TryGetValue(Mapped, out uint GlobalSparing))
+                Mapped = GlobalSparing;
+
+            return (int)((Start + Mapped) * BlockSize);
+        }
+
         private Node Find(string Path)
         {
             var Normalized = ExFatPath.Normalize(Path);
@@ -195,7 +315,8 @@ namespace NyaFs.Filesystem.Udf
 
                 int Characteristics = Bytes[Offset + 18];
                 int NameLength = Bytes[Offset + 19];
-                long IcbLocation = ReadU32(Bytes, Offset + 24);
+                ushort IcbPartitionRef = (ushort)ReadU16(Bytes, Offset + 28);
+                uint IcbLocation = ReadU32(Bytes, Offset + 24);
                 int ImpUseLength = (int)ReadU16(Bytes, Offset + 36);
                 int NameOffset = Offset + 38 + ImpUseLength;
 
@@ -206,13 +327,17 @@ namespace NyaFs.Filesystem.Udf
                 if (EntryLength <= 0)
                     break;
 
-                if ((NameLength > 0) && ((Characteristics & 0x08) == 0))
+                if (NameLength > 0)
                 {
                     string Name = DecodeName(Bytes, NameOffset, NameLength);
-                    if (!String.IsNullOrEmpty(Name))
+                    if (!String.IsNullOrEmpty(Name) && ((Characteristics & 0x08) != 0) && Name.Contains("Virtual"))
                     {
-                        int ChildOffset = (int)((PartitionStart + IcbLocation) * BlockSize);
-                        var ChildInode = ReadInodeAt(ChildOffset);
+                        ReadVat(ResolveBlock(IcbPartitionRef, IcbLocation), IcbPartitionRef);
+                    }
+                    else if (!String.IsNullOrEmpty(Name) && ((Characteristics & 0x08) == 0))
+                    {
+                        int ChildOffset = ResolveBlock(IcbPartitionRef, IcbLocation);
+                        var ChildInode = ReadInodeAt(ChildOffset, IcbPartitionRef);
                         var Child = new Node
                         {
                             Name = Name,
@@ -233,7 +358,26 @@ namespace NyaFs.Filesystem.Udf
             }
         }
 
-        private Inode ReadInodeAt(int Offset)
+        private void ReadVat(int Offset, ushort PartitionRef)
+        {
+            var Inode = ReadInodeAt(Offset, PartitionRef);
+            var Bytes = ReadData(Inode);
+            if (Bytes.Length < 152)
+                return;
+
+            int HeaderLength = (int)ReadU16(Bytes, 0);
+            if ((HeaderLength < 152) || (HeaderLength > Bytes.Length))
+                HeaderLength = 152;
+
+            for (int Entry = HeaderLength; Entry + 4 <= Bytes.Length; Entry += 4)
+            {
+                uint Value = ReadU32(Bytes, Entry);
+                if (Value != 0xFFFFFFFF)
+                    VatMap[(uint)((Entry - HeaderLength) / 4)] = Value;
+            }
+        }
+
+        private Inode ReadInodeAt(int Offset, ushort PartitionRef = 0)
         {
             if ((Offset < 0) || (Offset + 216 > Data.Length))
                 throw new InvalidOperationException("UDF: inode is out of image");
@@ -250,7 +394,8 @@ namespace NyaFs.Filesystem.Udf
                 Flags = (int)ReadU16(Data, Icb + 18),
                 User = ReadU32(Data, Offset + 36),
                 Group = ReadU32(Data, Offset + 40),
-                Permissions = ReadU32(Data, Offset + 44)
+                Permissions = ReadU32(Data, Offset + 44),
+                PartitionRef = PartitionRef
             };
 
             if (Tag == 266)
@@ -295,14 +440,32 @@ namespace NyaFs.Filesystem.Udf
             for (int Offset = Inode.AllocOffset; Offset + EntrySize <= Inode.AllocOffset + Inode.AllocLength; Offset += EntrySize)
             {
                 uint Length = ReadU32(Data, Offset) & 0x3FFFFFFF;
-                uint Position = ReadU32(Data, Offset + (Type == 2 ? 8 : 4));
+                uint Position;
+                ushort PartitionRef;
+                if (Type == 0)
+                {
+                    Position = ReadU32(Data, Offset + 4);
+                    PartitionRef = Inode.PartitionRef;
+                }
+                else if (Type == 1)
+                {
+                    Position = ReadU32(Data, Offset + 4);
+                    PartitionRef = (ushort)ReadU16(Data, Offset + 8);
+                }
+                else
+                {
+                    Position = ReadU32(Data, Offset + 12);
+                    PartitionRef = (ushort)ReadU16(Data, Offset + 16);
+                }
+
                 if (Length == 0)
                     continue;
 
                 Inode.Extents.Add(new Extent
                 {
                     Length = Length,
-                    Position = Position
+                    Position = Position,
+                    PartitionRef = PartitionRef
                 });
             }
         }
@@ -320,7 +483,7 @@ namespace NyaFs.Filesystem.Udf
 
             foreach (var Extent in Inode.Extents)
             {
-                long Source = (long)(PartitionStart + Extent.Position) * BlockSize;
+                long Source = ResolveBlock(Extent.PartitionRef, Extent.Position);
                 int Length = (int)Math.Min(Extent.Length, (uint)(Result.Length - Output));
                 if ((Source < 0) || (Source >= Data.Length) || (Length <= 0))
                     break;
@@ -354,6 +517,12 @@ namespace NyaFs.Filesystem.Udf
             {
                 return new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             }
+        }
+
+        private static string ReadRegid(byte[] Data, int Offset)
+        {
+            int Length = Math.Min((int)Data[Offset], 23);
+            return Encoding.ASCII.GetString(Data, Offset + 1, Math.Max(0, Length));
         }
 
         private static string DecodeName(byte[] Data, int Offset, int Length)

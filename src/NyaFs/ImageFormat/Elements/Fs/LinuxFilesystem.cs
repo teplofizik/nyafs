@@ -27,6 +27,12 @@ namespace NyaFs.ImageFormat.Elements.Fs
         public int EroFsCompressionLevel = 10;
         public readonly List<string> EroFsXattrPrefixes = new List<string>();
 
+        /// <summary>Write UDF with a virtual allocation table (VAT).</summary>
+        public bool UdfVat = false;
+
+        /// <summary>Write UDF with a sparable partition map.</summary>
+        public bool UdfSparable = false;
+
         /// <summary>
         /// Compression for regular file data nodes when writing a UBIFS image.
         /// </summary>

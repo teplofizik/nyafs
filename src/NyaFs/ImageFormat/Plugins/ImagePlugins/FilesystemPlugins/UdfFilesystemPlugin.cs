@@ -16,7 +16,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             new Elements.Fs.Reader.BaseFsReader(Types.FsType.Udf, new Filesystem.Udf.UdfReader(Data));
 
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) =>
-            new Elements.Fs.Writer.UdfWriter();
+            new Elements.Fs.Writer.UdfWriter(Fs);
 
         public override bool CheckFilesystem(LinuxFilesystem Fs) => true;
     }

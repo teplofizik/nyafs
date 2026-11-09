@@ -17,7 +17,7 @@ namespace NyaFs.Processor.Scripting.Commands
         {
             public SetScriptArgsConfig() : base(0, new ScriptArgsParam[] {
                     new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all" }),
-                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix" }),
+                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable" }),
                     new Params.StringScriptArgsParam("value")
                 })
             {
@@ -42,10 +42,10 @@ namespace NyaFs.Processor.Scripting.Commands
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix" };
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable" };
                     if (!AllowedParams.Contains(Args[1]))
                     {
-                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, cramfs.endian, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size");
+                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, cramfs.endian, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size, udf.vat, udf.sparable");
                         return false;
                     }
                 }
@@ -179,6 +179,37 @@ namespace NyaFs.Processor.Scripting.Commands
                             }
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
+                        }
+                    case "udf.vat":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set UDF VAT to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.UdfVat = Enabled;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set UDF VAT: {Enabled}!");
+                        }
+                    case "udf.sparable":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set UDF sparable to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.UdfSparable = Enabled;
+                            if (Enabled) Fs.UdfVat = false;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set UDF sparable: {Enabled}!");
                         }
                     case "erofs.fragments":
                         {

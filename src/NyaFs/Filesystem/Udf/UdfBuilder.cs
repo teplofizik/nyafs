@@ -26,13 +26,19 @@ namespace NyaFs.Filesystem.Udf
             public int IcbBlock;
             public int DataBlock;
             public byte[] Data;
+            public bool Vat;
         }
 
         private readonly List<Node> Nodes = new List<Node>();
         private readonly Node Root;
+        private readonly bool Vat;
+        private readonly bool Sparable;
+        private readonly Node VatNode;
 
-        public UdfBuilder()
+        public UdfBuilder(bool Vat = false, bool Sparable = false)
         {
+            this.Vat = Vat;
+            this.Sparable = Sparable;
             Root = new Node
             {
                 Path = "/",
@@ -41,6 +47,21 @@ namespace NyaFs.Filesystem.Udf
                 Mode = 0x1ED
             };
             Nodes.Add(Root);
+
+            if (Vat)
+            {
+                VatNode = new Node
+                {
+                    Path = "/*UDF Virtual Allocation Table",
+                    Name = "*UDF Virtual Allocation Table",
+                    Type = FilesystemItemType.File,
+                    Mode = 0x1A4,
+                    Vat = true,
+                    Parent = Root
+                };
+                Root.Children.Add(VatNode);
+                Nodes.Add(VatNode);
+            }
         }
 
         public void Directory(string Path, uint User, uint Group, uint Mode) =>
@@ -112,6 +133,9 @@ namespace NyaFs.Filesystem.Udf
 
         public byte[] GetFilesystemImage()
         {
+            if (Vat)
+                return GetVatImage();
+
             int NextIcb = PartitionStart + 2;
             foreach (var N in Nodes)
             {
@@ -165,7 +189,131 @@ namespace NyaFs.Filesystem.Udf
             WriteAnchor(Image, Total - 1, 96, Reserve);
 
             WriteSpaceBitmap(Image, PartitionStart, PartitionLength, NextData - PartitionStart);
-            WriteFsd(Image, PartitionStart + 1);
+            WriteFsd(Image, PartitionStart + 1, Vat);
+
+            foreach (var N in Nodes)
+            {
+                WriteFe(Image, N);
+                if (N.Data.Length > 0)
+                    Array.Copy(N.Data, 0, Image, (long)N.DataBlock * BlockSize, N.Data.Length);
+            }
+
+            if (Sparable)
+                WriteSparableLayout(Image);
+
+            return Image;
+        }
+
+        private void WriteSparableLayout(byte[] Image)
+        {
+            int Lvd = 97 * BlockSize;
+            int Map = Lvd + 440;
+            int Sparable = Map + 6;
+            WriteU32(Image, Lvd + 264, 70);
+            WriteU32(Image, Lvd + 268, 2);
+
+            Image[Map] = 1;
+            Image[Map + 1] = 6;
+            WriteU16(Image, Map + 2, 1);
+            WriteU16(Image, Map + 4, 0);
+
+            Image[Sparable] = 2;
+            Image[Sparable + 1] = 64;
+            WriteRegid(Image, Sparable + 4, "*UDF Sparable Partition");
+            WriteU16(Image, Sparable + 28, 0x0201);
+            WriteU16(Image, Sparable + 36, 1);
+            WriteU16(Image, Sparable + 38, 0);
+            WriteU16(Image, Sparable + 40, 32);
+            Image[Sparable + 42] = 1;
+            WriteU32(Image, Sparable + 44, 56);
+            WriteU32(Image, Sparable + 48, 160);
+
+            int Table = 160 * BlockSize;
+            WriteTag(Image, Table, 0, 56, 160);
+            WriteRegid(Image, Table + 16, "*UDF Sparing Table");
+            WriteU16(Image, Table + 44, 0x0201);
+            WriteU16(Image, Table + 48, 0);
+            WriteU32(Image, Table + 52, 0);
+            WriteTag(Image, Table, 0, 56, 160);
+
+            WriteTag(Image, Lvd, 6, 510, 97);
+        }
+
+        private byte[] GetVatImage()
+        {
+            int NextIcb = PartitionStart + 1;
+            foreach (var N in Nodes)
+            {
+                N.IcbBlock = NextIcb++;
+                N.Data = BuildData(N);
+            }
+
+            int NextData = NextIcb;
+            foreach (var N in Nodes)
+            {
+                if (N.Data.Length == 0)
+                    continue;
+                N.DataBlock = NextData;
+                NextData += (N.Data.Length + BlockSize - 1) / BlockSize;
+            }
+
+            VatNode.DataBlock = NextData;
+            VatNode.Data = new byte[152];
+            NextData += 1;
+
+            foreach (var N in Nodes)
+            {
+                if (N.Type == FilesystemItemType.Directory)
+                    N.Data = BuildDirectoryData(N);
+            }
+
+            NextData = NextIcb;
+            foreach (var N in Nodes)
+            {
+                if (N.Data.Length == 0 || N == VatNode)
+                    continue;
+                N.DataBlock = NextData;
+                NextData += (N.Data.Length + BlockSize - 1) / BlockSize;
+            }
+
+            int Total = Math.Max(2048, NextData + 64);
+            int FeBlock = Total - 1;
+            int VatBlocks = 1;
+            int VatEntries;
+            int VatLength;
+            int VatData;
+            while (true)
+            {
+                VatEntries = FeBlock - PartitionStart;
+                VatLength = 152 + VatEntries * 4;
+                VatBlocks = (VatLength + BlockSize - 1) / BlockSize;
+                VatData = FeBlock - VatBlocks;
+                if (VatData >= NextData)
+                    break;
+                Total += (NextData - VatData) + 1;
+                FeBlock = Total - 1;
+            }
+
+            VatNode.Data = BuildVatTable(VatEntries);
+            VatNode.DataBlock = VatData;
+            VatNode.IcbBlock = FeBlock;
+
+            foreach (var N in Nodes)
+            {
+                if (N.Type == FilesystemItemType.Directory)
+                    N.Data = BuildDirectoryData(N);
+            }
+
+            int Reserve = Total - 160;
+            int PartitionLength = FeBlock - PartitionStart + 1;
+
+            var Image = new byte[Total * BlockSize];
+            WriteVrs(Image, 0);
+            WriteVolumeDescriptors(Image, 96, Reserve, PartitionLength);
+            WriteLvid(Image, 128, true);
+            WriteAnchor(Image, 256, 96, Reserve);
+
+            WriteFsd(Image, PartitionStart, true);
 
             foreach (var N in Nodes)
             {
@@ -175,6 +323,25 @@ namespace NyaFs.Filesystem.Udf
             }
 
             return Image;
+        }
+
+        private byte[] BuildVatTable(int Entries)
+        {
+            var Data = new byte[152 + Entries * 4];
+            WriteU16(Data, 0, 152);
+            WriteU16(Data, 2, 0);
+            WriteDstring(Data, 4, 128, "NyaFS");
+            WriteU32(Data, 132, 0xFFFFFFFF);
+            WriteU32(Data, 136, (uint)Nodes.Count);
+            WriteU32(Data, 140, 1);
+            WriteU16(Data, 144, 0x0201);
+            WriteU16(Data, 146, 0x0201);
+            WriteU16(Data, 148, 0x0201);
+
+            for (int i = 0; i < Entries; i++)
+                WriteU32(Data, 152 + i * 4, (uint)i);
+
+            return Data;
         }
 
         private byte[] BuildData(Node Node)
@@ -213,7 +380,7 @@ namespace NyaFs.Filesystem.Udf
             var Children = new List<Node>(Dir.Children);
             Children.Sort((A, B) => StringComparer.Ordinal.Compare(A.Name, B.Name));
             foreach (var Child in Children)
-                AddFid(Result, Child.Name, Child, IsDirectory(Child) ? (byte)0x02 : (byte)0x00);
+                AddFid(Result, Child.Name, Child, Child.Vat ? (byte)0x08 : (IsDirectory(Child) ? (byte)0x02 : (byte)0x00));
 
             return Result.ToArray();
         }
@@ -229,7 +396,7 @@ namespace NyaFs.Filesystem.Udf
             WriteU16(Entry, 16, 1);
             Entry[18] = Characteristics;
             Entry[19] = (byte)NameLength;
-            WriteLongAd(Entry, 20, 2048, Child.IcbBlock - PartitionStart, 0);
+            WriteLongAd(Entry, 20, 2048, Child.IcbBlock - PartitionStart, Vat ? 1 : 0);
             WriteU16(Entry, 36, 0);
 
             if (NameLength > 0)
@@ -272,11 +439,11 @@ namespace NyaFs.Filesystem.Udf
             Image[Offset + 6] = 1;
         }
 
-        private void WriteVolumeDescriptors(byte[] Image, int Start, int Reserve)
+        private void WriteVolumeDescriptors(byte[] Image, int Start, int Reserve, int PartitionLength = 0)
         {
             WritePvd(Image, Start);
             WriteLvd(Image, Start + 1);
-            WritePd(Image, Start + 2, Reserve - PartitionStart);
+            WritePd(Image, Start + 2, PartitionLength > 0 ? PartitionLength : Reserve - PartitionStart);
             WriteUsd(Image, Start + 3);
             WriteIuvd(Image, Start + 4);
             WriteTd(Image, Start + 5);
@@ -306,14 +473,15 @@ namespace NyaFs.Filesystem.Udf
         private void WriteLvd(byte[] Image, int Block)
         {
             int B = Block * BlockSize;
-            WriteTag(Image, B, 6, 446, Block);
+            int MapLength = Vat ? 70 : 6;
+            WriteTag(Image, B, 6, 440 + MapLength, Block);
             WriteU32(Image, B + 16, 0);
             WriteDstring(Image, B + 84, 128, "NyaFS");
             WriteU32(Image, B + 212, BlockSize);
             WriteRegid(Image, B + 216, "*OSTA UDF Compliant");
-            WriteLongAd(Image, B + 248, 2048, 1, 0);
-            WriteU32(Image, B + 264, 6);
-            WriteU32(Image, B + 268, 1);
+            WriteLongAd(Image, B + 248, 2048, Vat ? 0 : 1, Vat ? 1 : 0);
+            WriteU32(Image, B + 264, (uint)(Vat ? 70 : 6));
+            WriteU32(Image, B + 268, (uint)(Vat ? 2 : 1));
             WriteRegid(Image, B + 272, "*NyaFS");
             WriteU32(Image, B + 432, 2048);
             WriteU32(Image, B + 436, 128);
@@ -323,7 +491,18 @@ namespace NyaFs.Filesystem.Udf
             Image[Map + 1] = 6;
             WriteU16(Image, Map + 2, 1);
             WriteU16(Image, Map + 4, 0);
-            WriteTag(Image, B, 6, 446, Block);
+
+            if (Vat)
+            {
+                int Virtual = Map + 6;
+                Image[Virtual] = 2;
+                Image[Virtual + 1] = 64;
+                WriteRegid(Image, Virtual + 4, "*UDF Virtual Partition");
+                WriteU16(Image, Virtual + 28, 0x0201);
+                WriteU16(Image, Virtual + 36, 1);
+                WriteU16(Image, Virtual + 38, 0);
+            }
+            WriteTag(Image, B, 6, 440 + MapLength, Block);
         }
 
         private void WritePd(byte[] Image, int Block, int PartitionLength)
@@ -364,11 +543,11 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, Block * BlockSize, 8, 16, Block);
         }
 
-        private void WriteLvid(byte[] Image, int Block)
+        private void WriteLvid(byte[] Image, int Block, bool Vat = false)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 9, 80, Block);
-            WriteU32(Image, B + 16, 1);
+            WriteU32(Image, B + 16, Vat ? 0u : 1u);
             WriteU32(Image, B + 24, 0);
             WriteU32(Image, B + 48, 0);
             WriteTag(Image, B, 9, 80, Block);
@@ -385,7 +564,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 2, 512, Block);
         }
 
-        private void WriteFsd(byte[] Image, int Block)
+        private void WriteFsd(byte[] Image, int Block, bool Vat)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 256, 512, Block - PartitionStart);
@@ -398,13 +577,19 @@ namespace NyaFs.Filesystem.Udf
             WriteU32(Image, B + 44, 0);
             WriteDstring(Image, B + 112, 128, "NyaFS");
             WriteDstring(Image, B + 304, 32, "NyaFS");
-            WriteLongAd(Image, B + 400, 2048, Root.IcbBlock - PartitionStart, 0);
+            WriteLongAd(Image, B + 400, 2048, Root.IcbBlock - PartitionStart, Vat ? 1 : 0);
             WriteRegid(Image, B + 416, "*OSTA UDF Compliant");
             WriteTag(Image, B, 256, 512, Block - PartitionStart);
         }
 
         private void WriteFe(byte[] Image, Node Node)
         {
+            if (Node.Vat)
+            {
+                WriteVatFe(Image, Node);
+                return;
+            }
+
             int B = Node.IcbBlock * BlockSize;
             int Alloc = 176;
             int Length = Alloc + 8;
@@ -416,7 +601,7 @@ namespace NyaFs.Filesystem.Udf
             WriteU16(Image, Icb + 6, 0);
             WriteU16(Image, Icb + 8, 1);
             Image[Icb + 10] = 0;
-            Image[Icb + 11] = (byte)FileType(Node.Type);
+            Image[Icb + 11] = (byte)(Node.Vat ? 248 : FileType(Node.Type));
             WriteU32(Image, Icb + 12, 0);
             WriteU16(Image, Icb + 16, 0);
             WriteU16(Image, Icb + 18, 0);
@@ -434,7 +619,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTimestamp(Image, B + 84);
             WriteTimestamp(Image, B + 96);
             WriteU32(Image, B + 108, 1);
-            WriteLongAd(Image, B + 112, 0, 0, 0);
+            WriteLongAd(Image, B + 112, 0, 0, Vat ? 1 : 0);
             WriteRegid(Image, B + 128, "*NyaFS");
             WriteU64(Image, B + 160, (ulong)(Node.IcbBlock - PartitionStart));
             WriteU32(Image, B + 168, 0);
@@ -446,6 +631,57 @@ namespace NyaFs.Filesystem.Udf
                 WriteU32(Image, B + Alloc + 4, (uint)(Node.DataBlock - PartitionStart));
             }
             WriteTag(Image, B, 261, Length, Node.IcbBlock - PartitionStart);
+        }
+
+        private void WriteVatFe(byte[] Image, Node Node)
+        {
+            int B = Node.IcbBlock * BlockSize;
+            int Alloc = 216;
+            int Length = Alloc + 8;
+            WriteTag(Image, B, 266, Length, Node.IcbBlock - PartitionStart);
+
+            int Icb = B + 16;
+            WriteU32(Image, Icb + 0, 0);
+            WriteU16(Image, Icb + 4, 4);
+            WriteU16(Image, Icb + 6, 0);
+            WriteU16(Image, Icb + 8, 1);
+            Image[Icb + 10] = 0;
+            Image[Icb + 11] = 248;
+            WriteU32(Image, Icb + 12, 0);
+            WriteU16(Image, Icb + 16, 0);
+            WriteU16(Image, Icb + 18, 0);
+
+            WriteU32(Image, B + 36, Node.User);
+            WriteU32(Image, B + 40, Node.Group);
+            WriteU32(Image, B + 44, Permissions(Node.Mode));
+            WriteU16(Image, B + 48, 1);
+            Image[B + 50] = 0;
+            Image[B + 51] = 0;
+            WriteU32(Image, B + 52, 0);
+            WriteU64(Image, B + 56, (ulong)Node.Data.Length);
+            WriteU64(Image, B + 64, (ulong)Node.Data.Length);
+            WriteU64(Image, B + 72, (ulong)Node.Data.Length);
+            WriteTimestamp(Image, B + 80);
+            WriteTimestamp(Image, B + 92);
+            WriteTimestamp(Image, B + 104);
+            WriteTimestamp(Image, B + 116);
+            WriteU32(Image, B + 132, 1);
+            WriteLongAd(Image, B + 136, 0, 0, 0);
+            WriteRegid(Image, B + 152, "*NyaFS");
+            WriteU64(Image, B + 184, (ulong)(Node.IcbBlock - PartitionStart));
+            WriteU32(Image, B + 168, 0);
+            WriteU32(Image, B + 172, 8);
+            WriteU32(Image, B + 208, 0);
+            WriteU32(Image, B + 212, 8);
+
+            if (Node.Data.Length > 0)
+            {
+                WriteU32(Image, B + Alloc, (uint)Node.Data.Length);
+                WriteU32(Image, B + Alloc + 4, (uint)(Node.DataBlock - PartitionStart));
+                WriteU32(Image, B + 176, (uint)Node.Data.Length);
+                WriteU32(Image, B + 180, (uint)(Node.DataBlock - PartitionStart));
+            }
+            WriteTag(Image, B, 266, Length, Node.IcbBlock - PartitionStart);
         }
 
         private void WriteTag(byte[] Image, int Offset, int Id, int Length, int Location)

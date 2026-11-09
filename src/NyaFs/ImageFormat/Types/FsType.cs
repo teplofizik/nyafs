@@ -24,6 +24,7 @@ namespace NyaFs.ImageFormat.Types
         ExFat,
         EroFs,
         Udf,
-        Yaffs2
+        Yaffs2,
+        Jffs2
     }
 }

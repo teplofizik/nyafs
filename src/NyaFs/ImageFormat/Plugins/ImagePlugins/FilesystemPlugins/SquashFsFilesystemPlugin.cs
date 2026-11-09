@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
@@ -7,6 +7,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class SquashFsFilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.SquashFs;
+
         public SquashFsFilesystemPlugin() : base("fs.squashfs", "squashfs", true, true, true)
         {
 

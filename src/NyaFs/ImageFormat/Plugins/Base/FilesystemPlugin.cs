@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -28,6 +28,12 @@ namespace NyaFs.ImageFormat.Plugins.Base
         public ImageKind Kind => ImageKind.Filesystem;
 
         public string Format => FilesystemName;
+
+        /// <summary>
+        /// Filesystem type exposed to plugin-based content detection.
+        /// Plugins that do not map to <see cref="ImageFormat.Types.FsType"/> keep Unknown.
+        /// </summary>
+        public virtual ImageFormat.Types.FsType FsType => ImageFormat.Types.FsType.Unknown;
 
         /// <summary>
         /// Is filesystem need compression in target image

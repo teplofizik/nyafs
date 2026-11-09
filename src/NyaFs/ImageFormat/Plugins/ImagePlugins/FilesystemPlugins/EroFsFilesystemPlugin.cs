@@ -7,6 +7,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class EroFsFilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.EroFs;
+
         public EroFsFilesystemPlugin() : base("fs.erofs", "erofs", true, true, true)
         {
         }

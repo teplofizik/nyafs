@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
@@ -7,6 +7,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class Ext2FilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.Ext2;
+
         public Ext2FilesystemPlugin() : base("fs.ext2", "ext2", true, true, false)
         {
 

@@ -7,6 +7,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class FatFilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.Fat;
+
         public FatFilesystemPlugin() : base("fs.fat", "fat", true, true, false)
         {
 

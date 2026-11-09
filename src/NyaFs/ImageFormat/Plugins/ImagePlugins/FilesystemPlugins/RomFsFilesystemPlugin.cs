@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaFs.ImageFormat.Elements.Fs;
@@ -8,6 +8,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class RomFsFilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.RomFs;
+
         public RomFsFilesystemPlugin() : base("fs.romfs", "romfs", true, true, true)
         {
 

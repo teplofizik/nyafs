@@ -1,4 +1,4 @@
-﻿using NyaFs.ImageFormat.Elements.Fs;
+using NyaFs.ImageFormat.Elements.Fs;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -7,6 +7,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class ExFatFilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.ExFat;
+
         public ExFatFilesystemPlugin() : base("fs.exfat", "exfat", true, true, true)
         {
         }

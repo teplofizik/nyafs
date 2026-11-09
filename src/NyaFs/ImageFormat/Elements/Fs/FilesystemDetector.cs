@@ -1,78 +1,76 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Text;
-using NyaIO.Data;
+using NyaFs.ImageFormat.Plugins;
+using NyaFs.ImageFormat.Plugins.Base;
 
 namespace NyaFs.ImageFormat.Elements.Fs
 {
+    /// <summary>
+    /// Compatibility entry point for filesystem detection.
+    /// Detection itself lives in <see cref="FilesystemPlugin.DetectFilesystem"/>:
+    /// this class only asks the registered plugins in priority/registration order.
+    /// </summary>
     public static class FilesystemDetector
     {
-        const uint COMPAT_HAS_JOURNAL = 0x4;
-        const uint EXT4_INCOMPAT = 0x1F7C0;
-        const uint EXT4_RO_COMPAT = 0x2778;
+        /// <summary>
+        /// Detect a filesystem using the built-in plugin registry.
+        /// </summary>
+        public static Types.FsType DetectFs(byte[] Raw) =>
+            DetectFs(new ImageData(Raw), BuiltinPlugins.Filesystems);
 
-        private static bool IsExt(byte[] Raw) =>
-            (Raw.Length >= 0x43A) && (Raw.ReadUInt16(0x438) == 0xEF53);
+        /// <summary>
+        /// Detect a filesystem using an explicit plugin list (for external/custom plugins).
+        /// </summary>
+        public static Types.FsType DetectFs(byte[] Raw, IEnumerable<FilesystemPlugin> Plugins) =>
+            DetectFs(new ImageData(Raw), Plugins);
 
-        private static bool HasJournal(byte[] Raw) =>
-            IsExt(Raw) && ((Raw.ReadUInt32(0x45C) & COMPAT_HAS_JOURNAL) != 0);
-
-        private static bool HasExt4Features(byte[] Raw) =>
-            IsExt(Raw) &&
-            (((Raw.ReadUInt32(0x460) & EXT4_INCOMPAT) != 0) || ((Raw.ReadUInt32(0x464) & EXT4_RO_COMPAT) != 0));
-
-        public static Types.FsType DetectFs(byte[] Raw)
+        /// <summary>
+        /// Detect a filesystem in an image range using an explicit plugin list.
+        /// </summary>
+        public static Types.FsType DetectFs(ImageData Data, IEnumerable<FilesystemPlugin> Plugins)
         {
-            var Magic = Raw.ReadUInt32BE(0);
-            if (Magic == 0x30373037u) // CPIO start of block
-                return Types.FsType.Cpio;
+            var Plugin = DetectFilesystemPlugin(Data, Plugins);
+            return Plugin?.FsType ?? Types.FsType.Unknown;
+        }
 
-            if ((Raw.Length >= 1028) && (Raw.ReadUInt32(1024) == 0xE0F5E1E2u))
-                return Types.FsType.EroFs;
+        /// <summary>
+        /// Find the first plugin that recognizes the data. Higher-priority plugins are probed first.
+        /// </summary>
+        public static FilesystemPlugin DetectFilesystemPlugin(byte[] Raw) =>
+            DetectFilesystemPlugin(new ImageData(Raw), BuiltinPlugins.Filesystems);
 
-            if (Filesystem.ExFat.ExFatShared.IsExFat(Raw))
-                return Types.FsType.ExFat;
+        /// <summary>
+        /// Find the first plugin that recognizes the data using an explicit list.
+        /// </summary>
+        public static FilesystemPlugin DetectFilesystemPlugin(byte[] Raw, IEnumerable<FilesystemPlugin> Plugins) =>
+            DetectFilesystemPlugin(new ImageData(Raw), Plugins);
 
-            if ((Raw.Length >= 0x8006) &&
-                (Raw[0x8001] == (byte)'C') && (Raw[0x8002] == (byte)'D') &&
-                (Raw[0x8003] == (byte)'0') && (Raw[0x8004] == (byte)'0') &&
-                (Raw[0x8005] == (byte)'1'))
-                return Types.FsType.Iso9660;
+        /// <summary>
+        /// Find the first plugin that recognizes the image range.
+        /// </summary>
+        public static FilesystemPlugin DetectFilesystemPlugin(ImageData Data, IEnumerable<FilesystemPlugin> Plugins)
+        {
+            if ((Data == null) || (Plugins == null))
+                return null;
 
-            if (Magic == 0x68737173) // hsqs magic
-                return Types.FsType.SquashFs;
+            // Keep registration order for equal priorities; stable sort by descending priority.
+            var Ordered = new List<FilesystemPlugin>(Plugins);
+            Ordered.Sort((A, B) => B.Priority.CompareTo(A.Priority));
 
-            if ((Magic == 0x453dcd28u) || (Magic == 0x28cd3d45u)) // cramfs magic (LE/BE)
-                return Types.FsType.CramFs;
-
-            if (Magic == 0x2d726f6du) // romfs magic
-                return Types.FsType.RomFs;
-
-            if (IsExt(Raw))
+            foreach (var Plugin in Ordered)
             {
-                if (HasExt4Features(Raw))
-                    return Types.FsType.Ext4;
-                if (HasJournal(Raw))
-                    return Types.FsType.Ext3;
-                return Types.FsType.Ext2;
+                try
+                {
+                    if (Plugin.DetectFilesystem(Data))
+                        return Plugin;
+                }
+                catch
+                {
+                    // A malformed image must not make auto-detection throw; try the next plugin.
+                }
             }
 
-            // tar: ustar magic at offset 257
-            if ((Raw.Length >= 263) &&
-                (Raw[257] == (byte)'u') && (Raw[258] == (byte)'s') && (Raw[259] == (byte)'t') &&
-                (Raw[260] == (byte)'a') && (Raw[261] == (byte)'r'))
-                return Types.FsType.Tar;
-
-            if (Filesystem.Fat.FatDetector.IsFat(Raw))
-                return Types.FsType.Fat;
-
-            if (Filesystem.F2fs.F2fsDetector.IsF2fs(Raw))
-                return Types.FsType.F2fs;
-
-            if (Filesystem.Udf.UdfReader.IsUdfImage(Raw))
-                return Types.FsType.Udf;
-
-            return Types.FsType.Unknown;
+            return null;
         }
 
         public static string GetFilesystemType(Types.FsType Type)
@@ -97,5 +95,4 @@ namespace NyaFs.ImageFormat.Elements.Fs
             }
         }
     }
-
 }

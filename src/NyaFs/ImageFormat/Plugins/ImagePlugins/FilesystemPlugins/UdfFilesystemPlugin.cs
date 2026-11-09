@@ -5,6 +5,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class UdfFilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.Udf;
+
         public UdfFilesystemPlugin() : base("fs.udf", "udf", true, true, true)
         {
         }

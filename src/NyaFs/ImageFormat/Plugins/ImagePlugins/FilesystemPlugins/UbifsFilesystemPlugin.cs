@@ -7,6 +7,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class UbifsFilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.UbiFs;
+
         const uint UBI_EC_MAGIC = 0x55424923;      // "UBI#"
         const uint UBIFS_NODE_MAGIC = 0x06101831;
         const byte UBIFS_SB_NODE = 6;

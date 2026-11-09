@@ -8,6 +8,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class CramFsFilesystemPlugin : Base.FilesystemPlugin
     {
+        public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.CramFs;
+
         public CramFsFilesystemPlugin() : base("fs.cramfs", "cramfs", true, true, true)
         {
 

@@ -69,6 +69,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
             if (Filesystem.F2fs.F2fsDetector.IsF2fs(Raw))
                 return Types.FsType.F2fs;
 
+            if (Filesystem.Udf.UdfReader.IsUdfImage(Raw))
+                return Types.FsType.Udf;
+
             return Types.FsType.Unknown;
         }
 
@@ -89,6 +92,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                 case Types.FsType.Iso9660: return "ISO9660";
                 case Types.FsType.ExFat: return "exFAT";
                 case Types.FsType.EroFs: return "EROFS";
+                case Types.FsType.Udf: return "UDF";
                 default: return "Unknown";
             }
         }

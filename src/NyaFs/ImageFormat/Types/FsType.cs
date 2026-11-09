@@ -22,6 +22,7 @@ namespace NyaFs.ImageFormat.Types
         F2fs,
         Iso9660,
         ExFat,
-        EroFs
+        EroFs,
+        Udf
     }
 }

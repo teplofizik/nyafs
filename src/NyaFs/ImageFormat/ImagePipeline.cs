@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using NyaFs.ImageFormat.Plugins;
 using NyaFs.ImageFormat.Types;
 
 namespace NyaFs.ImageFormat
@@ -16,12 +17,17 @@ namespace NyaFs.ImageFormat
     /// </summary>
     public class ImagePipeline
     {
-        private readonly Processor.Scripting.ScriptPlugins Plugins;
+        private readonly PluginRegistry Plugins;
         private readonly BaseImageBlob Blob;
 
         private const int MaxDepth = 32;
 
         public ImagePipeline(Processor.Scripting.ScriptPlugins Plugins, BaseImageBlob Blob)
+            : this((PluginRegistry)Plugins, Blob)
+        {
+        }
+
+        public ImagePipeline(PluginRegistry Plugins, BaseImageBlob Blob)
         {
             this.Plugins = Plugins;
             this.Blob = Blob;

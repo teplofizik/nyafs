@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using NyaFs.ImageFormat.Plugins;
 using NyaFs.ImageFormat.Plugins.Base;
 
@@ -16,7 +17,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// Detect a filesystem using the built-in plugin registry.
         /// </summary>
         public static Types.FsType DetectFs(byte[] Raw) =>
-            DetectFs(new ImageData(Raw), BuiltinPlugins.Filesystems);
+            DetectFs(new ImageData(Raw), CurrentPlugins());
 
         /// <summary>
         /// Detect a filesystem using an explicit plugin list (for external/custom plugins).
@@ -37,7 +38,8 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// Find the first plugin that recognizes the data. Higher-priority plugins are probed first.
         /// </summary>
         public static FilesystemPlugin DetectFilesystemPlugin(byte[] Raw) =>
-            DetectFilesystemPlugin(new ImageData(Raw), BuiltinPlugins.Filesystems);
+            DetectFilesystemPlugin(new ImageData(Raw), CurrentPlugins());
+
 
         /// <summary>
         /// Find the first plugin that recognizes the data using an explicit list.
@@ -53,11 +55,8 @@ namespace NyaFs.ImageFormat.Elements.Fs
             if ((Data == null) || (Plugins == null))
                 return null;
 
-            // Keep registration order for equal priorities; stable sort by descending priority.
-            var Ordered = new List<FilesystemPlugin>(Plugins);
-            Ordered.Sort((A, B) => B.Priority.CompareTo(A.Priority));
-
-            foreach (var Plugin in Ordered)
+            // Keep registration order for equal priorities; OrderByDescending is stable.
+            foreach (var Plugin in Plugins.OrderByDescending(P => P.Priority))
             {
                 try
                 {
@@ -71,6 +70,12 @@ namespace NyaFs.ImageFormat.Elements.Fs
             }
 
             return null;
+        }
+
+        private static IEnumerable<FilesystemPlugin> CurrentPlugins()
+        {
+            var Plugins = PluginHost.Current.GetFilesystems();
+            return (Plugins.Length > 0) ? Plugins : BuiltinPlugins.Filesystems;
         }
 
         public static string GetFilesystemType(Types.FsType Type)

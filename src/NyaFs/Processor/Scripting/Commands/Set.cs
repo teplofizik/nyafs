@@ -172,6 +172,11 @@ namespace NyaFs.Processor.Scripting.Commands
                                 Fs.FilesystemType = ImageFormat.Types.FsType.EroFs;
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: erofs!");
                             }
+                            else if (Value == "udf")
+                            {
+                                Fs.FilesystemType = ImageFormat.Types.FsType.Udf;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: udf!");
+                            }
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
                         }

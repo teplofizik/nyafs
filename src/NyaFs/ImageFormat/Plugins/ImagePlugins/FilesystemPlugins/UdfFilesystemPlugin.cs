@@ -5,7 +5,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 {
     class UdfFilesystemPlugin : Base.FilesystemPlugin
     {
-        public UdfFilesystemPlugin() : base("fs.udf", "udf", true, false, true)
+        public UdfFilesystemPlugin() : base("fs.udf", "udf", true, true, true)
         {
         }
 
@@ -15,7 +15,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         public override Elements.Fs.Reader.Reader GetFilesystemReader(byte[] Data) =>
             new Elements.Fs.Reader.BaseFsReader(Types.FsType.Udf, new Filesystem.Udf.UdfReader(Data));
 
-        public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) => null;
+        public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) =>
+            new Elements.Fs.Writer.UdfWriter();
 
         public override bool CheckFilesystem(LinuxFilesystem Fs) => true;
     }

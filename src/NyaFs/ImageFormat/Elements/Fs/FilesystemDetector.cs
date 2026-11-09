@@ -96,6 +96,7 @@ namespace NyaFs.ImageFormat.Elements.Fs
                 case Types.FsType.ExFat: return "exFAT";
                 case Types.FsType.EroFs: return "EROFS";
                 case Types.FsType.Udf: return "UDF";
+                case Types.FsType.Yaffs2: return "YAFFS2";
                 default: return "Unknown";
             }
         }

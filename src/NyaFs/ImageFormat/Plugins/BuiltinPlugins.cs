@@ -37,7 +37,8 @@ namespace NyaFs.ImageFormat.Plugins
             new Iso9660FilesystemPlugin(),
             new ExFatFilesystemPlugin(),
             new EroFsFilesystemPlugin(),
-            new UdfFilesystemPlugin()
+            new UdfFilesystemPlugin(),
+            new Yaffs2FilesystemPlugin()
         };
 
         public static readonly Base.KernelPlugin[] Kernels = new Base.KernelPlugin[]

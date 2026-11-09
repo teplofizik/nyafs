@@ -177,6 +177,11 @@ namespace NyaFs.Processor.Scripting.Commands
                                 Fs.FilesystemType = ImageFormat.Types.FsType.Udf;
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: udf!");
                             }
+                            else if (Value == "yaffs2")
+                            {
+                                Fs.FilesystemType = ImageFormat.Types.FsType.Yaffs2;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: yaffs2!");
+                            }
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
                         }

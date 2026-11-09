@@ -106,6 +106,19 @@ namespace NyaFs.ImageFormat.Plugins
         public FilesystemPlugin GetFilesystemByFormat(string Format) =>
             Filesystems.Find(S => S.Format == Format);
 
+        /// <summary>
+        /// Resolve a filesystem by its canonical format or plugin name.
+        /// External plugins use the same path as built-ins.
+        /// </summary>
+        public FilesystemPlugin ResolveFilesystem(string NameOrFormat)
+        {
+            if (string.IsNullOrEmpty(NameOrFormat))
+                return null;
+
+            return Filesystems.Find(S => string.Equals(S.Format, NameOrFormat, StringComparison.OrdinalIgnoreCase))
+                ?? Filesystems.Find(S => string.Equals(S.Name, NameOrFormat, StringComparison.OrdinalIgnoreCase));
+        }
+
         public KernelPlugin GetKernelByFormat(string Format) =>
             Kernels.Find(S => S.Format == Format);
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -23,42 +23,13 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
 
         protected bool DetectAndRead(LinuxFilesystem Dst, byte[] Raw)
         {
-            var Fs = FilesystemDetector.DetectFs(Raw);
-            switch (Fs)
-            {
-                case Types.FsType.Cpio:
-                    {
-                        var Reader = new CpioFsReader(Raw);
-                        Reader.ReadToFs(Dst);
+            var Plugin = FilesystemDetector.DetectFilesystemPlugin(new ImageData(Raw));
+            var Reader = Plugin?.GetFilesystemReader(Raw);
+            if (Reader == null)
+                return false;
 
-                        return true;
-                    }
-                case Types.FsType.Ext2:
-                case Types.FsType.Ext3:
-                case Types.FsType.Ext4:
-                    {
-                        var Reader = new ExtReader(Fs, Raw);
-                        Reader.ReadToFs(Dst);
-                        return true;
-                    }
-                case Types.FsType.SquashFs:
-                    {
-                        var Reader = new SquashFsReader(Raw);
-                        Reader.ReadToFs(Dst);
-
-                        return true;
-                    }
-                case Types.FsType.Tar:
-                    {
-                        var Reader = new BaseFsReader(Types.FsType.Tar, new NyaFs.Filesystem.Tar.TarFsReader(Raw));
-                        Reader.ReadToFs(Dst);
-
-                        return true;
-                    }
-                default:
-                    //throw new NotImplementedException($"Unknown filesystem");
-                    return false;
-            }
+            Reader.ReadToFs(Dst);
+            return true;
         }
     }
 }

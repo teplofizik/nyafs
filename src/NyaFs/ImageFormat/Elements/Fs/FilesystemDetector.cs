@@ -41,6 +41,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
             DetectFilesystemPlugin(new ImageData(Raw), CurrentPlugins());
 
 
+        public static FilesystemPlugin DetectFilesystemPlugin(ImageData Data) =>
+            DetectFilesystemPlugin(Data, CurrentPlugins());
+
         /// <summary>
         /// Find the first plugin that recognizes the data using an explicit list.
         /// </summary>

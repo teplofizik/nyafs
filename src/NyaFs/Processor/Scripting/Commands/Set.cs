@@ -133,62 +133,23 @@ namespace NyaFs.Processor.Scripting.Commands
                 {
                     case "filesystem":
                         {
-                            if(Type != "ramfs")
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set filesystem type to non-ramfs image!");
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set filesystem type to non-ramfs image!");
 
                             var Fs = Processor.GetFs();
-                            if (Value == "cpio")
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            var Plugin = Processor.Plugins.ResolveFilesystem(Value);
+                            if (Plugin == null)
                             {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.Cpio;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: cpio!");
+                                var Formats = Processor.Plugins.GetFilesystems().Select(P => P.Format).Distinct();
+                                return new ScriptStepResult(ScriptStepStatus.Error,
+                                    $"Unsupported filesystem type: {Value}. Available: {String.Join(", ", Formats)}");
                             }
-                            else if (Value == "ext2")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.Ext2;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: ext2!");
-                            }
-                            else if (Value == "squashfs")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.SquashFs;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: squashfs!");
-                            }
-                            else if (Value == "cramfs")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.CramFs;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: cramfs!");
-                            }
-                            else if (Value == "romfs")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.RomFs;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: romfs!");
-                            }
-                            else if (Value == "iso9660")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.Iso9660;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: iso9660!");
-                            }
-                            else if (Value == "erofs")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.EroFs;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: erofs!");
-                            }
-                            else if (Value == "udf")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.Udf;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: udf!");
-                            }
-                            else if (Value == "yaffs2")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.Yaffs2;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: yaffs2!");
-                            }
-                            else if (Value == "jffs2")
-                            {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.Jffs2;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: jffs2!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
+
+                            Fs.FilesystemType = Plugin.FsType;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: {Plugin.Format}!");
                         }
                     case "udf.vat":
                         {

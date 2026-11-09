@@ -13,15 +13,17 @@ namespace NyaFs.Filesystem.Jffs2
     /// dirents, inode versions, uncompressed/zlib/zero/rtime data and the
     /// common special-file inode payloads.
     /// </summary>
-    public sealed class Jffs2Reader : IFilesystemReader
+    public sealed class Jffs2Reader : IFilesystemReader, IRootXattrs
     {
         private const ushort JFFS2_MAGIC = 0x1985;
         private const ushort JFFS2_MAGIC_SWAPPED = 0x8519;
         private const ushort JFFS2_NODETYPE_DIRENT = 0xE001;
         private const ushort JFFS2_NODETYPE_INODE = 0xE002;
-        private const ushort JFFS2_NODETYPE_CLEANMARKER = 0xE003;
-        private const ushort JFFS2_NODETYPE_PADDING = 0xE004;
+        private const ushort JFFS2_NODETYPE_CLEANMARKER = 0x2003;
+        private const ushort JFFS2_NODETYPE_PADDING = 0x2004;
         private const ushort JFFS2_NODETYPE_SUMMARY = 0xE006;
+        private const ushort JFFS2_NODETYPE_XATTR = 0xE008;
+        private const ushort JFFS2_NODETYPE_XREF = 0xE009;
 
         private sealed class Dirent
         {
@@ -51,6 +53,22 @@ namespace NyaFs.Filesystem.Jffs2
             public int DataOffset;
         }
 
+        private sealed class Xattr
+        {
+            public uint Xid;
+            public uint Version;
+            public byte Prefix;
+            public string Name;
+            public byte[] Value;
+        }
+
+        private sealed class Xref
+        {
+            public uint Ino;
+            public uint Xid;
+            public uint Sequence;
+        }
+
         private sealed class Node
         {
             public string Path;
@@ -65,6 +83,8 @@ namespace NyaFs.Filesystem.Jffs2
         private readonly Dictionary<string, Dirent> Dirents = new Dictionary<string, Dirent>(StringComparer.Ordinal);
         private readonly Dictionary<uint, List<Inode>> Inodes = new Dictionary<uint, List<Inode>>();
         private readonly Dictionary<uint, Inode> LatestInode = new Dictionary<uint, Inode>();
+        private readonly Dictionary<uint, Xattr> Xattrs = new Dictionary<uint, Xattr>();
+        private readonly Dictionary<ulong, Xref> Xrefs = new Dictionary<ulong, Xref>();
         private readonly Dictionary<string, Node> Nodes = new Dictionary<string, Node>(StringComparer.Ordinal);
         private readonly Dictionary<uint, Node> NodesById = new Dictionary<uint, Node>();
         private readonly Node Root;
@@ -130,16 +150,20 @@ namespace NyaFs.Filesystem.Jffs2
             foreach (var Child in Node.Children)
             {
                 var H = Child.Inode;
-                Result.Add(new FilesystemEntry(
+                var Entry = new FilesystemEntry(
                     Child.Type,
                     Combine(Parent, Child.Name),
                     H?.Uid ?? 0,
                     H?.Gid ?? 0,
                     (H?.Mode ?? 0) & 0xFFF,
-                    (Child.Type == FilesystemItemType.Directory) ? 0u : (H?.Isize ?? 0)));
+                    (Child.Type == FilesystemItemType.Directory) ? 0u : (H?.Isize ?? 0));
+                Entry.Xattrs = GetXattrs(Child.Inode?.Ino ?? 0);
+                Result.Add(Entry);
             }
             return Result.ToArray();
         }
+
+        public Dictionary<string, byte[]> GetRootXattrs() => GetXattrs(1);
 
         public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
         {
@@ -220,6 +244,41 @@ namespace NyaFs.Filesystem.Jffs2
                         List.Add(I);
                     }
                 }
+                else if (Type == JFFS2_NODETYPE_XATTR)
+                {
+                    if (Length >= 32)
+                    {
+                        int NameLength = Data[Offset + 21];
+                        int ValueLength = (int)ReadU16(Offset + 22);
+                        int DataLength = NameLength + 1 + ValueLength;
+                        if ((DataLength > 0) && (Offset + 32 + DataLength <= Offset + Length))
+                        {
+                            var X = new Xattr
+                            {
+                                Xid = ReadU32(Offset + 12),
+                                Version = ReadU32(Offset + 16),
+                                Prefix = Data[Offset + 20],
+                                Name = Encoding.UTF8.GetString(Data, Offset + 32, NameLength),
+                                Value = new byte[ValueLength]
+                            };
+                            Array.Copy(Data, Offset + 32 + NameLength + 1, X.Value, 0, ValueLength);
+                            if (!Xattrs.TryGetValue(X.Xid, out Xattr Old) || (X.Version >= Old.Version))
+                                Xattrs[X.Xid] = X;
+                        }
+                    }
+                }
+                else if (Type == JFFS2_NODETYPE_XREF)
+                {
+                    if (Length >= 28)
+                    {
+                        uint Ino = ReadU32(Offset + 12);
+                        uint Xid = ReadU32(Offset + 16);
+                        uint Sequence = ReadU32(Offset + 20);
+                        ulong Key = ((ulong)Ino << 32) | Xid;
+                        if (!Xrefs.TryGetValue(Key, out Xref Old) || (Sequence >= Old.Sequence))
+                            Xrefs[Key] = new Xref { Ino = Ino, Xid = Xid, Sequence = Sequence };
+                    }
+                }
 
                 Offset += Align((int)Length, 4);
             }
@@ -296,6 +355,41 @@ namespace NyaFs.Filesystem.Jffs2
             if (Ino == 1)
                 return "";
             return NodesById.TryGetValue(Ino, out Node N) ? N.Path : null;
+        }
+
+        private Dictionary<string, byte[]> GetXattrs(uint Ino)
+        {
+            if (Ino == 0)
+                return null;
+
+            Dictionary<string, byte[]> Result = null;
+            foreach (var R in Xrefs.Values)
+            {
+                if ((R.Ino != Ino) || !Xattrs.TryGetValue(R.Xid, out Xattr X))
+                    continue;
+
+                string Name = PrefixName(X.Prefix, X.Name);
+                if (Name == null)
+                    continue;
+
+                if (Result == null)
+                    Result = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+                Result[Name] = X.Value;
+            }
+            return Result;
+        }
+
+        private static string PrefixName(byte Prefix, string Name)
+        {
+            switch (Prefix)
+            {
+                case 1: return "user." + Name;
+                case 2: return "security." + Name;
+                case 5: return "trusted." + Name;
+                case 3: return "system.posix_acl_access";
+                case 4: return "system.posix_acl_default";
+                default: return null;
+            }
         }
 
         private Inode GetInode(uint Ino) =>

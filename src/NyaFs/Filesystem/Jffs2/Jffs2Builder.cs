@@ -21,7 +21,7 @@ namespace NyaFs.Filesystem.Jffs2
     /// Basic JFFS2 writer: one inode version per object, no compression,
     /// no garbage collection and no cleanmarker/bad-block handling.
     /// </summary>
-    public sealed class Jffs2Builder : IFilesystemBuilder
+    public sealed class Jffs2Builder : IFilesystemBuilder, IXattrBuilder
     {
         private sealed class Node
         {
@@ -37,12 +37,16 @@ namespace NyaFs.Filesystem.Jffs2
             public uint Minor;
             public uint ParentId;
             public uint Ino;
+            public readonly Dictionary<string, byte[]> Xattrs = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             public readonly List<Node> Children = new List<Node>();
         }
 
         private const ushort MAGIC = 0x1985;
         private const ushort DIRENT = 0xE001;
         private const ushort INODE = 0xE002;
+        private const ushort CLEANMARKER = 0x2003;
+        private const ushort XATTR = 0xE008;
+        private const ushort XREF = 0xE009;
 
         private readonly int EraseBlockSize;
         private readonly List<Node> Nodes = new List<Node>();
@@ -50,10 +54,13 @@ namespace NyaFs.Filesystem.Jffs2
         private uint NextIno = 2;
         private uint NextVersion = 1;
         private uint NextInodeVersion = 1;
+        private uint NextXid = 1;
+        private uint NextXseq = 1;
         private List<byte> Image;
 
         public Jffs2Compression Compression { get; set; } = Jffs2Compression.None;
         public int PageSize { get; set; } = 4096;
+        public bool Cleanmarkers { get; set; } = true;
 
         public Jffs2Builder(int EraseBlockSize = 0x10000, int PageSize = 4096, Jffs2Compression Compression = Jffs2Compression.None)
         {
@@ -91,6 +98,13 @@ namespace NyaFs.Filesystem.Jffs2
 
         public void SymLink(string Path, string Target, uint User, uint Group, uint Mode) =>
             Add(Path, FilesystemItemType.SymLink, User, Group, Mode, null, Target ?? "", 0, 0);
+
+        public void Xattr(string Path, string Name, byte[] Value)
+        {
+            var N = Find(Normalize(Path));
+            if (N != null)
+                N.Xattrs[Name] = Value ?? Array.Empty<byte>();
+        }
 
         private void Add(string Path, FilesystemItemType Type, uint User, uint Group, uint Mode,
             byte[] Content, string Target, uint Major, uint Minor)
@@ -155,6 +169,8 @@ namespace NyaFs.Filesystem.Jffs2
                 WriteInode(N);
             }
 
+            WriteXattrs();
+
             int Size = Align(Image.Count, EraseBlockSize);
             while (Image.Count < Size)
                 Image.Add(0xFF);
@@ -166,7 +182,7 @@ namespace NyaFs.Filesystem.Jffs2
         {
             var Name = Encoding.UTF8.GetBytes(N.Name);
             int Length = Align(40 + Name.Length, 4);
-            int Offset = Image.Count;
+            int Offset = EnsureNodeSpace(Length);
 
             WriteU16(Image, MAGIC);
             WriteU16(Image, DIRENT);
@@ -220,10 +236,39 @@ namespace NyaFs.Filesystem.Jffs2
             }
         }
 
+        private int EnsureNodeSpace(int Length)
+        {
+            if (Cleanmarkers && (Image.Count % EraseBlockSize) == 0)
+                WriteCleanMarker();
+
+            int End = Image.Count % EraseBlockSize + Length;
+            if (End > EraseBlockSize)
+            {
+                int Next = ((Image.Count / EraseBlockSize) + 1) * EraseBlockSize;
+                while (Image.Count < Next)
+                    Image.Add(0xFF);
+                if (Cleanmarkers)
+                    WriteCleanMarker();
+            }
+
+            return Image.Count;
+        }
+
+        private void WriteCleanMarker()
+        {
+            int Offset = Image.Count;
+            WriteU16(Image, MAGIC);
+            WriteU16(Image, CLEANMARKER);
+            WriteU32(Image, 12);
+            WriteU32(Image, 0);
+            var Data = Image.ToArray();
+            WriteU32At(Image, Offset + 8, Crc(Data, Offset, 8));
+        }
+
         private void WriteInodeNode(Node N, int Offset, uint Isize, int DataLength, byte[] Stored, byte Compr)
         {
             int Length = Align(68 + Stored.Length, 4);
-            int NodeOffset = Image.Count;
+            int NodeOffset = EnsureNodeSpace(Length);
 
             WriteU16(Image, MAGIC);
             WriteU16(Image, INODE);
@@ -364,6 +409,92 @@ namespace NyaFs.Filesystem.Jffs2
         }
 
         private static byte[] LzoCompress(byte[] Data) => NyaLZO.LZO1xCompressor.Compress(Data);
+
+        private void WriteXattrs()
+        {
+            foreach (var N in Nodes)
+            {
+                foreach (var X in N.Xattrs)
+                {
+                    uint Xid = NextXid++;
+                    WriteXattrNode(Xid, X.Key, X.Value);
+                    WriteXrefNode(N.Ino, Xid);
+                }
+            }
+        }
+
+        private void WriteXattrNode(uint Xid, string FullName, byte[] Value)
+        {
+            byte Prefix;
+            string Name;
+            if (!SplitXattr(FullName, out Prefix, out Name))
+                return;
+
+            var NameBytes = Encoding.UTF8.GetBytes(Name);
+            int Length = Align(32 + NameBytes.Length + 1 + Value.Length, 4);
+            int Offset = EnsureNodeSpace(Length);
+
+            WriteU16(Image, MAGIC);
+            WriteU16(Image, XATTR);
+            WriteU32(Image, (uint)Length);
+            WriteU32(Image, 0);
+            WriteU32(Image, Xid);
+            WriteU32(Image, 1);
+            Image.Add(Prefix);
+            Image.Add((byte)NameBytes.Length);
+            WriteU16(Image, (uint)Value.Length);
+            WriteU32(Image, 0); // data_crc
+            WriteU32(Image, 0); // node_crc
+            Image.AddRange(NameBytes);
+            Image.Add(0);
+            Image.AddRange(Value);
+            while ((Image.Count - Offset) < Length)
+                Image.Add(0);
+
+            var Data = Image.ToArray();
+            uint HdrCrc = Crc(Data, Offset, 8);
+            WriteU32At(Image, Offset + 8, HdrCrc);
+            Data = Image.ToArray();
+            uint DataCrc = Crc(Data, Offset + 32, NameBytes.Length + 1 + Value.Length);
+            WriteU32At(Image, Offset + 24, DataCrc);
+            Data = Image.ToArray();
+            uint NodeCrc = Crc(Data, Offset, 28);
+            WriteU32At(Image, Offset + 28, NodeCrc);
+        }
+
+        private void WriteXrefNode(uint Ino, uint Xid)
+        {
+            int Length = 28;
+            int Offset = EnsureNodeSpace(Length);
+
+            WriteU16(Image, MAGIC);
+            WriteU16(Image, XREF);
+            WriteU32(Image, (uint)Length);
+            WriteU32(Image, 0);
+            WriteU32(Image, Ino);
+            WriteU32(Image, Xid);
+            WriteU32(Image, NextXseq);
+            NextXseq += 2;
+            WriteU32(Image, 0); // node_crc
+
+            var Data = Image.ToArray();
+            uint HdrCrc = Crc(Data, Offset, 8);
+            WriteU32At(Image, Offset + 8, HdrCrc);
+            Data = Image.ToArray();
+            WriteU32At(Image, Offset + 24, Crc(Data, Offset, 24));
+        }
+
+        private static bool SplitXattr(string FullName, out byte Prefix, out string Name)
+        {
+            Prefix = 0;
+            Name = FullName ?? "";
+            if (Name.StartsWith("user.", StringComparison.Ordinal)) { Prefix = 1; Name = Name.Substring(5); return true; }
+            if (Name.StartsWith("security.", StringComparison.Ordinal)) { Prefix = 2; Name = Name.Substring(9); return true; }
+            if (Name.StartsWith("trusted.", StringComparison.Ordinal)) { Prefix = 5; Name = Name.Substring(8); return true; }
+            if (Name == "system.posix_acl_access") { Prefix = 3; Name = ""; return true; }
+            if (Name == "system.posix_acl_default") { Prefix = 4; Name = ""; return true; }
+            return false;
+        }
 
         private byte[] SpecialPayload(Node N)
         {

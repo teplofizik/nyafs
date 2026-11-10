@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -66,18 +66,18 @@ namespace NyaFs.Processor.Scripting.Commands.Fs.Interactive
 
                     foreach (var I in Target.Items)
                     {
-                        Log.Write(0, FormatItem(I));
+                        Log.Write(0, FormatItem(I, Fs));
                     }
 
                     return new ScriptStepResult(ScriptStepStatus.Ok, null);
                 }
             }
 
-            private string FormatItem(Filesystem.Universal.FilesystemItem Item)
+            private string FormatItem(Filesystem.Universal.FilesystemItem Item, NyaFs.ImageFormat.Elements.Fs.LinuxFilesystem Fs)
             {
                 var Mode = $"{GetItemType(Item)}{ConvertModeToString(Item.Mode)}";
-                var User = $"{Item.User}".PadLeft(5);
-                var Group = $"{Item.Group}".PadLeft(5);
+                var User = (Fs.Identities.GetUserName(Item.User) ?? Item.User.ToString()).PadLeft(8);
+                var Group = (Fs.Identities.GetGroupName(Item.Group) ?? Item.Group.ToString()).PadLeft(8);
 
                 var Size = $"{Item.Size}".PadLeft(12);
 

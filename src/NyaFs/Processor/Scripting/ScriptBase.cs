@@ -65,8 +65,12 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Fs.Rm());
             Add(new Commands.Fs.Chmod());
             Add(new Commands.Fs.Chown());
+            Add(new Commands.Fs.Chgrp());
+            Add(new Commands.User());
+            Add(new Commands.Group());
             Add(new Commands.Fs.Xattr());
             Add(new Commands.Fs.Mkfs());
+            Add(new Commands.Fs.Interactive.Ls());
 
             Add(new Commands.Remote.RemoteGet());
             Add(new Commands.Remote.RemotePut());

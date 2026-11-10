@@ -16,6 +16,25 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// <summary>Canonical format reported by the loaded filesystem plugin (may be external).</summary>
         public string FilesystemFormat;
 
+        private Filesystem.Universal.Identity.FsIdentityDatabase IdentityDatabase;
+
+        /// <summary>
+        /// User/group view backed by /etc/passwd and /etc/group of this filesystem.
+        /// Lazy-loaded; it is not part of the filesystem format.
+        /// </summary>
+        public Filesystem.Universal.Identity.FsIdentityDatabase Identities
+        {
+            get
+            {
+                if (IdentityDatabase == null)
+                    IdentityDatabase = new Filesystem.Universal.Identity.FsIdentityDatabase(Fs);
+
+                return IdentityDatabase;
+            }
+        }
+
+        public void ResetIdentityDatabase() => IdentityDatabase = null;
+
         private readonly Dictionary<string, string> PluginOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public void SetFilesystemOption(string Format, string Name, string Value) =>

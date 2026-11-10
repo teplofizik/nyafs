@@ -39,13 +39,13 @@ namespace NyaFs.ImageFormat
             var Target = (SubPath ?? "").Trim('/');
             if (Target == ".") Target = "";
 
-            return LocateNode(new ImageData(Raw), Target, ImageKind.Unknown, null);
+            return LocateNode(new ImageData(Raw), Target, ImageKind.Unknown, null, null);
         }
 
-        private LocatedImage LocateNode(ImageData Data, string Target, ImageKind HintKind, string HintFormat)
+        private LocatedImage LocateNode(ImageData Data, string Target, ImageKind HintKind, string HintFormat, Types.ImageInfo HintInfo)
         {
             if (Target.Length == 0)
-                return new LocatedImage(Data.ReadArray(0, Data.Length), HintKind, HintFormat, CompressionType.IH_COMP_NONE);
+                return new LocatedImage(Data.ReadArray(0, Data.Length), HintKind, HintFormat, CompressionType.IH_COMP_NONE, HintInfo);
 
             // Compression is transparent: unpack and search inside.
             var Compressor = Plugins.DetectCompressor(Data);
@@ -56,10 +56,10 @@ namespace NyaFs.ImageFormat
 
                 if (Unpacked != null)
                 {
-                    var Res = LocateNode(new ImageData(Unpacked), Target, HintKind, HintFormat);
+                    var Res = LocateNode(new ImageData(Unpacked), Target, HintKind, HintFormat, HintInfo);
                     if (Res != null)
                         return new LocatedImage(Res.Content, Res.Kind, Res.Format,
-                            (Res.Compression == CompressionType.IH_COMP_NONE) ? Compressor.Compression : Res.Compression);
+                            (Res.Compression == CompressionType.IH_COMP_NONE) ? Compressor.Compression : Res.Compression, Res.Info);
                 }
             }
 
@@ -73,16 +73,19 @@ namespace NyaFs.ImageFormat
                 var Head = (Idx < 0) ? Target : Target.Substring(0, Idx);
                 var Rest = (Idx < 0) ? "" : Target.Substring(Idx + 1);
 
+                if ((Head == "all") || (Head == Image.Format))
+                    return LocateNode(Data, Rest, HintKind, HintFormat, HintInfo);
+
                 var Used = new HashSet<string>();
                 foreach (var CI in Image.GetImages(Data))
                 {
-                    if (Unique(CI.Name, Used) != Head)
+                    if (!Matches(CI, Unique(CI.Name, Used), Head, Image.Format))
                         continue;
 
                     if (CI.Content == null)
                         return null;
 
-                    return LocateNode(new ImageData(CI.Content), Rest, CI.Kind, CI.Format);
+                    return LocateNode(new ImageData(CI.Content), Rest, CI.Kind, CI.Format, CI.Info);
                 }
 
                 return null;
@@ -170,6 +173,42 @@ namespace NyaFs.ImageFormat
             // Fall back to the kind declared by the container, if any.
             Node.Kind = HintKind;
             Node.Format = HintFormat;
+        }
+
+        private bool Matches(ContainedImage Image, string ActualName, string Head, string Container)
+        {
+            if (ActualName == Head)
+                return true;
+
+            if (Head == Image.Format)
+                return true;
+
+            switch (Image.Kind)
+            {
+                case ImageKind.Kernel:
+                    if ((Head == "kernel") || (Head == "zimage") || (Head == "image"))
+                        return true;
+                    break;
+                case ImageKind.Devtree:
+                    if ((Head == "devtree") || (Head == "dtb") || (Head == "fdt"))
+                        return true;
+                    break;
+                case ImageKind.Filesystem:
+                    if ((Head == "filesystem") || (Head == "fs") || (Head == "ramfs") || (Head == "ramdisk"))
+                        return true;
+                    break;
+            }
+
+            if ((Image.Content != null) && (Image.Kind == ImageKind.Unknown))
+            {
+                foreach (var Plugin in Plugins.GetImages())
+                {
+                    if ((Plugin.Format == Head) && Plugin.DetectImage(new ImageData(Image.Content)))
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         private static string Unique(string Name, HashSet<string> Used)

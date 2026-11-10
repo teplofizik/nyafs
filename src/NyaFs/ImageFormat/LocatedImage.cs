@@ -12,13 +12,15 @@ namespace NyaFs.ImageFormat
         public readonly ImageKind Kind;
         public readonly string Format;
         public readonly CompressionType Compression;
+        public readonly ImageInfo Info;
 
-        public LocatedImage(byte[] Content, ImageKind Kind, string Format, CompressionType Compression)
+        public LocatedImage(byte[] Content, ImageKind Kind, string Format, CompressionType Compression, ImageInfo Info = null)
         {
             this.Content = Content;
             this.Kind = Kind;
             this.Format = Format;
             this.Compression = Compression;
+            this.Info = Info;
         }
     }
 }

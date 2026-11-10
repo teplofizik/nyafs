@@ -33,12 +33,15 @@ namespace NyaFs.ImageFormat
             this.Blob = Blob;
         }
 
-        public bool Load(byte[] Raw) => LoadElement(new ImageData(Raw), "image", ImageKind.Unknown, null, 0);
+        public bool Load(byte[] Raw) => LoadElement(new ImageData(Raw), "image", ImageKind.Unknown, null, null, 0);
 
         public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat) =>
-            LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, 0);
+            LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, null, 0);
 
-        private bool LoadElement(ImageData Data, string Container, ImageKind HintKind, string HintFormat, int Depth)
+        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat, ImageInfo Info) =>
+            LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, Info, 0);
+
+        private bool LoadElement(ImageData Data, string Container, ImageKind HintKind, string HintFormat, ImageInfo HintInfo, int Depth)
         {
             if (Depth > MaxDepth)
                 return false;
@@ -53,7 +56,7 @@ namespace NyaFs.ImageFormat
                 if (Unpacked != null)
                 {
                     Blob.Elements.Add(new LoadedElement(ImageKind.Unknown, Compressor.CompressorName, Compressor.Compression, Container, Compressor.CompressorName));
-                    return LoadElement(new ImageData(Unpacked), Container + ":" + Compressor.CompressorName, HintKind, HintFormat, Depth + 1);
+                    return LoadElement(new ImageData(Unpacked), Container + ":" + Compressor.CompressorName, HintKind, HintFormat, HintInfo, Depth + 1);
                 }
             }
 
@@ -76,7 +79,7 @@ namespace NyaFs.ImageFormat
                     if ((Contained.Kind == ImageKind.Unknown) && (Contained.Content != null))
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Unknown, Contained.Format, Contained.Compression, Container, Image.Name + "/" + Contained.Name));
-                        if (LoadElement(new ImageData(Contained.Content), Container + "/" + Image.Name + "/" + Contained.Name, Contained.Kind, Contained.Format, Depth + 1))
+                        if (LoadElement(new ImageData(Contained.Content), Container + "/" + Image.Name + "/" + Contained.Name, Contained.Kind, Contained.Format, Contained.Info, Depth + 1))
                             Any = true;
                     }
                 }
@@ -133,6 +136,7 @@ namespace NyaFs.ImageFormat
                     var Dst = GetKernel();
                     try { Reader.ReadToKernel(Dst); } catch { }
                     Dst.KernelFormat = KernelPlugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, KernelPlugin.Format, Dst.Info.Compression, Container, KernelPlugin.Format));
@@ -153,6 +157,7 @@ namespace NyaFs.ImageFormat
                     var Dst = GetFs();
                     try { Reader.ReadToFs(Dst); } catch { }
                     Dst.FilesystemFormat = FsPlugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Filesystem, FsPlugin.Format, Dst.Info.Compression, Container, FsPlugin.Format));
@@ -173,6 +178,7 @@ namespace NyaFs.ImageFormat
                     var Dst = GetDtb();
                     try { Reader.ReadToDevTree(Dst); } catch { }
                     Dst.DevtreeFormat = DtbPlugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, DtbPlugin.Format, Dst.Info.Compression, Container, DtbPlugin.Format));
@@ -194,6 +200,7 @@ namespace NyaFs.ImageFormat
                     var Dst = GetKernel();
                     try { Reader.ReadToKernel(Dst); } catch { }
                     Dst.KernelFormat = Plugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
@@ -212,6 +219,7 @@ namespace NyaFs.ImageFormat
                     var Dst = GetFs();
                     try { Reader.ReadToFs(Dst); } catch { }
                     Dst.FilesystemFormat = Plugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Filesystem, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
@@ -231,6 +239,7 @@ namespace NyaFs.ImageFormat
                     var Dst = GetDtb();
                     try { Reader.ReadToDevTree(Dst); } catch { }
                     Dst.DevtreeFormat = Plugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
@@ -242,6 +251,20 @@ namespace NyaFs.ImageFormat
             // 7) Unknown: preserve for round-trip.
             Blob.Unknown.Add(new UnknownImage(Container, Data.Offset, Data.Length));
             return false;
+        }
+
+        private static void ApplyInfo(ImageInfo Dst, ImageInfo Source)
+        {
+            if (Source == null)
+                return;
+
+            Dst.Architecture = Source.Architecture;
+            Dst.OperatingSystem = Source.OperatingSystem;
+            Dst.Type = Source.Type;
+            Dst.Compression = Source.Compression;
+            Dst.Name = Source.Name;
+            Dst.DataLoadAddress = Source.DataLoadAddress;
+            Dst.EntryPointAddress = Source.EntryPointAddress;
         }
 
         private Elements.Kernel.LinuxKernel GetKernel()

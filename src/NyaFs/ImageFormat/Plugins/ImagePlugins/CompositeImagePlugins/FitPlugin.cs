@@ -1,6 +1,7 @@
-﻿
+
 using NyaFs.ImageFormat.Plugins.Base;
 using NyaIO.Data;
+using NyaFs.ImageFormat.Types;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -77,7 +78,23 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             var Compression = Helper.FitHelper.GetCompression(
                 Node.GetStringValue("compression") ?? "none");
 
-            Res.Add(new ContainedImage(NodeName, Kind, "fit", -1, Data.Length, Data, Compression));
+            var Info = new ImageInfo
+            {
+                Name = NodeName,
+                Architecture = Helper.FitHelper.GetCPUArchitecture(Node.GetStringValue("arch")),
+                OperatingSystem = Helper.FitHelper.GetOperatingSystem(Node.GetStringValue("os")),
+                Type = Helper.FitHelper.GetType(Node.GetStringValue("type")),
+                Compression = Compression
+            };
+
+            var Load = Node.GetValue("load");
+            var Entry = Node.GetValue("entry");
+            if (Load != null)
+                Info.DataLoadAddress = (Load.Length == 8) ? Load.ReadUInt64BE(0) : Load.ReadUInt32BE(0);
+            if (Entry != null)
+                Info.EntryPointAddress = (Entry.Length == 8) ? Entry.ReadUInt64BE(0) : Entry.ReadUInt32BE(0);
+
+            Res.Add(new ContainedImage(NodeName, Kind, "fit", -1, Data.Length, Data, Compression, Info));
         }
 
         /// <summary>

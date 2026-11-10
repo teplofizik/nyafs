@@ -51,7 +51,7 @@ namespace NyaFs.Processor.Scripting.Commands
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Sub-image '{SubPath}' is not found in {Path}!");
 
                 var Pipeline = new ImagePipeline(Processor.Plugins, Processor.GetBlob());
-                if (Pipeline.Load(Located.Content, Located.Kind, Located.Format))
+                if (Pipeline.Load(Located.Content, Located.Kind, Located.Format, Located.Info))
                     return new ScriptStepResult(ScriptStepStatus.Ok, $"Sub-image '{SubPath}' is loaded.");
                 else
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot load sub-image '{SubPath}'.");

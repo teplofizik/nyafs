@@ -12,6 +12,14 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
     {
         public CImgImagePlugin() : base("image.cimg", "cimg") { }
 
+        public override NyaFs.ImageFormat.Plugins.Base.FilesystemOption[] Options => new[]
+        {
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("label", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, "gpt", "Partition label"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("chunk-size", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Size, "16M", "Maximum payload chunk size"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("offset", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Integer, "0", "Program part offset"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("part-size", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Size, "0", "Program part size")
+        };
+
         public override bool DetectImage(ImageData Image)
         {
             if ((Image.Length < 0x80) || (Image.ReadUInt32(0) != 0x474D4943u))

@@ -104,6 +104,19 @@ namespace NyaFs.Processor.Scripting.Commands
 
                 ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
 
+                if (Format == "cimg")
+                {
+                    var RawPlugin = Processor.Plugins.GetKernelByFormat("raw");
+                    var CImgWriter = ((RawPlugin != null) && RawPlugin.SupportWrite) ? RawPlugin.GetKernelWriter(Kernel) : null;
+                    if (CImgWriter == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG kernel payload!");
+                    CImgWriter.WriteKernel(Kernel);
+                    if (!CImgWriter.HasRawStreamData)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG kernel payload!");
+                    System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, CImgWriter.RawStream));
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as CIMG image!");
+                }
+
                 if (Format == "legacy")
                 {
                     var Exporter = new ImageFormat.Elements.Kernel.Writer.LegacyWriter(Path);
@@ -168,6 +181,19 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Dtb == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Device tree is not loaded!");
 
+                if (Format == "cimg")
+                {
+                    var DtbPlugin = Processor.Plugins.GetDtbByFormat("dtb");
+                    var CImgWriter = ((DtbPlugin != null) && DtbPlugin.SupportWrite) ? DtbPlugin.GetDevtreeWriter(Dtb) : null;
+                    if (CImgWriter == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG device-tree payload!");
+                    CImgWriter.WriteDevtree(Dtb);
+                    if (!CImgWriter.HasRawStreamData)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG device-tree payload!");
+                    System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, CImgWriter.RawStream));
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Dtb is stored to file {Path} as CIMG image!");
+                }
+
                 var Plugin = Processor.Plugins.GetDtbByFormat(Format);
                 if ((Plugin == null) || !Plugin.SupportWrite)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format '{Format}'!");
@@ -203,6 +229,45 @@ namespace NyaFs.Processor.Scripting.Commands
                         Res.Add(P.Format);
 
                 return string.Join(", ", Res);
+            }
+
+            private static byte[] BuildCImg(ImageProcessor Processor, byte[] Payload)
+            {
+                var Blob = Processor.GetBlob();
+                var Builder = new ImageFormat.Composite.CImgBuilder
+                {
+                    Label = Blob.GetContainerOption("cimg", "label", "gpt"),
+                    ChunkSize = (int)ParseCImgSize(Blob.GetContainerOption("cimg", "chunk-size", "16M"), 16 * 1024 * 1024),
+                    Offset = (uint)ParseCImgSize(Blob.GetContainerOption("cimg", "offset", "0"), 0),
+                    PartSize = (uint)ParseCImgSize(Blob.GetContainerOption("cimg", "part-size", "0"), 0)
+                };
+                return Builder.Build(Payload);
+            }
+
+            private static long ParseCImgSize(string Value, long Default)
+            {
+                if (string.IsNullOrWhiteSpace(Value))
+                    return Default;
+
+                string Text = Value.Trim();
+                long Multiplier = 1;
+                char Suffix = Char.ToUpperInvariant(Text[Text.Length - 1]);
+                if ((Suffix == (char)75) || (Suffix == (char)77) || (Suffix == (char)71))
+                {
+                    Multiplier = (Suffix == (char)75) ? 1024L : ((Suffix == (char)77) ? 1024L * 1024 : 1024L * 1024 * 1024);
+                    Text = Text.Substring(0, Text.Length - 1);
+                }
+
+                long Result;
+                if (Text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!Int64.TryParse(Text.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out Result))
+                        return Default;
+                }
+                else if (!Int64.TryParse(Text, out Result))
+                    return Default;
+
+                return Result * Multiplier;
             }
 
             private ImageFormat.Elements.Fs.Writer.Writer GetFsWriter(ImageProcessor Processor, ImageFormat.Elements.Fs.LinuxFilesystem Fs)
@@ -255,6 +320,19 @@ namespace NyaFs.Processor.Scripting.Commands
                 var Fs = Processor.GetFs();
                 if (Fs == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Filesystem is not loaded!");
+
+                if (Format == "cimg")
+                {
+                    var FsPlugin = Processor.Plugins.ResolveFilesystem(Fs.FilesystemFormat);
+                    var PayloadWriter = ((FsPlugin != null) && FsPlugin.SupportWrite) ? FsPlugin.GetFilesystemWriter(Fs) : ImageFormat.Elements.Fs.Writer.Writer.GetRawFilesystemWriter(Fs);
+                    if (PayloadWriter == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG filesystem payload!");
+                    PayloadWriter.WriteFs(Fs);
+                    if (!PayloadWriter.HasRawStreamData)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG filesystem payload!");
+                    System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, PayloadWriter.RawStream));
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Filesystem is stored to file {Path} as CIMG image!");
+                }
 
                 var Writer = GetFsWriter(Processor, Fs);
                 if(Writer != null)

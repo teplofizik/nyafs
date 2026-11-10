@@ -16,7 +16,7 @@ namespace NyaFs.Processor.Scripting.Commands
         class SetScriptArgsConfig : ScriptArgsConfig
         {
             public SetScriptArgsConfig() : base(0, new ScriptArgsParam[] {
-                    new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all" }),
+                    new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all", "container" }),
                     new Params.StringScriptArgsParam("param"),
                     new Params.StringScriptArgsParam("value")
                 })
@@ -35,10 +35,10 @@ namespace NyaFs.Processor.Scripting.Commands
                 }
                 else
                 {
-                    var AllowedTypes = new string[] { "kernel", "devtree", "ramfs", "all" };
+                    var AllowedTypes = new string[] { "kernel", "devtree", "ramfs", "all", "container" };
                     if (!AllowedTypes.Contains(Args[0]))
                     {
-                        Log.Error(0, "Invalid image type. Must be one of: kernel, devtree, ramfs, all");
+                        Log.Error(0, "Invalid image type. Must be one of: kernel, devtree, ramfs, all, container");
                         return false;
                     }
 
@@ -106,6 +106,8 @@ namespace NyaFs.Processor.Scripting.Commands
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Error, "Kernel is not loaded");
                         }
+                        break;
+                    case "container":
                         break;
                     case "all":
                         {
@@ -553,7 +555,7 @@ namespace NyaFs.Processor.Scripting.Commands
                 string Name = Param.Substring(Dot + 1);
                 string Error;
 
-                if (Type == "all")
+                if ((Type == "all") || (Type == "container"))
                 {
                     var Plugin = Processor.Plugins.ResolveImage(Format);
                     if (Plugin == null)

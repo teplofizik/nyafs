@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -14,6 +14,8 @@ namespace NyaFs.Processor.Scripting
             if(GetGenerator(G.Name) == null)
                 Commands.Add(G);
         }
+
+        public ScriptStepGenerator[] GetGenerators() => Commands.ToArray();
 
         public ScriptStepGenerator GetGenerator(string Name)
         {
@@ -31,6 +33,7 @@ namespace NyaFs.Processor.Scripting
     {
         public ScriptBaseAll()
         {
+            Add(new Commands.Help());
             Add(new Commands.Include());
             Add(new Commands.Echo());
 

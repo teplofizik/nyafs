@@ -12,6 +12,14 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 
         public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.Jffs2;
 
+        public override NyaFs.ImageFormat.Plugins.Base.FilesystemOption[] Options => new[]
+        {
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("compression", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Enum, "none", "Data compression", new[] { "none", "zlib", "rtime", "lzo", "priority" }),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("pagesize", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Size, "4096", "Maximum data node size"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("eraseblock", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Size, "64K", "Erase-block size"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("cleanmarkers", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Bool, "true", "Write cleanmarker nodes")
+        };
+
         public override bool DetectFilesystem(ImageData Image) =>
             Filesystem.Jffs2.Jffs2Reader.IsJffs2(Image.Raw);
 

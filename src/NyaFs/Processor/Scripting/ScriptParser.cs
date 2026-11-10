@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -13,6 +13,10 @@ namespace NyaFs.Processor.Scripting
         {
             this.Base = Base;
         }
+
+        public ScriptStepGenerator[] GetGenerators() => Base.GetGenerators();
+
+        public ScriptStepGenerator GetGenerator(string Name) => Base.GetGenerator(Name);
 
         public Script ParseScript(string Filename)
         {

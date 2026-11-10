@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using NyaFs.ImageFormat.Types;
+using NyaFs.ImageFormat.Plugins;
 
 namespace NyaFs.ImageFormat
 {
@@ -15,10 +16,15 @@ namespace NyaFs.ImageFormat
     /// </summary>
     public class ImageInspector
     {
-        private readonly Processor.Scripting.ScriptPlugins Plugins;
+        private readonly PluginRegistry Plugins;
         private const int MaxDepth = 32;
 
         public ImageInspector(Processor.Scripting.ScriptPlugins Plugins)
+            : this((PluginRegistry)Plugins)
+        {
+        }
+
+        public ImageInspector(PluginRegistry Plugins)
         {
             this.Plugins = Plugins;
         }
@@ -26,7 +32,7 @@ namespace NyaFs.ImageFormat
         public ImageNode Inspect(string Name, byte[] Raw)
         {
             var Root = new ImageNode { Name = Name, Path = "" };
-            Build(Root, new ImageData(Raw), Raw.Length, ImageKind.Unknown, null, 0);
+            Build(Root, new ImageData(Raw), Raw.Length, ImageKind.Unknown, null, null, 0);
             return Root;
         }
 
@@ -94,9 +100,13 @@ namespace NyaFs.ImageFormat
             return null;
         }
 
-        private void Build(ImageNode Node, ImageData Data, long Size, ImageKind HintKind, string HintFormat, int Depth)
+        private void Build(ImageNode Node, ImageData Data, long Size, ImageKind HintKind, string HintFormat, Types.ImageInfo HintInfo, int Depth)
         {
             Node.Size = Size;
+            if (Node.Raw == null)
+                Node.Raw = Data.ReadArray(0, Data.Length);
+            if (Node.Info == null)
+                Node.Info = HintInfo;
 
             if (Depth > MaxDepth)
                 return;
@@ -111,7 +121,7 @@ namespace NyaFs.ImageFormat
                 if (Unpacked != null)
                 {
                     Node.Compression = Compressor.Compression;
-                    Build(Node, new ImageData(Unpacked), Unpacked.Length, HintKind, HintFormat, Depth);
+                    Build(Node, new ImageData(Unpacked), Unpacked.Length, HintKind, HintFormat, HintInfo, Depth);
                     return;
                 }
             }
@@ -126,6 +136,9 @@ namespace NyaFs.ImageFormat
                 Node.Format = Image.Format;
                 Node.Container = Image.Format;
 
+                foreach (var Option in Image.ReadOptions(Data))
+                    Node.Options[Option.Key] = Option.Value;
+
                 var Used = new HashSet<string>();
                 var Contained = Image.GetImages(Data);
                 foreach (var CI in Contained)
@@ -133,13 +146,15 @@ namespace NyaFs.ImageFormat
                     var Child = new ImageNode
                     {
                         Name = Unique(CI.Name, Used),
-                        Container = Image.Format
+                        Container = Image.Format,
+                        Raw = CI.Content,
+                        Info = CI.Info
                     };
                     Child.Path = (Node.Path.Length == 0) ? Child.Name : Node.Path + "/" + Child.Name;
 
                     var ChildSize = (CI.Size >= 0) ? CI.Size : (CI.Content?.Length ?? 0);
                     if (CI.Content != null)
-                        Build(Child, new ImageData(CI.Content), ChildSize, CI.Kind, CI.Format, Depth + 1);
+                        Build(Child, new ImageData(CI.Content), ChildSize, CI.Kind, CI.Format, CI.Info, Depth + 1);
                     else
                     {
                         Child.Kind = CI.Kind;

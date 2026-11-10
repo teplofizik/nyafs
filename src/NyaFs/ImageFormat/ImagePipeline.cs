@@ -33,13 +33,42 @@ namespace NyaFs.ImageFormat
             this.Blob = Blob;
         }
 
-        public bool Load(byte[] Raw) => LoadElement(new ImageData(Raw), "image", ImageKind.Unknown, null, null, 0);
+        public bool Load(byte[] Raw)
+        {
+            var Ok = LoadElement(new ImageData(Raw), "image", ImageKind.Unknown, null, null, 0);
+            if (Ok)
+                CapturePlan(Raw);
+            return Ok;
+        }
 
-        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat) =>
-            LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, null, 0);
+        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat)
+        {
+            var Ok = LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, null, 0);
+            if (Ok)
+                CapturePlan(Raw);
+            return Ok;
+        }
 
-        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat, ImageInfo Info) =>
-            LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, Info, 0);
+        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat, ImageInfo Info)
+        {
+            var Ok = LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, Info, 0);
+            if (Ok)
+                CapturePlan(Raw);
+            return Ok;
+        }
+
+        private void CapturePlan(byte[] Raw)
+        {
+            try
+            {
+                var Tree = new ImageInspector(Plugins).Inspect("image", Raw);
+                Blob.BuildPlan = ImageBuildPlan.From(Tree);
+            }
+            catch
+            {
+                Blob.BuildPlan = null;
+            }
+        }
 
         private bool LoadElement(ImageData Data, string Container, ImageKind HintKind, string HintFormat, ImageInfo HintInfo, int Depth)
         {

@@ -129,9 +129,49 @@ namespace NyaFs.Processor
                         continue;
 
                     var Res = Step.Exec(this);
+                    if ((Res.Status != ScriptStepStatus.Error) && IsMutating(Step.Name))
+                        MarkDirty();
 
                     WriteLogLine(S, Res);
                 }
+            }
+        }
+
+        public void MarkDirty()
+        {
+            if (Blob.BuildPlan != null)
+                Blob.BuildPlan.MarkAllDirty();
+        }
+
+        private static bool IsMutating(string Name)
+        {
+            switch (Name)
+            {
+                case "dir":
+                case "file":
+                case "slink":
+                case "block":
+                case "char":
+                case "fifo":
+                case "sock":
+                case "rm":
+                case "chmod":
+                case "chown":
+                case "chgrp":
+                case "xattr":
+                case "mkfs":
+                case "pkg":
+                case "set":
+                case "user":
+                case "group":
+                case "useradd":
+                case "usermod":
+                case "userdel":
+                case "groupadd":
+                case "groupdel":
+                    return true;
+                default:
+                    return false;
             }
         }
 

@@ -1,4 +1,4 @@
-﻿using NyaFs.ImageFormat.Elements.Dtb;
+using NyaFs.ImageFormat.Elements.Dtb;
 using NyaFs.ImageFormat.Elements.Fs;
 using NyaFs.ImageFormat.Elements.Kernel;
 using System;
@@ -70,6 +70,12 @@ namespace NyaFs.ImageFormat
         /// Unknown (not understood) parts of loaded containers, preserved for round-trip.
         /// </summary>
         public readonly List<UnknownImage> Unknown = new List<UnknownImage>();
+
+        /// <summary>
+        /// Tree of the loaded image (formats, original raw bytes, options) used by
+        /// plan-based store without explicit output format. Null when no image is loaded.
+        /// </summary>
+        public ImageBuildPlan BuildPlan { get; set; }
 
         private readonly Dictionary<string, string> PluginOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 

@@ -36,7 +36,7 @@ namespace NyaFs.Processor.Scripting.Commands
             var A = Args.RawArgs;
 
             if(Args.ArgConfig == 3)
-                return new StoreScriptStep(A[0], "all", "fit");
+                return new StoreScriptStep(A[0], "auto", null);
             else if (Args.ArgConfig == 4)
                 return new StoreScriptStep(A[0], "all", A[2]);
             else
@@ -64,9 +64,40 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "devtree": return StoreDtb(Processor);
                     case "kernel": return StoreKernel(Processor);
                     case "all": return StoreAll(Processor);
+                    case "auto": return StoreAuto(Processor);
                     default:
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown image type!");
                 }
+            }
+
+            private ScriptStepResult StoreAuto(ImageProcessor Processor)
+            {
+                var Plan = Processor.GetBlob().BuildPlan;
+                if ((Plan != null) && Plan.CanPassthrough)
+                {
+                    System.IO.File.WriteAllBytes(Path, Plan.Root.Raw);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Image is stored to file {Path} using the loaded build plan.");
+                }
+
+                if (Plan == null)
+                    return new StoreScriptStep(Path, "all", "fit").Exec(Processor);
+
+                switch (Plan.Root.Format)
+                {
+                    case "cimg":
+                        if ((Processor.GetKernel() != null) && Processor.GetKernel().Loaded)
+                            return new StoreScriptStep(Path, "all", "cimg").Exec(Processor);
+                        if ((Processor.GetDevTree() != null) && Processor.GetDevTree().Loaded)
+                            return new StoreScriptStep(Path, "all", "cimg").Exec(Processor);
+                        if ((Processor.GetFs() != null) && Processor.GetFs().Loaded)
+                            return new StoreScriptStep(Path, "ramfs", "cimg").Exec(Processor);
+                        break;
+                    case "fit":
+                        return new StoreScriptStep(Path, "all", "fit").Exec(Processor);
+                }
+
+                return new ScriptStepResult(ScriptStepStatus.Error,
+                    $"Image was modified; specify an explicit output format for root container '{Plan.Root.Format}'.");
             }
 
             private ScriptStepResult StoreAll(ImageProcessor Processor)

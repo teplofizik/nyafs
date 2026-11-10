@@ -30,6 +30,15 @@ namespace NyaFs.ImageFormat
         /// <summary>Size of this element's payload in bytes.</summary>
         public long Size = 0;
 
+        /// <summary>Raw bytes of this element as loaded (before transparent decompression).</summary>
+        public byte[] Raw = null;
+
+        /// <summary>Container metadata, when declared by FIT or another container.</summary>
+        public Types.ImageInfo Info = null;
+
+        /// <summary>Options read from the container header.</summary>
+        public readonly Dictionary<string, string> Options = new Dictionary<string, string>();
+
         /// <summary>Nested elements (for composite containers).</summary>
         public readonly List<ImageNode> Children = new List<ImageNode>();
 

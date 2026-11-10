@@ -71,6 +71,14 @@ namespace NyaFs.ImageFormat
         /// </summary>
         public readonly List<UnknownImage> Unknown = new List<UnknownImage>();
 
+        private readonly Dictionary<string, string> PluginOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        public void SetContainerOption(string Format, string Name, string Value) =>
+            PluginOptions[Format + "." + Name] = Value;
+
+        public string GetContainerOption(string Format, string Name, string DefaultValue = null) =>
+            PluginOptions.TryGetValue(Format + "." + Name, out string Value) ? Value : DefaultValue;
+
         public virtual void SetDevTree(int Index, DeviceTree Dtb) => this.Dtb = Dtb;
         public virtual void SetKernel(int Index, LinuxKernel Kernel) => this.Kernel = Kernel;
         public virtual void SetFilesystem(int Index, LinuxFilesystem Fs) => this.Fs = Fs;

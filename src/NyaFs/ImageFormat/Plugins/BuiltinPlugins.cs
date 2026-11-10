@@ -15,6 +15,7 @@ namespace NyaFs.ImageFormat.Plugins
     {
         public static readonly Base.CompositeImagePlugin[] Images = new Base.CompositeImagePlugin[]
         {
+            new ImagePlugins.CompositeImagePlugins.CImgImagePlugin(),
             new ImagePlugins.CompositePlugins.AndroidPlugin(),
             new ImagePlugins.CompositeImagePlugins.FitPlugin(),
             new ImagePlugins.CompositeImagePlugins.LegacyImagePlugin()
@@ -29,7 +30,6 @@ namespace NyaFs.ImageFormat.Plugins
             new Ext2FilesystemPlugin(),
             new RomFsFilesystemPlugin(),
             new SquashFsFilesystemPlugin(),
-            new CImgFilesystemPlugin(),
             new TarFilesystemPlugin(),
             new UbifsFilesystemPlugin(),
             new FatFilesystemPlugin(),

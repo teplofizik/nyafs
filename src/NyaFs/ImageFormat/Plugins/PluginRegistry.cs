@@ -146,8 +146,18 @@ namespace NyaFs.ImageFormat.Plugins
         public DevtreePlugin GetDtbByFormat(string Format) =>
             ResolveDtb(Format);
 
+        public CompositeImagePlugin ResolveImage(string NameOrFormat)
+        {
+            if (string.IsNullOrEmpty(NameOrFormat))
+                return null;
+
+            return Images.Find(S => string.Equals(S.Format, NameOrFormat, StringComparison.OrdinalIgnoreCase))
+                ?? Images.Find(S => string.Equals(S.Name, NameOrFormat, StringComparison.OrdinalIgnoreCase))
+                ?? Images.Find(S => S.Aliases.Any(A => string.Equals(A, NameOrFormat, StringComparison.OrdinalIgnoreCase)));
+        }
+
         public CompositeImagePlugin GetImage(string Name) =>
-            Images.Find(S => S.Name == Name);
+            ResolveImage(Name);
 
         public RemoteFilesystemPlugin GetRemote(string Protocol)
         {

@@ -553,6 +553,16 @@ namespace NyaFs.Processor.Scripting.Commands
                 string Name = Param.Substring(Dot + 1);
                 string Error;
 
+                if (Type == "all")
+                {
+                    var Plugin = Processor.Plugins.ResolveImage(Format);
+                    if (Plugin == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown container format '{Format}'!");
+                    if (!Plugin.TryApplyOption(Processor.GetBlob(), Name, Value, out Error))
+                        return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
+                }
+
                 if (Type == "kernel")
                 {
                     var Plugin = Processor.Plugins.ResolveKernel(Format);

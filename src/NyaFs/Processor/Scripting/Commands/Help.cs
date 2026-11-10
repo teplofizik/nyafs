@@ -74,7 +74,15 @@ namespace NyaFs.Processor.Scripting.Commands
                         return new ScriptStepResult(ScriptStepStatus.Ok, null);
                     }
 
-                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown command, filesystem, kernel or devtree: {Topic}");
+                    var ImagePlugin = Processor.Plugins.ResolveImage(Topic);
+                    if (ImagePlugin != null)
+                    {
+                        Log.Write(0, $"{ImagePlugin.Format} ({ImagePlugin.Name}) [container]:");
+                        PrintOptions(ImagePlugin.Options);
+                        return new ScriptStepResult(ScriptStepStatus.Ok, null);
+                    }
+
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown command or image plugin: {Topic}");
                 }
 
                 Log.Write(0, "Commands:");

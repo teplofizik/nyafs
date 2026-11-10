@@ -41,6 +41,43 @@ namespace NyaFs.ImageFormat
 
         public bool CanPassthrough => (Root != null) && (Root.Raw != null) && !Root.Dirty;
 
+        public ImageBuildNode FindKind(ImageKind Kind) => FindKind(Root, Kind);
+
+        private static ImageBuildNode FindKind(ImageBuildNode Node, ImageKind Kind)
+        {
+            if (Node == null)
+                return null;
+            if (Node.Kind == Kind)
+                return Node;
+
+            foreach (var Child in Node.Children)
+            {
+                var Res = FindKind(Child, Kind);
+                if (Res != null)
+                    return Res;
+            }
+
+            return null;
+        }
+
+        public bool MarkDirty(ImageKind Kind) => MarkKind(Root, Kind);
+
+        private static bool MarkKind(ImageBuildNode Node, ImageKind Kind)
+        {
+            if (Node == null)
+                return false;
+
+            var Found = Node.Kind == Kind;
+            foreach (var Child in Node.Children)
+                if (MarkKind(Child, Kind))
+                    Found = true;
+
+            if (Found)
+                Node.Dirty = true;
+
+            return Found;
+        }
+
         public ImageBuildNode Find(string Path)
         {
             var Target = (Path ?? "").Trim('/');

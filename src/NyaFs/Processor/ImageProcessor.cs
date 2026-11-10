@@ -130,7 +130,12 @@ namespace NyaFs.Processor
 
                     var Res = Step.Exec(this);
                     if ((Res.Status != ScriptStepStatus.Error) && IsMutating(Step.Name))
-                        MarkDirty();
+                    {
+                        if (IsFilesystemCommand(Step.Name))
+                            MarkDirty(ImageFormat.ImageKind.Filesystem);
+                        else
+                            MarkDirty();
+                    }
 
                     WriteLogLine(S, Res);
                 }
@@ -141,6 +146,43 @@ namespace NyaFs.Processor
         {
             if (Blob.BuildPlan != null)
                 Blob.BuildPlan.MarkAllDirty();
+        }
+
+        public void MarkDirty(ImageFormat.ImageKind Kind)
+        {
+            if (Blob.BuildPlan != null)
+                Blob.BuildPlan.MarkDirty(Kind);
+        }
+
+        private static bool IsFilesystemCommand(string Name)
+        {
+            switch (Name)
+            {
+                case "dir":
+                case "file":
+                case "slink":
+                case "block":
+                case "char":
+                case "fifo":
+                case "sock":
+                case "rm":
+                case "chmod":
+                case "chown":
+                case "chgrp":
+                case "xattr":
+                case "mkfs":
+                case "pkg":
+                case "user":
+                case "group":
+                case "useradd":
+                case "usermod":
+                case "userdel":
+                case "groupadd":
+                case "groupdel":
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private static bool IsMutating(string Name)

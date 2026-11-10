@@ -116,7 +116,8 @@ namespace NyaFs.ImageFormat.Plugins
                 return null;
 
             return Filesystems.Find(S => string.Equals(S.Format, NameOrFormat, StringComparison.OrdinalIgnoreCase))
-                ?? Filesystems.Find(S => string.Equals(S.Name, NameOrFormat, StringComparison.OrdinalIgnoreCase));
+                ?? Filesystems.Find(S => string.Equals(S.Name, NameOrFormat, StringComparison.OrdinalIgnoreCase))
+                ?? Filesystems.Find(S => S.Aliases.Any(A => string.Equals(A, NameOrFormat, StringComparison.OrdinalIgnoreCase)));
         }
 
         public KernelPlugin GetKernelByFormat(string Format) =>

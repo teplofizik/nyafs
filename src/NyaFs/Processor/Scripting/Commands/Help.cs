@@ -69,7 +69,11 @@ namespace NyaFs.Processor.Scripting.Commands
                 Log.Write(0, "Filesystem formats and options:");
                 foreach (var Plugin in Processor.Plugins.GetFilesystems().OrderBy(P => P.Format))
                 {
-                    Log.Write(0, $"  {Plugin.Format} ({Plugin.Name})");
+                    var Meta = new List<string>();
+                    if (Plugin.Aliases.Length > 0) Meta.Add("aliases: " + String.Join(", ", Plugin.Aliases));
+                    if (Plugin.Extensions.Length > 0) Meta.Add("ext: " + String.Join(", ", Plugin.Extensions));
+                    var Suffix = (Meta.Count > 0) ? " [" + String.Join("; ", Meta) + "]" : "";
+                    Log.Write(0, $"  {Plugin.Format} ({Plugin.Name}){Suffix}");
                     foreach (var Option in Plugin.Options)
                         Log.Write(0, $"    {Option.Name} <{Option.Type}>");
                 }

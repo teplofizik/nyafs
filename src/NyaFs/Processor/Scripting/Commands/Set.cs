@@ -149,6 +149,7 @@ namespace NyaFs.Processor.Scripting.Commands
                             }
 
                             Fs.FilesystemType = Plugin.FsType;
+                            Fs.FilesystemFormat = Plugin.Format;
                             return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: {Plugin.Format}!");
                         }
                     case "udf.vat":

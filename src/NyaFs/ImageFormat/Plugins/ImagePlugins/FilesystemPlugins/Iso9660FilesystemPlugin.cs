@@ -9,6 +9,9 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
     {
         public override NyaFs.ImageFormat.Types.FsType FsType => NyaFs.ImageFormat.Types.FsType.Iso9660;
 
+        public override string[] Aliases => new[] { "iso" };
+        public override string[] Extensions => new[] { "iso", "iso9660" };
+
         public Iso9660FilesystemPlugin() : base("fs.iso9660", "iso9660", true, true, true)
         {
         }

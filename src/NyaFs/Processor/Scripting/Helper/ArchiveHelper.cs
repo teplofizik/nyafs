@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
@@ -38,18 +38,9 @@ namespace NyaFs.Processor.Scripting.Helper
 
         public static Tuple<string, string> DetectImageFormat(byte[] Raw)
         {
-            var FilesystemType = ImageFormat.Elements.Fs.FilesystemDetector.DetectFs(Raw);
-            if (FilesystemType != ImageFormat.Types.FsType.Unknown)
-            {
-                switch (FilesystemType)
-                {
-                    case ImageFormat.Types.FsType.Cpio: return new Tuple<string, string>("ramfs", "cpio");
-                    case ImageFormat.Types.FsType.Ext2: return new Tuple<string, string>("ramfs", "ext2");
-                    case ImageFormat.Types.FsType.SquashFs: return new Tuple<string, string>("ramfs", "squashfs");
-                    case ImageFormat.Types.FsType.CramFs: return new Tuple<string, string>("ramfs", "cramfs");
-                    case ImageFormat.Types.FsType.RomFs: return new Tuple<string, string>("ramfs", "romfs");
-                }
-            }
+            var Plugin = ImageFormat.Elements.Fs.FilesystemDetector.DetectFilesystemPlugin(new ImageFormat.ImageData(Raw));
+            if (Plugin != null)
+                return new Tuple<string, string>("ramfs", Plugin.Format);
 
             // Detect FIT or DTB image...
             var Header = Raw.ReadUInt32(0);

@@ -29,6 +29,15 @@ namespace NyaFs.ImageFormat.Plugins.Base
 
         public string Format => FilesystemName;
 
+        /// <summary>Human-readable filesystem name.</summary>
+        public virtual string DisplayName => FilesystemName;
+
+        /// <summary>Alternative CLI names for this filesystem.</summary>
+        public virtual string[] Aliases => Array.Empty<string>();
+
+        /// <summary>File extensions commonly used by this filesystem.</summary>
+        public virtual string[] Extensions => Array.Empty<string>();
+
         /// <summary>
         /// Filesystem type exposed to plugin-based content detection.
         /// Plugins that do not map to <see cref="ImageFormat.Types.FsType"/> keep Unknown.

@@ -148,6 +148,7 @@ namespace NyaFs.ImageFormat
                 {
                     var Dst = GetFs();
                     try { Reader.ReadToFs(Dst); } catch { }
+                    Dst.FilesystemFormat = FsPlugin.Format;
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Filesystem, FsPlugin.Format, Dst.Info.Compression, Container, FsPlugin.Format));
@@ -197,13 +198,14 @@ namespace NyaFs.ImageFormat
 
             if (HintKind == ImageKind.Filesystem)
             {
-                var Plugin = (HintFormat != null) ? Plugins.GetFilesystemByFormat(HintFormat) : null;
+                var Plugin = (HintFormat != null) ? Plugins.ResolveFilesystem(HintFormat) : null;
 
                 var Reader = Plugin?.GetFilesystemReader(Raw);
                 if (Reader != null)
                 {
                     var Dst = GetFs();
                     try { Reader.ReadToFs(Dst); } catch { }
+                    Dst.FilesystemFormat = Plugin.Format;
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Filesystem, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));

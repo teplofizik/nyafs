@@ -29,6 +29,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                 return false;
 
             Reader.ReadToFs(Dst);
+            Dst.FilesystemFormat = Plugin.Format;
             return true;
         }
     }

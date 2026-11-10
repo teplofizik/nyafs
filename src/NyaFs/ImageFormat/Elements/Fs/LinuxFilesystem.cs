@@ -13,6 +13,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
     {
         public Filesystem.Universal.Filesystem Fs = new Filesystem.Universal.Filesystem();
 
+        /// <summary>Canonical format reported by the loaded filesystem plugin (may be external).</summary>
+        public string FilesystemFormat;
+
         private readonly Dictionary<string, string> PluginOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public void SetFilesystemOption(string Format, string Name, string Value) =>

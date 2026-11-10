@@ -121,7 +121,16 @@ namespace NyaFs.Processor.Scripting.Commands
                 }
 
                 Log.Write(0, "");
-                Log.Write(0, "Use: help <command>, help <filesystem-format>, help <kernel-format> or help <devtree-format>");
+                Log.Write(0, "Container formats and options:");
+                foreach (var Plugin in Processor.Plugins.GetImages().OrderBy(P => P.Format))
+                {
+                    Log.Write(0, $"  {Plugin.Format} ({Plugin.Name})");
+                    foreach (var Option in Plugin.Options)
+                        Log.Write(0, $"    {Option.Name} <{Option.Type}>");
+                }
+
+                Log.Write(0, "");
+                Log.Write(0, "Use: help <command>, help <filesystem-format>, help <kernel-format>, help <devtree-format> or help <container-format>");
                 return new ScriptStepResult(ScriptStepStatus.Ok, null);
             }
 

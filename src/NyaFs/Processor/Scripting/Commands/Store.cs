@@ -22,7 +22,13 @@ namespace NyaFs.Processor.Scripting.Commands
                     new Params.FsPathScriptArgsParam()
                 }));
 
-            AddConfig(new Configs.ErrorConfig("Invalid image type: %1%. Must be one of: kernel, ramfs, devtree"));
+            AddConfig(new ScriptArgsConfig(4, new ScriptArgsParam[] {
+                    new Params.FsPathScriptArgsParam(),
+                    new Params.EnumScriptArgsParam("type", new string[] { "all" }),
+                    new Params.StringScriptArgsParam("format")
+                }));
+
+            AddConfig(new Configs.ErrorConfig("Invalid image type: %1%. Must be one of: kernel, ramfs, devtree, all"));
         }
 
         public override ScriptStep Get(ScriptArgs Args)
@@ -31,6 +37,8 @@ namespace NyaFs.Processor.Scripting.Commands
 
             if(Args.ArgConfig == 3)
                 return new StoreScriptStep(A[0], "all", "fit");
+            else if (Args.ArgConfig == 4)
+                return new StoreScriptStep(A[0], "all", A[2]);
             else
                 return new StoreScriptStep(A[0], A[1], A[2]);
         }
@@ -89,6 +97,16 @@ namespace NyaFs.Processor.Scripting.Commands
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as FIT Image!");
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Cannot compile FIT Image! No enough information...");
+                        }
+                    case "cimg":
+                        {
+                            var Fit = new ImageFormat.Composite.FitWriter(Path);
+                            var Payload = Fit.Build(Processor.GetBlob());
+                            if (Payload == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build FIT payload for CIMG!");
+
+                            System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, Payload));
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as CIMG/FIT image!");
                         }
                     default:
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown multiimage format!");

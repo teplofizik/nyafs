@@ -67,6 +67,9 @@ namespace NyaFs.ImageFormat
 
                 bool Any = false;
 
+                foreach (var Option in Image.ReadOptions(Data))
+                    Blob.SetContainerOption(Image.Format, Option.Key, Option.Value);
+
                 // Re-run the pipeline on elements whose type is not declared in the container.
                 foreach (var Contained in Image.GetImages(Data))
                 {

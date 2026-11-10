@@ -35,6 +35,18 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             }
         }
 
+        public override System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> ReadOptions(ImageData Image)
+        {
+            var Cimg = new CvImage(Image.ReadArray(0, Image.Length));
+            if (!Cimg.Correct)
+                yield break;
+
+            yield return new System.Collections.Generic.KeyValuePair<string, string>("label", Cimg.ImageName);
+            yield return new System.Collections.Generic.KeyValuePair<string, string>("offset", Cimg.Offset.ToString());
+            if (Cimg.PartSize != 0)
+                yield return new System.Collections.Generic.KeyValuePair<string, string>("part-size", Cimg.PartSize.ToString());
+        }
+
         public override ContainedImage[] GetImages(ImageData Image)
         {
             try

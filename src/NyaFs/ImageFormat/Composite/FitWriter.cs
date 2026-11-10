@@ -19,6 +19,16 @@ namespace NyaFs.ImageFormat.Composite
 
         public bool Write(BaseImageBlob Blob)
         {
+            var Data = Build(Blob);
+            if (Data == null)
+                return false;
+
+            System.IO.File.WriteAllBytes(Path, Data);
+            return true;
+        }
+
+        public byte[] Build(BaseImageBlob Blob)
+        {
             if (!CheckFs(Blob.GetFilesystem(0)))
                 Log.Warning(0, "No filesystem!");
             else
@@ -34,10 +44,10 @@ namespace NyaFs.ImageFormat.Composite
             else
                 DevtreeAvailable = true;
 
-            if(!DevtreeAvailable && !KernelAvailable && !FsAvailable)
+            if (!DevtreeAvailable && !KernelAvailable && !FsAvailable)
             {
                 Log.Error(0, "No images available for writing");
-                return false;
+                return null;
             }
 
             var FitImage = new FlattenedDeviceTree.FlattenedDeviceTree();
@@ -46,10 +56,7 @@ namespace NyaFs.ImageFormat.Composite
             FitImage.Root.Nodes.Add(GetConfiguratiosnNode(Blob));
 
             var Writer = new FlattenedDeviceTree.Writer.FDTWriter(FitImage);
-            var Data = Writer.GetBinary();
-            System.IO.File.WriteAllBytes(Path, Data);
-
-            return true;
+            return Writer.GetBinary();
         }
 
         private FlattenedDeviceTree.Types.Node GetConfiguratiosnNode(BaseImageBlob Blob)

@@ -172,11 +172,25 @@ namespace NyaFs.ImageFormat.Types
 
         public string ImageName
         {
-            get { return ReadANSIString(0x14, 0x20); }
-            set { WriteANSIString(0x14, value, 0x20); }
+            get
+            {
+                var Raw = ReadArray(0x14, 0x20);
+                int End = 0;
+                while ((End < Raw.Length) && (Raw[End] != 0)) End++;
+                return Encoding.ASCII.GetString(Raw, 0, End);
+            }
+            set
+            {
+                var Raw = Encoding.ASCII.GetBytes(value ?? "");
+                var Buffer = new byte[0x20];
+                Array.Copy(Raw, 0, Buffer, 0, Math.Min(Raw.Length, Buffer.Length));
+                WriteArray(0x14, Buffer, Buffer.Length);
+            }
         }
 
         public uint ChunkType => ReadUInt32(0x40);
+        public uint Offset => ReadUInt32(0x48);
+        public uint PartSize => NewCorrect ? ReadUInt32(0x4C) : 0;
         public uint ImageSize
         {
             get

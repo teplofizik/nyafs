@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using ZstdSharp;
@@ -20,6 +20,10 @@ namespace NyaFs.ImageFormat.Plugins.Base
         public virtual string[] Aliases => Array.Empty<string>();
         public virtual string[] Extensions => Array.Empty<string>();
         public virtual FilesystemOption[] Options => Array.Empty<FilesystemOption>();
+
+        /// <summary>Metadata read from the container header (for pre-filling options).</summary>
+        public virtual IEnumerable<KeyValuePair<string, string>> ReadOptions(ImageData Image) =>
+            Array.Empty<KeyValuePair<string, string>>();
 
         public virtual bool TryApplyOption(BaseImageBlob Blob, string Name, string Value, out string Error)
         {

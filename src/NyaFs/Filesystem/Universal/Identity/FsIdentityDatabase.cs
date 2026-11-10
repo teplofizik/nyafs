@@ -223,6 +223,38 @@ namespace NyaFs.Filesystem.Universal.Identity
             return true;
         }
 
+        public bool UpdateUser(string Name, uint? Uid, uint? Gid, string Home, string Shell, out string Error)
+        {
+            EnsureLoaded();
+            Error = null;
+
+            var User = FindUser(Name);
+            if (User == null)
+            {
+                Error = "User '" + Name + "' not found";
+                return false;
+            }
+
+            if (Uid.HasValue && (Uid.Value != User.Uid) && (FindUser(Uid.Value) != null))
+            {
+                Error = "UID " + Uid.Value + " already exists";
+                return false;
+            }
+
+            if (Uid.HasValue)
+                User.Uid = Uid.Value;
+            if (Gid.HasValue)
+                User.Gid = Gid.Value;
+            if (Home != null)
+                User.Home = Home;
+            if (Shell != null)
+                User.Shell = Shell;
+
+            User.Modified = true;
+            PasswdDirty = true;
+            return true;
+        }
+
         public bool RemoveUser(string Name, out string Error)
         {
             EnsureLoaded();

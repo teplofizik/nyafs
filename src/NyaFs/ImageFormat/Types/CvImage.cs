@@ -1,162 +1,209 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
 
-
 namespace NyaFs.ImageFormat.Types
 {
+    /// <summary>
+    /// CVITEK CIMG container.
+    ///
+    /// File header (64 bytes):
+    ///   magic, version, chunk-header size, chunk count, payload+chunk-header size,
+    ///   32-byte partition label, reserved.
+    /// Each chunk has a 64-byte header (type, data size, program offset,
+    /// partition size, CRC32, reserved) followed by its data.
+    /// </summary>
     class CvImage : RawPacket
-    { 
+    {
+        public const uint CIMG_MAGIC = 0x474D4943u;
+        public const int FILE_HEADER_SIZE = 0x40;
+        public const int CHUNK_HEADER_SIZE = 0x40;
 
         public CvImage(byte[] Data) : base(Data) { }
-		public CvImage(string Filename) : base(System.IO.File.ReadAllBytes(Filename)) { }
+        public CvImage(string Filename) : base(System.IO.File.ReadAllBytes(Filename)) { }
 
-        public CvImage(string Name, byte[] Data, UInt32 Flags) : base(Data.Length + 0x80) {
-            // File header
-            Magic = 0x474D4943;
+        public CvImage(string Name, byte[] Data, UInt32 Flags) : base(FILE_HEADER_SIZE + CHUNK_HEADER_SIZE + Data.Length)
+        {
+            Magic = CIMG_MAGIC;
             Version = 1;
-            HeaderSize = 0x40;
+            HeaderSize = CHUNK_HEADER_SIZE;
             TotalChunk = 1;
-            ContentSize = Convert.ToUInt32(0x40 + Data.Length);
+            FileSize = (uint)(CHUNK_HEADER_SIZE + Data.Length);
             ImageName = Name;
 
-            // Image header
-            Unknown3 = 1;
-            ImageSize = Convert.ToUInt32(Data.Length);
-            Unknown4 = Flags;
-            CRC32 = CalcCrc(Data);
-
-            // Image data
+            WriteUInt32(0x40, 1);                 // CHUNK_TYPE_CRC_CHECK
+            WriteUInt32(0x44, (uint)Data.Length);
+            WriteUInt32(0x48, Flags);
+            WriteUInt32(0x4C, (uint)Data.Length);
+            WriteUInt32(0x50, CalcCrc(Data));
             WriteArray(0x80, Data, Data.Length);
         }
 
-        static UInt32 CalcCrc(byte[] data)
+        private static uint CalcCrc(byte[] Data)
         {
-            if (data != null)
-            {
-                var crc32 = new CrcSharp.Crc(new CrcSharp.CrcParameters(32, 0x04c11db7, 0xffffffff, 0xffffffff, true, true));
-
-                return Convert.ToUInt32(crc32.CalculateAsNumeric(data));
-            }
-            else
+            if (Data == null)
                 return 0;
+
+            var Crc32 = new CrcSharp.Crc(new CrcSharp.CrcParameters(32, 0x04c11db7, 0xffffffff, 0xffffffff, true, true));
+            return Convert.ToUInt32(Crc32.CalculateAsNumeric(Data));
         }
 
-        public bool Correct => (Magic == 0x474D4943u) &&
-                               (ImageSize + 0x40 == ContentSize) &&
-                               (ContentSize + HeaderSize >= getLength()) &&
-                               (CRC32 == CalculatedCRC32);
-
-        /// <summary>
-        /// Header magic CIMG (43 49 4D 47)
-        /// </summary>
-        public UInt32 Magic
+        /// <summary>New-style chunked CIMG (raw2cimg.py from cvi_rtt).</summary>
+        private bool NewCorrect
         {
-            get { return ReadUInt32(0x00); }
-            set { WriteUInt32(0x00, Convert.ToUInt32(value)); }
+            get
+            {
+                if ((Magic != CIMG_MAGIC) || (HeaderSize < CHUNK_HEADER_SIZE) || (TotalChunk == 0))
+                    return false;
+
+                long Position = HeaderSize;
+                long TotalData = 0;
+                for (uint i = 0; i < TotalChunk; i++)
+                {
+                    if (Position + CHUNK_HEADER_SIZE > getLength())
+                        return false;
+
+                    uint Type = ReadUInt32((int)Position);
+                    uint Size = ReadUInt32((int)Position + 4);
+                    long DataOffset = Position + CHUNK_HEADER_SIZE;
+                    if (DataOffset + Size > getLength())
+                        return false;
+
+                    if (Type == 1)
+                    {
+                        uint StoredCrc = ReadUInt32((int)Position + 16);
+                        var Chunk = ReadArray(DataOffset, Size);
+                        if (StoredCrc != CalcCrc(Chunk))
+                            return false;
+                    }
+
+                    TotalData += Size;
+                    Position = DataOffset + Size;
+                }
+
+                return (FileSize >= TotalData) && (FileSize <= getLength());
+            }
         }
 
         /// <summary>
-        /// Unknown field (01 00 00 00) - maybe images count
+        /// Legacy single-payload CIMG: at 0x40 there is one image header, and
+        /// the CRC is stored at 0x4C instead of the new chunk header's +0x10.
         /// </summary>
-        public UInt32 Version
+        private bool LegacyCorrect
         {
-            get { return ReadUInt32(0x04); }
-            set { WriteUInt32(0x04, Convert.ToUInt32(value)); }
+            get
+            {
+                if ((Magic != CIMG_MAGIC) || (HeaderSize < FILE_HEADER_SIZE) || (getLength() < 0x80))
+                    return false;
+
+                uint ImageSize = ReadUInt32(0x44);
+                uint ContentSize = ReadUInt32(0x10);
+                if ((ImageSize == 0) || (ImageSize + FILE_HEADER_SIZE != ContentSize) ||
+                    (ContentSize + HeaderSize > getLength()))
+                    return false;
+
+                var Chunk = ReadArray(0x80, ImageSize);
+                return ReadUInt32(0x4C) == CalcCrc(Chunk);
+            }
         }
 
-        /// <summary>
-        /// Header size (40 00 00 00)
-        /// </summary>
-        public UInt32 HeaderSize
-        {
-            get { return ReadUInt32(0x08); }
-            set { WriteUInt32(0x08, Convert.ToUInt32(value)); }
-        }
+        /// <summary>True when either the current or legacy CIMG layout is valid.</summary>
+        public bool Correct => NewCorrect || LegacyCorrect;
 
-        /// <summary>
-        /// Unknown field (01 00 00 00)
-        /// </summary>
-        public UInt32 TotalChunk
-        {
-            get { return ReadUInt32(0x0C); }
-            set { WriteUInt32(0x0C, Convert.ToUInt32(value)); }
-        }
-
-        /// <summary>
-        /// Content size - size of all images in file
-        /// </summary>
-        public UInt32 ContentSize
-        {
-            get { return ReadUInt32(0x10); }
-            set { WriteUInt32(0x10, Convert.ToUInt32(value)); }
-        }
-
-        /// <summary>
-        /// ImageName
-        /// </summary>
-        public string ImageName
-        {
-            get { return ReadANSIString(0x14, 0x2C); }
-            set { WriteANSIString(0x14, value, 0x2C); }
-        }
-
-
-        /// <summary>
-        /// Unknown field (01 00 00 00)
-        /// </summary>
-        public UInt32 Unknown3
-        {
-            get { return ReadUInt32(0x40); }
-            set { WriteUInt32(0x40, Convert.ToUInt32(value)); }
-        }
-
-        /// <summary>
-        /// Image size
-        /// </summary>
-        public UInt32 ImageSize
-        {
-            get { return ReadUInt32(0x44); }
-            set { WriteUInt32(0x44, Convert.ToUInt32(value)); }
-        }
-
-        /// <summary>
-        /// Unknown field (?? ?? ?? 00)
-        /// </summary>
-        public UInt32 Unknown4
-        {
-            get { return ReadUInt32(0x48); }
-            set { WriteUInt32(0x48, Convert.ToUInt32(value)); }
-        }
-
-
-        /// <summary>
-        /// Checksum
-        /// </summary>
-        public UInt32 CRC32
-        {
-            get { return ReadUInt32(0x4C); }
-            set { WriteUInt32(0x4C, Convert.ToUInt32(value)); }
-        }
-
-        /// <summary>
-        /// Data
-        /// </summary>
+        /// <summary>Concatenated payload of all chunks.</summary>
         public byte[] Content
         {
             get
             {
-                if (ImageSize + HeaderSize + 0x40 <= getLength())
-                    return ReadArray(HeaderSize + 0x40, ImageSize);
-                else
-                    return null;
+                if (NewCorrect)
+                {
+                    var Result = new byte[(int)FileSize - (long)TotalChunk * CHUNK_HEADER_SIZE];
+                    int Output = 0;
+                    long Position = HeaderSize;
+                    for (uint i = 0; i < TotalChunk; i++)
+                    {
+                        uint Size = ReadUInt32((int)Position + 4);
+                        long DataOffset = Position + CHUNK_HEADER_SIZE;
+                        Array.Copy(ReadArray(DataOffset, Size), 0, Result, Output, (int)Size);
+                        Output += (int)Size;
+                        Position = DataOffset + Size;
+                    }
+                    return Result;
+                }
+
+                if (LegacyCorrect)
+                    return ReadArray(0x80, ReadUInt32(0x44));
+
+                return null;
             }
         }
 
-        /// <summary>
-        /// Вычисленное значение CRC32
-        /// </summary>
-        public UInt32 CalculatedCRC32 => CalcCrc(Content);
+        public uint Magic
+        {
+            get { return ReadUInt32(0x00); }
+            set { WriteUInt32(0x00, value); }
+        }
+
+        public uint Version
+        {
+            get { return ReadUInt32(0x04); }
+            set { WriteUInt32(0x04, value); }
+        }
+
+        public uint HeaderSize
+        {
+            get { return ReadUInt32(0x08); }
+            set { WriteUInt32(0x08, value); }
+        }
+
+        public uint TotalChunk
+        {
+            get { return ReadUInt32(0x0C); }
+            set { WriteUInt32(0x0C, value); }
+        }
+
+        /// <summary>Size of all chunk headers plus their payloads (excluding the 64-byte file header).</summary>
+        public uint FileSize
+        {
+            get { return ReadUInt32(0x10); }
+            set { WriteUInt32(0x10, value); }
+        }
+
+        public string ImageName
+        {
+            get { return ReadANSIString(0x14, 0x20); }
+            set { WriteANSIString(0x14, value, 0x20); }
+        }
+
+        public uint ChunkType => ReadUInt32(0x40);
+        public uint ImageSize
+        {
+            get
+            {
+                if (!NewCorrect)
+                    return ReadUInt32(0x44);
+
+                uint Result = 0;
+                long Position = HeaderSize;
+                for (uint i = 0; i < TotalChunk; i++)
+                {
+                    uint Size = ReadUInt32((int)Position + 4);
+                    Result += Size;
+                    Position += CHUNK_HEADER_SIZE + Size;
+                }
+                return Result;
+            }
+        }
+
+        public uint CRC32 => NewCorrect ? ReadUInt32(0x50) : ReadUInt32(0x4C);
+        public uint CalculatedCRC32
+        {
+            get
+            {
+                var Data = Content;
+                return (Data != null) ? CalcCrc(Data) : 0;
+            }
+        }
     }
 }

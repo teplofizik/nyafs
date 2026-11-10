@@ -1,4 +1,4 @@
-﻿using NyaFs.ImageFormat;
+using NyaFs.ImageFormat;
 using NyaFs.ImageFormat.Plugins.Base;
 using NyaFs.ImageFormat.Types;
 
@@ -38,7 +38,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 return new ContainedImage[]
                 {
                     new ContainedImage("payload", ImageKind.Unknown, "cimg", 0x80,
-                        Cimg.ImageSize, Cimg.Content, CompressionType.IH_COMP_GZIP)
+                        Cimg.ImageSize, Cimg.Content, CompressionType.IH_COMP_NONE)
                 };
             }
             catch

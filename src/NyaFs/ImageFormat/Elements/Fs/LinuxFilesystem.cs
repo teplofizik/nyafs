@@ -13,6 +13,14 @@ namespace NyaFs.ImageFormat.Elements.Fs
     {
         public Filesystem.Universal.Filesystem Fs = new Filesystem.Universal.Filesystem();
 
+        private readonly Dictionary<string, string> PluginOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        public void SetFilesystemOption(string Format, string Name, string Value) =>
+            PluginOptions[Format + "." + Name] = Value;
+
+        public string GetFilesystemOption(string Format, string Name, string DefaultValue = null) =>
+            PluginOptions.TryGetValue(Format + "." + Name, out string Value) ? Value : DefaultValue;
+
         /// <summary>
         /// Filesystem type
         /// </summary>

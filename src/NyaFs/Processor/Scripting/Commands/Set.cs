@@ -17,7 +17,7 @@ namespace NyaFs.Processor.Scripting.Commands
         {
             public SetScriptArgsConfig() : base(0, new ScriptArgsParam[] {
                     new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all" }),
-                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable", "jffs2.compression", "jffs2.pagesize", "jffs2.eraseblock" }),
+                    new Params.StringScriptArgsParam("param"),
                     new Params.StringScriptArgsParam("value")
                 })
             {
@@ -43,7 +43,7 @@ namespace NyaFs.Processor.Scripting.Commands
                     }
 
                     var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable", "jffs2.compression", "jffs2.pagesize", "jffs2.eraseblock" };
-                    if (!AllowedParams.Contains(Args[1]))
+                    if (!AllowedParams.Contains(Args[1]) && !Args[1].Contains("."))
                     {
                         Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, cramfs.endian, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size, udf.vat, udf.sparable, jffs2.compression, jffs2.pagesize, jffs2.eraseblock");
                         return false;
@@ -538,8 +538,31 @@ namespace NyaFs.Processor.Scripting.Commands
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid log level: {Value}!");
                         }
                     default:
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown parameter {Param}!");
+                        return ApplyFilesystemOption(Processor, Param, Value);
                 }
+            }
+
+            private ScriptStepResult ApplyFilesystemOption(ImageProcessor Processor, string Param, string Value)
+            {
+                int Dot = Param.IndexOf('.');
+                if (Dot <= 0)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown parameter {Param}!");
+
+                string Format = Param.Substring(0, Dot);
+                string Name = Param.Substring(Dot + 1);
+                var Plugin = Processor.Plugins.ResolveFilesystem(Format);
+                if (Plugin == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown filesystem format '{Format}'!");
+
+                var Fs = Processor.GetFs();
+                if (Fs == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                string Error;
+                if (!Plugin.TryApplyOption(Fs, Name, Value, out Error))
+                    return new ScriptStepResult(ScriptStepStatus.Error, Error);
+
+                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
             }
 
             long ParseSize(string Value)

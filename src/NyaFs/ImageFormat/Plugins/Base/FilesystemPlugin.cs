@@ -35,6 +35,113 @@ namespace NyaFs.ImageFormat.Plugins.Base
         /// </summary>
         public virtual ImageFormat.Types.FsType FsType => ImageFormat.Types.FsType.Unknown;
 
+        /// <summary>Options accepted by this filesystem. Values are stored in LinuxFilesystem.</summary>
+        public virtual FilesystemOption[] Options => Array.Empty<FilesystemOption>();
+
+        /// <summary>
+        /// Validate and store a format-specific option in the target filesystem.
+        /// Plugins can override this if they need extra validation.
+        /// </summary>
+        public virtual bool TryApplyOption(Elements.Fs.LinuxFilesystem Fs, string Name, string Value, out string Error)
+        {
+            Error = null;
+            FilesystemOption Option = null;
+            foreach (var O in Options)
+            {
+                if (string.Equals(O.Name, Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    Option = O;
+                    break;
+                }
+            }
+
+            if (Option == null)
+            {
+                Error = "Unknown option '" + Name + "' for " + Format;
+                return false;
+            }
+
+            string Normalized = Value;
+            switch (Option.Type)
+            {
+                case FilesystemOptionType.Bool:
+                    if (string.Equals(Value, "1", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(Value, "true", StringComparison.OrdinalIgnoreCase))
+                        Normalized = "true";
+                    else if (string.Equals(Value, "0", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(Value, "false", StringComparison.OrdinalIgnoreCase))
+                        Normalized = "false";
+                    else
+                    {
+                        Error = "Option '" + Name + "' expects true/false";
+                        return false;
+                    }
+                    break;
+
+                case FilesystemOptionType.Integer:
+                    long Integer;
+                    if (!Int64.TryParse(Value, out Integer))
+                    {
+                        Error = "Option '" + Name + "' expects an integer";
+                        return false;
+                    }
+                    Normalized = Integer.ToString();
+                    break;
+
+                case FilesystemOptionType.Size:
+                    long Size;
+                    if (!TryParseSize(Value, out Size))
+                    {
+                        Error = "Option '" + Name + "' expects a size (e.g. 4096, 64K, 1M)";
+                        return false;
+                    }
+                    Normalized = Size.ToString();
+                    break;
+
+                case FilesystemOptionType.Enum:
+                    bool Allowed = false;
+                    foreach (var V in Option.AllowedValues)
+                        if (string.Equals(V, Value, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Normalized = V;
+                            Allowed = true;
+                            break;
+                        }
+                    if (!Allowed)
+                    {
+                        Error = "Option '" + Name + "' expects one of: " + string.Join(", ", Option.AllowedValues);
+                        return false;
+                    }
+                    break;
+            }
+
+            Fs.SetFilesystemOption(Format, Option.Name, Normalized);
+            return true;
+        }
+
+        protected static bool TryParseSize(string Value, out long Size)
+        {
+            Size = 0;
+            if (string.IsNullOrWhiteSpace(Value))
+                return false;
+
+            string Text = Value.Trim();
+            long Multiplier = 1;
+            char Suffix = Char.ToUpperInvariant(Text[Text.Length - 1]);
+            if ((Suffix == 'K') || (Suffix == 'M') || (Suffix == 'G'))
+            {
+                Multiplier = (Suffix == 'K') ? 1024L : ((Suffix == 'M') ? 1024L * 1024 : 1024L * 1024 * 1024);
+                Text = Text.Substring(0, Text.Length - 1);
+            }
+
+            long Parsed;
+            if (!Int64.TryParse(Text, out Parsed) || (Parsed < 0))
+                return false;
+
+            Size = Parsed * Multiplier;
+            return true;
+        }
+
         /// <summary>
         /// Is filesystem need compression in target image
         /// </summary>

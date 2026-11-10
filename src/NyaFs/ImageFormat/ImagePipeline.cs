@@ -129,6 +129,7 @@ namespace NyaFs.ImageFormat
                 {
                     var Dst = GetKernel();
                     try { Reader.ReadToKernel(Dst); } catch { }
+                    Dst.KernelFormat = KernelPlugin.Format;
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, KernelPlugin.Format, Dst.Info.Compression, Container, KernelPlugin.Format));
@@ -168,6 +169,7 @@ namespace NyaFs.ImageFormat
                 {
                     var Dst = GetDtb();
                     try { Reader.ReadToDevTree(Dst); } catch { }
+                    Dst.DevtreeFormat = DtbPlugin.Format;
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, DtbPlugin.Format, Dst.Info.Compression, Container, DtbPlugin.Format));
@@ -188,6 +190,7 @@ namespace NyaFs.ImageFormat
                 {
                     var Dst = GetKernel();
                     try { Reader.ReadToKernel(Dst); } catch { }
+                    Dst.KernelFormat = Plugin.Format;
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
@@ -224,6 +227,7 @@ namespace NyaFs.ImageFormat
                 {
                     var Dst = GetDtb();
                     try { Reader.ReadToDevTree(Dst); } catch { }
+                    Dst.DevtreeFormat = Plugin.Format;
                     if (Dst.Loaded)
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));

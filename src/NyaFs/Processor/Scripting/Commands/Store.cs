@@ -112,6 +112,21 @@ namespace NyaFs.Processor.Scripting.Commands
                 }
 
                 // Raw kernel bytes are provided by the kernel plugins (no hardcoded writer here).
+                var DirectPlugin = Processor.Plugins.ResolveKernel(Format);
+                if ((DirectPlugin != null) && (DirectPlugin.Format != "raw") && (DirectPlugin.Format != "legacy") && DirectPlugin.SupportWrite)
+                {
+                    var DirectWriter = DirectPlugin.GetKernelWriter(Kernel);
+                    if (DirectWriter != null)
+                    {
+                        DirectWriter.WriteKernel(Kernel);
+                        if (DirectWriter.HasRawStreamData)
+                        {
+                            System.IO.File.WriteAllBytes(Path, DirectWriter.RawStream);
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as {Format} image!");
+                        }
+                    }
+                }
+
                 var Plugin = Processor.Plugins.GetKernelByFormat("raw");
                 var Writer = ((Plugin != null) && Plugin.SupportWrite) ? Plugin.GetKernelWriter(Kernel) : null;
                 if (Writer == null)

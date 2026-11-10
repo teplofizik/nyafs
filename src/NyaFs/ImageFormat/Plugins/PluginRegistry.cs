@@ -120,11 +120,31 @@ namespace NyaFs.ImageFormat.Plugins
                 ?? Filesystems.Find(S => S.Aliases.Any(A => string.Equals(A, NameOrFormat, StringComparison.OrdinalIgnoreCase)));
         }
 
+        public KernelPlugin ResolveKernel(string NameOrFormat)
+        {
+            if (string.IsNullOrEmpty(NameOrFormat))
+                return null;
+
+            return Kernels.Find(S => string.Equals(S.Format, NameOrFormat, StringComparison.OrdinalIgnoreCase))
+                ?? Kernels.Find(S => string.Equals(S.Name, NameOrFormat, StringComparison.OrdinalIgnoreCase))
+                ?? Kernels.Find(S => S.Aliases.Any(A => string.Equals(A, NameOrFormat, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        public DevtreePlugin ResolveDtb(string NameOrFormat)
+        {
+            if (string.IsNullOrEmpty(NameOrFormat))
+                return null;
+
+            return Dtbs.Find(S => string.Equals(S.Format, NameOrFormat, StringComparison.OrdinalIgnoreCase))
+                ?? Dtbs.Find(S => string.Equals(S.Name, NameOrFormat, StringComparison.OrdinalIgnoreCase))
+                ?? Dtbs.Find(S => S.Aliases.Any(A => string.Equals(A, NameOrFormat, StringComparison.OrdinalIgnoreCase)));
+        }
+
         public KernelPlugin GetKernelByFormat(string Format) =>
-            Kernels.Find(S => S.Format == Format);
+            ResolveKernel(Format);
 
         public DevtreePlugin GetDtbByFormat(string Format) =>
-            Dtbs.Find(S => S.Format == Format);
+            ResolveDtb(Format);
 
         public CompositeImagePlugin GetImage(string Name) =>
             Images.Find(S => S.Name == Name);

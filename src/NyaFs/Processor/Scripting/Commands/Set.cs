@@ -539,11 +539,11 @@ namespace NyaFs.Processor.Scripting.Commands
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid log level: {Value}!");
                         }
                     default:
-                        return ApplyFilesystemOption(Processor, Param, Value);
+                        return ApplyPluginOption(Processor, Type, Param, Value);
                 }
             }
 
-            private ScriptStepResult ApplyFilesystemOption(ImageProcessor Processor, string Param, string Value)
+            private ScriptStepResult ApplyPluginOption(ImageProcessor Processor, string Type, string Param, string Value)
             {
                 int Dot = Param.IndexOf('.');
                 if (Dot <= 0)
@@ -551,18 +551,42 @@ namespace NyaFs.Processor.Scripting.Commands
 
                 string Format = Param.Substring(0, Dot);
                 string Name = Param.Substring(Dot + 1);
-                var Plugin = Processor.Plugins.ResolveFilesystem(Format);
-                if (Plugin == null)
-                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown filesystem format '{Format}'!");
+                string Error;
 
+                if (Type == "kernel")
+                {
+                    var Plugin = Processor.Plugins.ResolveKernel(Format);
+                    var Kernel = Processor.GetKernel();
+                    if (Plugin == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown kernel format '{Format}'!");
+                    if (Kernel == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Kernel is not loaded");
+                    if (!Plugin.TryApplyOption(Kernel, Name, Value, out Error))
+                        return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
+                }
+
+                if (Type == "devtree")
+                {
+                    var Plugin = Processor.Plugins.ResolveDtb(Format);
+                    var Dtb = Processor.GetDevTree();
+                    if (Plugin == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format '{Format}'!");
+                    if (Dtb == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Device tree is not loaded");
+                    if (!Plugin.TryApplyOption(Dtb, Name, Value, out Error))
+                        return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
+                }
+
+                var FsPlugin = Processor.Plugins.ResolveFilesystem(Format);
                 var Fs = Processor.GetFs();
+                if (FsPlugin == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown filesystem format '{Format}'!");
                 if (Fs == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
-
-                string Error;
-                if (!Plugin.TryApplyOption(Fs, Name, Value, out Error))
+                if (!FsPlugin.TryApplyOption(Fs, Name, Value, out Error))
                     return new ScriptStepResult(ScriptStepStatus.Error, Error);
-
                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
             }
 

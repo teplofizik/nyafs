@@ -58,7 +58,23 @@ namespace NyaFs.Processor.Scripting.Commands
                         return new ScriptStepResult(ScriptStepStatus.Ok, null);
                     }
 
-                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown command or filesystem: {Topic}");
+                    var KernelPlugin = Processor.Plugins.ResolveKernel(Topic);
+                    if (KernelPlugin != null)
+                    {
+                        Log.Write(0, $"{KernelPlugin.Format} ({KernelPlugin.Name}) [kernel]:");
+                        PrintOptions(KernelPlugin.Options);
+                        return new ScriptStepResult(ScriptStepStatus.Ok, null);
+                    }
+
+                    var DtbPlugin = Processor.Plugins.ResolveDtb(Topic);
+                    if (DtbPlugin != null)
+                    {
+                        Log.Write(0, $"{DtbPlugin.Format} ({DtbPlugin.Name}) [devtree]:");
+                        PrintOptions(DtbPlugin.Options);
+                        return new ScriptStepResult(ScriptStepStatus.Ok, null);
+                    }
+
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown command, filesystem, kernel or devtree: {Topic}");
                 }
 
                 Log.Write(0, "Commands:");
@@ -79,8 +95,45 @@ namespace NyaFs.Processor.Scripting.Commands
                 }
 
                 Log.Write(0, "");
-                Log.Write(0, "Use: help <command> or help <filesystem-format>");
+                Log.Write(0, "Kernel formats and options:");
+                foreach (var Plugin in Processor.Plugins.GetKernels().OrderBy(P => P.Format))
+                {
+                    Log.Write(0, $"  {Plugin.Format} ({Plugin.Name})");
+                    foreach (var Option in Plugin.Options)
+                        Log.Write(0, $"    {Option.Name} <{Option.Type}>");
+                }
+
+                Log.Write(0, "");
+                Log.Write(0, "Device-tree formats and options:");
+                foreach (var Plugin in Processor.Plugins.GetDtbs().OrderBy(P => P.Format))
+                {
+                    Log.Write(0, $"  {Plugin.Format} ({Plugin.Name})");
+                    foreach (var Option in Plugin.Options)
+                        Log.Write(0, $"    {Option.Name} <{Option.Type}>");
+                }
+
+                Log.Write(0, "");
+                Log.Write(0, "Use: help <command>, help <filesystem-format>, help <kernel-format> or help <devtree-format>");
                 return new ScriptStepResult(ScriptStepStatus.Ok, null);
+            }
+
+            private static void PrintOptions(NyaFs.ImageFormat.Plugins.Base.FilesystemOption[] Options)
+            {
+                if (Options.Length == 0)
+                {
+                    Log.Write(0, "  no options");
+                    return;
+                }
+
+                foreach (var Option in Options)
+                {
+                    string Allowed = (Option.Type == NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Enum)
+                        ? " [" + String.Join("|", Option.AllowedValues) + "]"
+                        : "";
+                    string Default = (Option.DefaultValue != null) ? $" default={Option.DefaultValue}" : "";
+                    string Description = (Option.Description != null) ? " - " + Option.Description : "";
+                    Log.Write(0, $"  {Option.Name} <{Option.Type}>{Allowed}{Default}{Description}");
+                }
             }
         }
     }

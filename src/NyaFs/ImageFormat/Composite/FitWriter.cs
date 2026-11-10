@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -75,7 +75,7 @@ namespace NyaFs.ImageFormat.Composite
             if(KernelAvailable)
             {
                 var K = Blob.GetKernel(0);
-                var Data = Helper.FitHelper.GetCompressedData(K.Image, K.Info.Compression);
+                var Data = Helper.FitHelper.GetCompressedData(GetKernelData(K), K.Info.Compression);
                 var Kernel = new FlattenedDeviceTree.Types.Node("kernel@default");
 
                 Kernel.AddStringValue("description", "Linux kernel");
@@ -102,7 +102,7 @@ namespace NyaFs.ImageFormat.Composite
             if(DevtreeAvailable)
             {
                 var DT = Blob.GetDevTree(0);
-                var Raw = new FlattenedDeviceTree.Writer.FDTWriter(DT.DevTree).GetBinary();
+                var Raw = GetDevtreeData(DT);
                 var Data = Helper.FitHelper.GetCompressedData(Raw, DT.Info.Compression);
                 var DevTree = new FlattenedDeviceTree.Types.Node("fdt@default");
 
@@ -141,6 +141,44 @@ namespace NyaFs.ImageFormat.Composite
             }
 
             return Node;
+        }
+
+        private static byte[] GetKernelData(Elements.Kernel.LinuxKernel Kernel)
+        {
+            if (!string.IsNullOrEmpty(Kernel.KernelFormat))
+            {
+                var Plugin = Plugins.PluginHost.Current.ResolveKernel(Kernel.KernelFormat);
+                if ((Plugin != null) && Plugin.SupportWrite)
+                {
+                    var Writer = Plugin.GetKernelWriter(Kernel);
+                    if (Writer != null)
+                    {
+                        Writer.WriteKernel(Kernel);
+                        if (Writer.HasRawStreamData)
+                            return Writer.RawStream;
+                    }
+                }
+            }
+            return Kernel.Image;
+        }
+
+        private static byte[] GetDevtreeData(Elements.Dtb.DeviceTree Dtb)
+        {
+            if (!string.IsNullOrEmpty(Dtb.DevtreeFormat))
+            {
+                var Plugin = Plugins.PluginHost.Current.ResolveDtb(Dtb.DevtreeFormat);
+                if ((Plugin != null) && Plugin.SupportWrite)
+                {
+                    var Writer = Plugin.GetDevtreeWriter(Dtb);
+                    if (Writer != null)
+                    {
+                        Writer.WriteDevtree(Dtb);
+                        if (Writer.HasRawStreamData)
+                            return Writer.RawStream;
+                    }
+                }
+            }
+            return new FlattenedDeviceTree.Writer.FDTWriter(Dtb.DevTree).GetBinary();
         }
 
         private FlattenedDeviceTree.Types.Node GetHashNode(byte[] Data)

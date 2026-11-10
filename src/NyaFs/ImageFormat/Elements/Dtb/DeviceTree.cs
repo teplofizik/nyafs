@@ -17,6 +17,17 @@ namespace NyaFs.ImageFormat.Elements.Dtb
         /// </summary>
         public FlattenedDeviceTree.FlattenedDeviceTree DevTree = new FlattenedDeviceTree.FlattenedDeviceTree();
 
+        /// <summary>Canonical format reported by the loaded device-tree plugin.</summary>
+        public string DevtreeFormat;
+
+        private readonly Dictionary<string, string> PluginOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        public void SetDevtreeOption(string Format, string Name, string Value) =>
+            PluginOptions[Format + "." + Name] = Value;
+
+        public string GetDevtreeOption(string Format, string Name, string DefaultValue = null) =>
+            PluginOptions.TryGetValue(Format + "." + Name, out string Value) ? Value : DefaultValue;
+
         /// <summary>
         /// Is device tree loaded
         /// </summary>

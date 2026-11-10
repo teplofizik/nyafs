@@ -29,6 +29,32 @@ namespace NyaFs.ImageFormat.Plugins.Base
 
         public string Format => ImageName;
 
+        public virtual string DisplayName => ImageName;
+        public virtual string[] Aliases => Array.Empty<string>();
+        public virtual string[] Extensions => Array.Empty<string>();
+        public virtual FilesystemOption[] Options => Array.Empty<FilesystemOption>();
+
+        public virtual bool TryApplyOption(Elements.Kernel.LinuxKernel Kernel, string Name, string Value, out string Error)
+        {
+            Error = null;
+            FilesystemOption Option = null;
+            foreach (var O in Options)
+                if (string.Equals(O.Name, Name, StringComparison.OrdinalIgnoreCase)) { Option = O; break; }
+
+            if (Option == null)
+            {
+                Error = "Unknown option '" + Name + "' for " + Format;
+                return false;
+            }
+
+            string Normalized;
+            if (!PluginOptionValidation.Validate(Option, Value, out Normalized, out Error))
+                return false;
+
+            Kernel.SetKernelOption(Format, Option.Name, Normalized);
+            return true;
+        }
+
         /// <summary>
         /// Is filesystem need compression in target image
         /// </summary>

@@ -49,6 +49,13 @@ namespace NyaFs.Processor.Scripting.Commands
                 new Params.StringScriptArgsParam("version")
             }));
 
+            AddConfig(new ScriptArgsConfig(5, new ScriptArgsParam[]
+            {
+                new Params.EnumScriptArgsParam("action", new[] { "adddir" }),
+                new Params.StringScriptArgsParam("directory"),
+                new Params.StringScriptArgsParam("root-package")
+            }));
+
             AddConfig(new ScriptArgsConfig(4, new ScriptArgsParam[]
             {
                 new Params.EnumScriptArgsParam("action", new[] { "createdir" }),
@@ -63,6 +70,9 @@ namespace NyaFs.Processor.Scripting.Commands
         public override ScriptStep Get(ScriptArgs Args)
         {
             var A = Args.RawArgs;
+            if (Args.ArgConfig == 5)
+                return new PkgScriptStep(A[0], null, A[1], A[2], null, null);
+
             var Compression = (Args.ArgConfig == 2 || Args.ArgConfig == 4) ? A[5] : null;
             if (Args.ArgConfig == 0)
                 return new PkgScriptStep(A[0], A[1], null, null, null, null);
@@ -114,7 +124,15 @@ namespace NyaFs.Processor.Scripting.Commands
                                     return new ScriptStepResult(ScriptStepStatus.Warning,
                                         $"Package {P.Metadata} does not match target ({Fs.Info.Architecture}/{Fs.Info.OperatingSystem}), skipped");
 
+                                var Db = PackageDatabase.Load(Fs);
+                                string Error;
+                                if (!Db.CheckInstall(P.Metadata, out Error))
+                                    return new ScriptStepResult(ScriptStepStatus.Error, Error);
+
                                 int Count = P.AddTo(Fs, "/");
+                                Db.Set(P.Metadata);
+                                if (!Db.Save(Fs, out Error))
+                                    return new ScriptStepResult(ScriptStepStatus.Error, Error);
                                 return new ScriptStepResult(ScriptStepStatus.Ok,
                                     $"Installed {Count} items from package {P.Metadata}");
                             }
@@ -138,7 +156,38 @@ namespace NyaFs.Processor.Scripting.Commands
                                 return new ScriptStepResult(ScriptStepStatus.Ok,
                                     $"Created package {Resolved}: {P.Metadata}, entries={P.Entries.Count}");
                             }
-                        case "createdir":
+                        case "adddir":
+                            {
+                                var Dir = this.DetectDirPath(Path);
+                                if (Dir == null)
+                                    return new ScriptStepResult(ScriptStepStatus.Error, "Directory not found: " + Path);
+
+                                var Candidates = new System.Collections.Generic.List<NyaPackage>();
+                                foreach (var PackageFile in System.IO.Directory.GetFiles(Dir, "*.nyapkg"))
+                                    Candidates.Add(NyaPackage.Open(System.IO.File.ReadAllBytes(PackageFile)));
+
+                                System.Collections.Generic.List<NyaPackage> Order;
+                                string Error;
+                                if (!PackageDatabase.Resolve(Candidates, PkgName, out Order, out Error))
+                                    return new ScriptStepResult(ScriptStepStatus.Error, Error);
+
+                                var Fs = Processor.GetFs();
+                                if (Fs == null)
+                                    return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+                                var Db = PackageDatabase.Load(Fs);
+                                var Total = 0;
+                                foreach (var Package in Order)
+                                {
+                                    if (!Db.CheckInstall(Package.Metadata, out Error))
+                                        return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                                    Total += Package.AddTo(Fs, "/");
+                                    Db.Set(Package.Metadata);
+                                }
+                                if (!Db.Save(Fs, out Error))
+                                    return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                                return new ScriptStepResult(ScriptStepStatus.Ok,
+                                    $"Installed {Order.Count} packages ({Total} items) from {Dir}");
+                            }                        case "createdir":
                             {
                                 if (string.IsNullOrEmpty(Path) || string.IsNullOrEmpty(PkgName))
                                     return new ScriptStepResult(ScriptStepStatus.Error,

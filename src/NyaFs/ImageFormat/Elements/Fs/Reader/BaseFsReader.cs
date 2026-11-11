@@ -9,12 +9,14 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
         protected Filesystem.Universal.IFilesystemReader FsReader;
         Types.FsType FsType;
         long FsSize;
+        bool SourceRaw;
 
-        public BaseFsReader(Types.FsType FsType, Filesystem.Universal.IFilesystemReader FsReader, long FsSize = 0)
+        public BaseFsReader(Types.FsType FsType, Filesystem.Universal.IFilesystemReader FsReader, long FsSize = 0, bool SourceRaw = false)
         {
             this.FsType = FsType;
             this.FsReader = FsReader;
             this.FsSize = FsSize;
+            this.SourceRaw = SourceRaw;
         }
 
         /// <summary>
@@ -49,6 +51,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
 
             Dst.FilesystemType = FsType;
             Dst.FsSize = FsSize;
+            Dst.UbiFsRaw = SourceRaw;
 
             if (FsReader is Filesystem.CramFs.ICramFsEndian Endian)
                 Dst.CramFsBigEndian = Endian.BigEndian;

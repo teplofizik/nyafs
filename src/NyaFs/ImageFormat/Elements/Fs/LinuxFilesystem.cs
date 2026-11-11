@@ -77,6 +77,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// </summary>
         public Filesystem.UbiFs.Ubifs.UbifsCompression UbiFsCompression = Filesystem.UbiFs.Ubifs.UbifsCompression.None;
 
+        /// <summary>Write a raw UBIFS volume instead of a UBI container.</summary>
+        public bool UbiFsRaw = false;
+
         /// <summary>
         /// Compression for regular file data when writing an F2FS image (None disables it).
         /// </summary>

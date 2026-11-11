@@ -15,6 +15,8 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
     {
         public readonly UbiFsReader Ubi;
         public readonly UbiVolume Volume;
+        private readonly byte[] RawSource;
+        private readonly int RawLebSize;
 
         public byte[] Superblock;
         public byte[] Master;
@@ -39,13 +41,29 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             Init();
         }
 
-        public int LebSize => Ubi.LebSize;
+        public UbifsReader(byte[] Raw, int LebSize)
+        {
+            RawSource = Raw;
+            RawLebSize = LebSize;
+            Init();
+        }
+
+        public int LebSize => (RawSource != null) ? RawLebSize : Ubi.LebSize;
 
         private byte[] Leb(uint Lnum)
         {
             if (!LebCache.TryGetValue(Lnum, out var D))
             {
-                D = Ubi.ReadLeb(Volume.Id, Lnum);
+                if (RawSource != null)
+                {
+                    var Offset = (long)Lnum * RawLebSize;
+                    if ((Offset < 0) || (Offset + RawLebSize > RawSource.Length))
+                        throw new InvalidOperationException("UBIFS raw LEB " + Lnum + " is out of range");
+                    D = new byte[RawLebSize];
+                    Array.Copy(RawSource, Offset, D, 0, RawLebSize);
+                }
+                else
+                    D = Ubi.ReadLeb(Volume.Id, Lnum);
                 LebCache[Lnum] = D;
             }
             return D;

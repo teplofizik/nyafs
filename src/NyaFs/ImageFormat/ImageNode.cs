@@ -2,6 +2,14 @@ using System.Collections.Generic;
 
 namespace NyaFs.ImageFormat
 {
+    /// <summary>One hash node from a FIT image node (algo + optional stored value).</summary>
+    public class ImageHash
+    {
+        public string Name = "hash@1";
+        public string Algorithm = "sha1";
+        public byte[] Value = null;
+    }
+
     /// <summary>One configuration entry from a FIT/container header.</summary>
     public class ImageContainerConfiguration
     {
@@ -57,6 +65,9 @@ namespace NyaFs.ImageFormat
 
         /// <summary>All container configurations, in source order.</summary>
         public readonly List<ImageContainerConfiguration> Configurations = new List<ImageContainerConfiguration>();
+
+        /// <summary>FIT hash nodes declared for this image.</summary>
+        public readonly List<ImageHash> Hashes = new List<ImageHash>();
 
         /// <summary>Nested elements (for composite containers).</summary>
         public readonly List<ImageNode> Children = new List<ImageNode>();

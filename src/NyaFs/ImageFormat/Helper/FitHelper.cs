@@ -463,6 +463,22 @@ namespace NyaFs.ImageFormat.Helper
             }
         }
 
+        public static byte[] CalcHash(string Algorithm, byte[] Data)
+        {
+            switch ((Algorithm ?? "sha1").ToLowerInvariant())
+            {
+                case "sha1": return CalcSHA1Hash(Data);
+                case "sha256": return CalcSHA256Hash(Data);
+                case "sha512": return CalcSHA512Hash(Data);
+                case "crc32":
+                    {
+                        var Value = HashHelper.Crc32(Data);
+                        return new[] { (byte)(Value >> 24), (byte)(Value >> 16), (byte)(Value >> 8), (byte)Value };
+                    }
+                default: return null;
+            }
+        }
+
         public static byte[] CalcSHA1Hash(byte[] Data)
         {
             using (var sha1 = SHA1.Create())

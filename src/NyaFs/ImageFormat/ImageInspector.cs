@@ -155,6 +155,7 @@ namespace NyaFs.ImageFormat
                         Description = CI.Description
                     };
                     Child.Path = (Node.Path.Length == 0) ? Child.Name : Node.Path + "/" + Child.Name;
+                    Child.Hashes.AddRange(CI.Hashes ?? new ImageHash[0]);
 
                     var ChildSize = (CI.Size >= 0) ? CI.Size : (CI.Content?.Length ?? 0);
                     if (CI.Content != null)

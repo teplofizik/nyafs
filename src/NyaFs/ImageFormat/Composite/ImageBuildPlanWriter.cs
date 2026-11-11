@@ -145,10 +145,22 @@ namespace NyaFs.ImageFormat.Composite
                     (Child.Kind == ImageKind.Filesystem))
                     AddLoadEntry(ImageNode, Info);
 
-                var Hash = new FlattenedDeviceTree.Types.Node("hash@1");
-                Hash.AddStringValue("algo", "sha1");
-                Hash.AddRawValue("value", FitHelper.CalcSHA1Hash(Data));
-                ImageNode.Nodes.Add(Hash);
+                var Hashes = (Child.Hashes.Count > 0)
+                    ? Child.Hashes
+                    : new List<ImageHash> { new ImageHash { Name = "hash@1", Algorithm = "sha1" } };
+                foreach (var HashInfo in Hashes)
+                {
+                    var HashValue = (!Child.Dirty && (HashInfo.Value != null))
+                        ? HashInfo.Value
+                        : FitHelper.CalcHash(HashInfo.Algorithm, Data);
+                    if (HashValue == null)
+                        continue;
+
+                    var Hash = new FlattenedDeviceTree.Types.Node(HashInfo.Name);
+                    Hash.AddStringValue("algo", HashInfo.Algorithm);
+                    Hash.AddRawValue("value", HashValue);
+                    ImageNode.Nodes.Add(Hash);
+                }
 
                 ImagesNode.Nodes.Add(ImageNode);
             }

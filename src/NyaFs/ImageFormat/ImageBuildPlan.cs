@@ -30,6 +30,7 @@ namespace NyaFs.ImageFormat
         public string DefaultConfiguration = null;
         public string Description = null;
         public readonly List<ImageContainerConfiguration> Configurations = new List<ImageContainerConfiguration>();
+        public readonly List<ImageHash> Hashes = new List<ImageHash>();
         public bool Dirty;
 
         public bool IsContainer => Children.Count > 0;
@@ -232,6 +233,8 @@ namespace NyaFs.ImageFormat
 
             foreach (var Config in Source.Configurations)
                 Node.Configurations.Add(Config);
+            foreach (var Hash in Source.Hashes)
+                Node.Hashes.Add(Hash);
 
             foreach (var Child in Source.Children)
                 Node.Children.Add(Convert(Child));

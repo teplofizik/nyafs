@@ -77,8 +77,21 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             if (Entry != null)
                 Info.EntryPointAddress = (Entry.Length == 8) ? Entry.ReadUInt64BE(0) : Entry.ReadUInt32BE(0);
 
+            var Hashes = new List<ImageHash>();
+            foreach (var HashNode in Node.Nodes)
+            {
+                if (!HashNode.Name.StartsWith("hash@"))
+                    continue;
+                Hashes.Add(new ImageHash
+                {
+                    Name = HashNode.Name,
+                    Algorithm = HashNode.GetStringValue("algo") ?? "sha1",
+                    Value = HashNode.GetValue("value")
+                });
+            }
+
             Res.Add(new ContainedImage(NodeName, Kind, "fit", -1, Data.Length, Data, Compression, Info,
-                Node.GetStringValue("description")));
+                Node.GetStringValue("description"), Hashes.ToArray()));
         }
 
         public override string ReadDescription(ImageData Image)

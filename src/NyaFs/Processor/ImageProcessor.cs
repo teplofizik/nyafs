@@ -116,6 +116,9 @@ namespace NyaFs.Processor
 
         public ImageFormat.BaseImageBlob GetBlob() => Blob;
 
+        /// <summary>Currently selected plan node for use/import and editing.</summary>
+        public ImageFormat.ImageBuildNode ActiveNode { get; set; }
+
         public bool IsFsLoaded => Blob.IsProvidedFs;
 
         public void Process(Scripting.Script Script)

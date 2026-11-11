@@ -1,0 +1,318 @@
+using NyaFs.FlattenedDeviceTree;
+using NyaFs.ImageFormat.Helper;
+using NyaFs.ImageFormat.Types;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+
+namespace NyaFs.ImageFormat.Composite
+{
+    /// <summary>
+    /// Writes a plan tree bottom-up. Clean nodes are inserted as their original
+    /// bytes; dirty leaves are serialized and dirty CIMG/FIT parents are rebuilt.
+    /// </summary>
+    public class ImageBuildPlanWriter
+    {
+        private readonly ImageBuildPlan Plan;
+
+        public ImageBuildPlanWriter(ImageBuildPlan Plan)
+        {
+            this.Plan = Plan;
+        }
+
+        public bool CanWrite => (Plan != null) && (Plan.Root != null) &&
+            ((Plan.Root.Format == "cimg") || (Plan.Root.Format == "fit"));
+
+        public byte[] Build(out string Error)
+        {
+            Error = null;
+            if (!CanWrite)
+            {
+                Error = "No plan writer for root format '" + (Plan?.Root?.Format ?? "?") + "'";
+                return null;
+            }
+
+            try
+            {
+                if (Plan.Root.Format == "fit")
+                    return BuildFit(Plan.Root, out Error);
+
+                return BuildCImg(Plan.Root, out Error);
+            }
+            catch (Exception E)
+            {
+                Error = E.Message;
+                return null;
+            }
+        }
+
+        private byte[] BuildCImg(ImageBuildNode Node, out string Error)
+        {
+            Error = null;
+            if (Node.Children.Count != 1)
+            {
+                Error = "CIMG plan must contain exactly one payload node";
+                return null;
+            }
+
+            var Payload = BuildNode(Node.Children[0], out Error);
+            if (Payload == null)
+                return null;
+
+            var Builder = new CImgBuilder
+            {
+                Label = GetOption(Node, "label", "gpt"),
+                ChunkSize = (int)ParseSize(GetOption(Node, "chunk-size", "16M"), 16 * 1024 * 1024),
+                Offset = (uint)ParseSize(GetOption(Node, "offset", "0"), 0),
+                PartSize = (uint)ParseSize(GetOption(Node, "part-size", "0"), 0)
+            };
+            return Builder.Build(Payload);
+        }
+
+        private byte[] BuildNode(ImageBuildNode Node, out string Error)
+        {
+            Error = null;
+
+            if (!Node.Dirty && (Node.Raw != null))
+                return Node.Raw;
+
+            if (Node.Format == "fit")
+                return BuildFit(Node, out Error);
+
+            if (Node.Format == "cimg")
+                return BuildCImg(Node, out Error);
+
+            return SerializeLeaf(Node, out Error);
+        }
+
+        private byte[] BuildFit(ImageBuildNode Node, out string Error)
+        {
+            Error = null;
+
+            var Images = new List<Tuple<string, ImageBuildNode, byte[], ImageInfo>>();
+            var Used = new HashSet<string>();
+
+            foreach (var Child in Node.Children)
+            {
+                if ((Child.Kind != ImageKind.Kernel) && (Child.Kind != ImageKind.Filesystem) && (Child.Kind != ImageKind.Devtree))
+                    continue;
+
+                var Data = BuildNode(Child, out Error);
+                if (Data == null)
+                    return null;
+
+                var Info = Child.Dirty ? GetInfo(Child) : (Child.Info ?? GetInfo(Child));
+                var Name = Unique(Child.Name, Used);
+                Images.Add(Tuple.Create(Name, Child, Data, Info));
+            }
+
+            if (Images.Count == 0)
+            {
+                Error = "FIT plan has no kernel/devicetree/filesystem nodes";
+                return null;
+            }
+
+            var FitImage = new FlattenedDeviceTree.FlattenedDeviceTree();
+            FitImage.Root.AddStringValue("description", "U-Boot uImage FDT blobs");
+
+            var ImagesNode = new FlattenedDeviceTree.Types.Node("images");
+            ImagesNode.AddUInt32Value("#address-cells", 1);
+            var Config = new FlattenedDeviceTree.Types.Node("config@default");
+            Config.AddStringValue("description", "Image package");
+
+            foreach (var Item in Images)
+            {
+                var Name = Item.Item1;
+                var Child = Item.Item2;
+                var Data = Item.Item3;
+                var Info = Item.Item4;
+
+                var ImageNode = new FlattenedDeviceTree.Types.Node(Name);
+                ImageNode.AddStringValue("description", GetDescription(Child));
+                ImageNode.AddRawValue("data", Data);
+                ImageNode.AddStringValue("type", FitHelper.GetType(Info.Type));
+                ImageNode.AddStringValue("compression", FitHelper.GetCompression(GetCompression(Child)));
+                if (Info.Architecture != CPU.IH_ARCH_INVALID)
+                    ImageNode.AddStringValue("arch", FitHelper.GetCPUArchitecture(Info.Architecture));
+                if (Info.OperatingSystem != OS.IH_OS_INVALID)
+                    ImageNode.AddStringValue("os", FitHelper.GetOperatingSystem(Info.OperatingSystem));
+
+                if (Child.Kind == ImageKind.Kernel)
+                {
+                    Config.AddStringValue("kernel", Name);
+                    if (FitHelper.Is64BitArchitecture(Info.Architecture))
+                    {
+                        ImageNode.AddUInt64Value("load", Info.DataLoadAddress);
+                        ImageNode.AddUInt64Value("entry", Info.EntryPointAddress);
+                    }
+                    else
+                    {
+                        ImageNode.AddUInt32Value("load", Convert.ToUInt32(Info.DataLoadAddress & 0xFFFFFFFFUL));
+                        ImageNode.AddUInt32Value("entry", Convert.ToUInt32(Info.EntryPointAddress & 0xFFFFFFFFUL));
+                    }
+                }
+                else if (Child.Kind == ImageKind.Devtree)
+                    Config.AddStringValue("fdt", Name);
+                else if (Child.Kind == ImageKind.Filesystem)
+                    Config.AddStringValue("ramdisk", Name);
+
+                var Hash = new FlattenedDeviceTree.Types.Node("hash@1");
+                Hash.AddStringValue("algo", "sha1");
+                Hash.AddRawValue("value", FitHelper.CalcSHA1Hash(Data));
+                ImageNode.Nodes.Add(Hash);
+
+                ImagesNode.Nodes.Add(ImageNode);
+            }
+
+            var Configurations = new FlattenedDeviceTree.Types.Node("configurations");
+            Configurations.AddStringValue("default", "config@default");
+            Configurations.Nodes.Add(Config);
+
+            FitImage.Root.Nodes.Add(ImagesNode);
+            FitImage.Root.Nodes.Add(Configurations);
+
+            return new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+        }
+
+        private byte[] SerializeLeaf(ImageBuildNode Node, out string Error)
+        {
+            Error = null;
+            byte[] Raw = null;
+
+            switch (Node.Kind)
+            {
+                case ImageKind.Filesystem:
+                    if (Node.Fs == null)
+                    {
+                        Error = "No filesystem object for " + Node.Path;
+                        return null;
+                    }
+                    var FsWriter = Elements.Fs.Writer.Writer.GetRawFilesystemWriter(Node.Fs);
+                    FsWriter.WriteFs(Node.Fs);
+                    if (!FsWriter.HasRawStreamData)
+                    {
+                        Error = "Cannot serialize filesystem " + Node.Path;
+                        return null;
+                    }
+                    Raw = FsWriter.RawStream;
+                    break;
+
+                case ImageKind.Kernel:
+                    if (Node.Kernel == null)
+                    {
+                        Error = "No kernel object for " + Node.Path;
+                        return null;
+                    }
+                    Raw = GetKernelData(Node.Kernel);
+                    break;
+
+                case ImageKind.Devtree:
+                    if (Node.Dtb == null)
+                    {
+                        Error = "No devicetree object for " + Node.Path;
+                        return null;
+                    }
+                    Raw = new FlattenedDeviceTree.Writer.FDTWriter(Node.Dtb.DevTree).GetBinary();
+                    break;
+
+                default:
+                    Error = "Cannot serialize " + Node.Kind + " at " + Node.Path;
+                    return null;
+            }
+
+            return FitHelper.GetCompressedData(Raw, GetCompression(Node));
+        }
+
+        private static byte[] GetKernelData(Elements.Kernel.LinuxKernel Kernel)
+        {
+            if (!String.IsNullOrEmpty(Kernel.KernelFormat))
+            {
+                var Plugin = Plugins.PluginHost.Current.ResolveKernel(Kernel.KernelFormat);
+                if ((Plugin != null) && Plugin.SupportWrite)
+                {
+                    var Writer = Plugin.GetKernelWriter(Kernel);
+                    if (Writer != null)
+                    {
+                        Writer.WriteKernel(Kernel);
+                        if (Writer.HasRawStreamData)
+                            return Writer.RawStream;
+                    }
+                }
+            }
+
+            return Kernel.Image;
+        }
+
+        private static CompressionType GetCompression(ImageBuildNode Node)
+        {
+            if ((Node.Compression == CompressionType.IH_COMP_NONE) && (Node.Info != null))
+                return Node.Info.Compression;
+
+            return Node.Compression;
+        }
+
+        private static ImageInfo GetInfo(ImageBuildNode Node)
+        {
+            if (Node.Kernel != null) return Node.Kernel.Info;
+            if (Node.Fs != null) return Node.Fs.Info;
+            if (Node.Dtb != null) return Node.Dtb.Info;
+            return new ImageInfo();
+        }
+
+        private static string GetDescription(ImageBuildNode Node)
+        {
+            switch (Node.Kind)
+            {
+                case ImageKind.Kernel: return "Linux kernel";
+                case ImageKind.Devtree: return "Flattened Device Tree blob";
+                case ImageKind.Filesystem: return "Ramdisk";
+                default: return Node.Name;
+            }
+        }
+
+        private static string GetOption(ImageBuildNode Node, string Name, string DefaultValue)
+        {
+            string Value;
+            return Node.Options.TryGetValue(Name, out Value) ? Value : DefaultValue;
+        }
+
+        private static long ParseSize(string Value, long Default)
+        {
+            if (String.IsNullOrWhiteSpace(Value))
+                return Default;
+
+            var Text = Value.Trim();
+            long Multiplier = 1;
+            var Last = Char.ToUpperInvariant(Text[Text.Length - 1]);
+            if ((Last == 'K') || (Last == 'M') || (Last == 'G'))
+            {
+                Multiplier = (Last == 'K') ? 1024L : ((Last == 'M') ? 1024L * 1024 : 1024L * 1024 * 1024);
+                Text = Text.Substring(0, Text.Length - 1);
+            }
+
+            long Result;
+            if (Text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Int64.TryParse(Text.Substring(2), NumberStyles.HexNumber, null, out Result))
+                    return Default;
+            }
+            else if (!Int64.TryParse(Text, out Result))
+                return Default;
+
+            return Result * Multiplier;
+        }
+
+        private static string Unique(string Name, HashSet<string> Used)
+        {
+            if (String.IsNullOrEmpty(Name))
+                Name = "element";
+
+            var Result = Name;
+            var Index = 1;
+            while (!Used.Add(Result))
+                Result = Name + "@" + (Index++);
+
+            return Result;
+        }
+    }
+}

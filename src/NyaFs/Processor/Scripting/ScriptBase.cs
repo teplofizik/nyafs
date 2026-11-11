@@ -40,6 +40,8 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Load());
             Add(new Commands.LoadP());
             Add(new Commands.LoadSub());
+            Add(new Commands.Use());
+            Add(new Commands.Import());
             Add(new Commands.Extract());
             Add(new Commands.Store());
             Add(new Commands.Set());

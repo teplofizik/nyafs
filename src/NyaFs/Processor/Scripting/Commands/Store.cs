@@ -82,6 +82,15 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Plan == null)
                     return new StoreScriptStep(Path, "all", "fit").Exec(Processor);
 
+                var PlanWriter = new ImageFormat.Composite.ImageBuildPlanWriter(Plan);
+                string BuildError;
+                var BuildData = PlanWriter.Build(out BuildError);
+                if (BuildData != null)
+                {
+                    System.IO.File.WriteAllBytes(Path, BuildData);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Image is stored to file {Path} from the build plan.");
+                }
+
                 switch (Plan.Root.Format)
                 {
                     case "cimg":

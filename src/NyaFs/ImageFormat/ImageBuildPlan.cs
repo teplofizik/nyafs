@@ -1,3 +1,6 @@
+using NyaFs.ImageFormat.Elements.Dtb;
+using NyaFs.ImageFormat.Elements.Fs;
+using NyaFs.ImageFormat.Elements.Kernel;
 using System;
 using System.Collections.Generic;
 
@@ -18,6 +21,9 @@ namespace NyaFs.ImageFormat
         public Types.CompressionType Compression = Types.CompressionType.IH_COMP_NONE;
         public Types.ImageInfo Info;
         public byte[] Raw;
+        public LinuxFilesystem Fs;
+        public LinuxKernel Kernel;
+        public DeviceTree Dtb;
         public readonly List<ImageBuildNode> Children = new List<ImageBuildNode>();
         public readonly Dictionary<string, string> Options =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -81,7 +87,58 @@ namespace NyaFs.ImageFormat
         public ImageBuildNode Find(string Path)
         {
             var Target = (Path ?? "").Trim('/');
-            return Find(Root, Target);
+            var Exact = Find(Root, Target);
+            if (Exact != null)
+                return Exact;
+
+            return FindAlias(Root, Target.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries), 0);
+        }
+
+        private static ImageBuildNode FindAlias(ImageBuildNode Node, string[] Parts, int Index)
+        {
+            if (Node == null)
+                return null;
+            if (Index >= Parts.Length)
+                return Node;
+
+            var Head = Parts[Index];
+            if (Head == "all")
+                return FindAlias(Node, Parts, Index + 1);
+
+            if ((Head == Node.Format) || (Head == Node.Container))
+                return FindAlias(Node, Parts, Index + 1);
+
+            foreach (var Child in Node.Children)
+            {
+                if (!AliasMatches(Child, Head))
+                    continue;
+
+                var Res = FindAlias(Child, Parts, Index + 1);
+                if (Res != null)
+                    return Res;
+            }
+
+            return null;
+        }
+
+        private static bool AliasMatches(ImageBuildNode Node, string Head)
+        {
+            if (Node.Name == Head)
+                return true;
+            if ((Node.Format == Head) || (Node.Container == Head))
+                return true;
+
+            switch (Node.Kind)
+            {
+                case ImageKind.Kernel:
+                    return (Head == "kernel") || (Head == "zimage");
+                case ImageKind.Devtree:
+                    return (Head == "devtree") || (Head == "dtb") || (Head == "fdt");
+                case ImageKind.Filesystem:
+                    return (Head == "filesystem") || (Head == "fs") || (Head == "ramfs") || (Head == "ramdisk");
+                default:
+                    return false;
+            }
         }
 
         private static ImageBuildNode Find(ImageBuildNode Node, string Target)
@@ -112,7 +169,17 @@ namespace NyaFs.ImageFormat
             return true;
         }
 
-        public void MarkAllDirty() => MarkDirty("");
+        public void MarkAllDirty() => MarkAll(Root);
+
+        private static void MarkAll(ImageBuildNode Node)
+        {
+            if (Node == null)
+                return;
+
+            Node.Dirty = true;
+            foreach (var Child in Node.Children)
+                MarkAll(Child);
+        }
 
         private static bool FindChain(ImageBuildNode Node, string Target, List<ImageBuildNode> Chain)
         {

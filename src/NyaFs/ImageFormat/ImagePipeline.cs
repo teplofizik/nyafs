@@ -20,6 +20,10 @@ namespace NyaFs.ImageFormat
         private readonly PluginRegistry Plugins;
         private readonly BaseImageBlob Blob;
 
+        private bool PlanFsBound;
+        private bool PlanKernelBound;
+        private bool PlanDtbBound;
+
         private const int MaxDepth = 32;
 
         public ImagePipeline(Processor.Scripting.ScriptPlugins Plugins, BaseImageBlob Blob)
@@ -57,17 +61,67 @@ namespace NyaFs.ImageFormat
             return Ok;
         }
 
+        public bool LoadInto(byte[] Raw, ImageKind HintKind, string HintFormat, ImageInfo Info) =>
+            LoadElement(new ImageData(Raw), "plan", HintKind, HintFormat, Info, 0);
+
         private void CapturePlan(byte[] Raw)
         {
             try
             {
                 var Tree = new ImageInspector(Plugins).Inspect("image", Raw);
-                Blob.BuildPlan = ImageBuildPlan.From(Tree);
+                var Plan = ImageBuildPlan.From(Tree);
+                PlanFsBound = false;
+                PlanKernelBound = false;
+                PlanDtbBound = false;
+                LoadPlanObjects(Plan.Root);
+                Blob.BuildPlan = Plan;
             }
             catch
             {
                 Blob.BuildPlan = null;
             }
+        }
+
+        private void LoadPlanObjects(ImageBuildNode Node)
+        {
+            if (Node == null)
+                return;
+
+            foreach (var Child in Node.Children)
+                LoadPlanObjects(Child);
+
+            if ((Node.Raw == null) || (Node.Kind == ImageKind.Unknown))
+                return;
+
+            if ((Node.Kind == ImageKind.Filesystem) && !PlanFsBound && (Blob.GetFilesystem(0) != null))
+            {
+                Node.Fs = Blob.GetFilesystem(0);
+                PlanFsBound = true;
+                return;
+            }
+            if ((Node.Kind == ImageKind.Kernel) && !PlanKernelBound && (Blob.GetKernel(0) != null))
+            {
+                Node.Kernel = Blob.GetKernel(0);
+                PlanKernelBound = true;
+                return;
+            }
+            if ((Node.Kind == ImageKind.Devtree) && !PlanDtbBound && (Blob.GetDevTree(0) != null))
+            {
+                Node.Dtb = Blob.GetDevTree(0);
+                PlanDtbBound = true;
+                return;
+            }
+
+            var Temp = new BaseImageBlob();
+            var Pipeline = new ImagePipeline(Plugins, Temp);
+            if (!Pipeline.LoadInto(Node.Raw, Node.Kind, Node.Format, Node.Info))
+                return;
+
+            Node.Fs = Temp.GetFilesystem(0);
+            Node.Kernel = Temp.GetKernel(0);
+            Node.Dtb = Temp.GetDevTree(0);
+
+
         }
 
         private bool LoadElement(ImageData Data, string Container, ImageKind HintKind, string HintFormat, ImageInfo HintInfo, int Depth)

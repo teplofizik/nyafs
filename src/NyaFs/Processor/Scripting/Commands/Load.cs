@@ -60,6 +60,8 @@ namespace NyaFs.Processor.Scripting.Commands
                     return new ScriptStepResult(ScriptStepStatus.Error, $"{Path} not found!");
 
                 var Data = System.IO.File.ReadAllBytes(Path);
+                if (Type == "detect")
+                    Processor.Reset();
 
                 ImageKind Kind;
                 string Hint = null;

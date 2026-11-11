@@ -19,8 +19,9 @@ namespace NyaFs.ImageFormat
         public readonly long Size;
         public readonly byte[] Content;
         public readonly ImageInfo Info;
+        public readonly string Description;
 
-        public ContainedImage(string Name, ImageKind Kind, string Format, long Offset, long Size, byte[] Content, CompressionType Compression = CompressionType.IH_COMP_NONE, ImageInfo Info = null)
+        public ContainedImage(string Name, ImageKind Kind, string Format, long Offset, long Size, byte[] Content, CompressionType Compression = CompressionType.IH_COMP_NONE, ImageInfo Info = null, string Description = null)
         {
             this.Name = Name;
             this.Kind = Kind;
@@ -30,6 +31,7 @@ namespace NyaFs.ImageFormat
             this.Content = Content;
             this.Compression = Compression;
             this.Info = Info;
+            this.Description = Description;
         }
 
         public override string ToString() => $"{Name}: {Kind}/{Format ?? "?"} ({Size} bytes)";

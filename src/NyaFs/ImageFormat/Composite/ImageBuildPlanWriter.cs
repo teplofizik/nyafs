@@ -119,7 +119,7 @@ namespace NyaFs.ImageFormat.Composite
             }
 
             var FitImage = new FlattenedDeviceTree.FlattenedDeviceTree();
-            FitImage.Root.AddStringValue("description", "U-Boot uImage FDT blobs");
+            FitImage.Root.AddStringValue("description", Node.Description ?? "U-Boot uImage FDT blobs");
 
             var ImagesNode = new FlattenedDeviceTree.Types.Node("images");
             ImagesNode.AddUInt32Value("#address-cells", 1);
@@ -141,19 +141,9 @@ namespace NyaFs.ImageFormat.Composite
                 if (Info.OperatingSystem != OS.IH_OS_INVALID)
                     ImageNode.AddStringValue("os", FitHelper.GetOperatingSystem(Info.OperatingSystem));
 
-                if (Child.Kind == ImageKind.Kernel)
-                {
-                    if (FitHelper.Is64BitArchitecture(Info.Architecture))
-                    {
-                        ImageNode.AddUInt64Value("load", Info.DataLoadAddress);
-                        ImageNode.AddUInt64Value("entry", Info.EntryPointAddress);
-                    }
-                    else
-                    {
-                        ImageNode.AddUInt32Value("load", Convert.ToUInt32(Info.DataLoadAddress & 0xFFFFFFFFUL));
-                        ImageNode.AddUInt32Value("entry", Convert.ToUInt32(Info.EntryPointAddress & 0xFFFFFFFFUL));
-                    }
-                }
+                if ((Child.Kind == ImageKind.Kernel) || (Child.Kind == ImageKind.Devtree) ||
+                    (Child.Kind == ImageKind.Filesystem))
+                    AddLoadEntry(ImageNode, Info);
 
                 var Hash = new FlattenedDeviceTree.Types.Node("hash@1");
                 Hash.AddStringValue("algo", "sha1");
@@ -304,8 +294,25 @@ namespace NyaFs.ImageFormat.Composite
             return new ImageInfo();
         }
 
+        private static void AddLoadEntry(FlattenedDeviceTree.Types.Node ImageNode, ImageInfo Info)
+        {
+            if (FitHelper.Is64BitArchitecture(Info.Architecture))
+            {
+                ImageNode.AddUInt64Value("load", Info.DataLoadAddress);
+                ImageNode.AddUInt64Value("entry", Info.EntryPointAddress);
+            }
+            else
+            {
+                ImageNode.AddUInt32Value("load", Convert.ToUInt32(Info.DataLoadAddress & 0xFFFFFFFFUL));
+                ImageNode.AddUInt32Value("entry", Convert.ToUInt32(Info.EntryPointAddress & 0xFFFFFFFFUL));
+            }
+        }
+
         private static string GetDescription(ImageBuildNode Node)
         {
+            if (!String.IsNullOrEmpty(Node.Description))
+                return Node.Description;
+
             switch (Node.Kind)
             {
                 case ImageKind.Kernel: return "Linux kernel";

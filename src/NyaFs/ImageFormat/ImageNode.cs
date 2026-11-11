@@ -52,6 +52,9 @@ namespace NyaFs.ImageFormat
         /// <summary>Default configuration name, when the container declares one.</summary>
         public string DefaultConfiguration = null;
 
+        /// <summary>Container / root description, when available.</summary>
+        public string Description = null;
+
         /// <summary>All container configurations, in source order.</summary>
         public readonly List<ImageContainerConfiguration> Configurations = new List<ImageContainerConfiguration>();
 

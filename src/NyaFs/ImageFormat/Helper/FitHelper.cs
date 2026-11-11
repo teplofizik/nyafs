@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
@@ -468,6 +468,14 @@ namespace NyaFs.ImageFormat.Helper
             using (var sha1 = SHA1.Create())
             {
                 return sha1.ComputeHash(Data);
+            }
+        }
+
+        public static byte[] CalcSHA512Hash(byte[] Data)
+        {
+            using (var sha512 = SHA512.Create())
+            {
+                return sha512.ComputeHash(Data);
             }
         }
 

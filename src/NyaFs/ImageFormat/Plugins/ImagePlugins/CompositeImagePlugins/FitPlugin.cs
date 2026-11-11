@@ -77,7 +77,14 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             if (Entry != null)
                 Info.EntryPointAddress = (Entry.Length == 8) ? Entry.ReadUInt64BE(0) : Entry.ReadUInt32BE(0);
 
-            Res.Add(new ContainedImage(NodeName, Kind, "fit", -1, Data.Length, Data, Compression, Info));
+            Res.Add(new ContainedImage(NodeName, Kind, "fit", -1, Data.Length, Data, Compression, Info,
+                Node.GetStringValue("description")));
+        }
+
+        public override string ReadDescription(ImageData Image)
+        {
+            var Fit = ReadFit(Image);
+            return Fit?.Root.GetStringValue("description");
         }
 
         public override string ReadDefaultConfiguration(ImageData Image)

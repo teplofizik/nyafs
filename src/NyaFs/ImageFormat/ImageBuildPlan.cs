@@ -28,6 +28,7 @@ namespace NyaFs.ImageFormat
         public readonly Dictionary<string, string> Options =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public string DefaultConfiguration = null;
+        public string Description = null;
         public readonly List<ImageContainerConfiguration> Configurations = new List<ImageContainerConfiguration>();
         public bool Dirty;
 
@@ -222,7 +223,8 @@ namespace NyaFs.ImageFormat
                 Compression = Source.Compression,
                 Info = Source.Info,
                 Raw = Source.Raw,
-                DefaultConfiguration = Source.DefaultConfiguration
+                DefaultConfiguration = Source.DefaultConfiguration,
+                Description = Source.Description
             };
 
             foreach (var Option in Source.Options)

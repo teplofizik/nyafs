@@ -138,6 +138,7 @@ namespace NyaFs.ImageFormat
 
                 foreach (var Option in Image.ReadOptions(Data))
                     Node.Options[Option.Key] = Option.Value;
+                Node.Description = Image.ReadDescription(Data);
                 Node.DefaultConfiguration = Image.ReadDefaultConfiguration(Data);
                 Node.Configurations.AddRange(Image.ReadConfigurations(Data));
 
@@ -150,7 +151,8 @@ namespace NyaFs.ImageFormat
                         Name = Unique(CI.Name, Used),
                         Container = Image.Format,
                         Raw = CI.Content,
-                        Info = CI.Info
+                        Info = CI.Info,
+                        Description = CI.Description
                     };
                     Child.Path = (Node.Path.Length == 0) ? Child.Name : Node.Path + "/" + Child.Name;
 

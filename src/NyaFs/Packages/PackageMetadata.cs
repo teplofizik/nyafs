@@ -18,6 +18,13 @@ namespace NyaFs.Packages
         public string Arch { get => Get("arch"); set => Set("arch", value); }
         public string Os { get => Get("os"); set => Set("os", value); }
         public string Description { get => Get("description"); set => Set("description", value); }
+        public string Depends { get => Get("depends"); set => Set("depends", value); }
+        public string Conflicts { get => Get("conflicts"); set => Set("conflicts", value); }
+        public string Provides { get => Get("provides"); set => Set("provides", value); }
+        public string Compression { get => Get("compression"); set => Set("compression", value); }
+
+        public IEnumerable<string> GetList(string Key) =>
+            Get(Key).Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
         public string Get(string Key) => Fields.TryGetValue(Key, out string V) ? V : "";
         public void Set(string Key, string Value)

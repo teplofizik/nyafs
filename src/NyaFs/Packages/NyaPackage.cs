@@ -112,8 +112,72 @@ namespace NyaFs.Packages
             }
         }
 
-        public byte[] ToFile()
+        public static NyaPackage FromDirectory(string Directory, PackageMetadata Meta)
         {
+            if ((Directory == null) || !System.IO.Directory.Exists(Directory))
+                throw new ArgumentException("Directory not found: " + Directory);
+
+            var Res = new NyaPackage { Metadata = Meta ?? new PackageMetadata() };
+            WalkDirectory(new System.IO.DirectoryInfo(Directory), Directory, Res.Entries);
+            return Res;
+        }
+
+        private static string RelativeName(string BaseDir, string FullPath)
+        {
+            var Base = System.IO.Path.GetFullPath(BaseDir).TrimEnd('\\', '/');
+            var Full = System.IO.Path.GetFullPath(FullPath);
+            var Prefix = Base + System.IO.Path.DirectorySeparatorChar;
+            if (Full.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
+                Full = Full.Substring(Prefix.Length);
+            else
+                Full = System.IO.Path.GetFileName(Full);
+            return Full.Replace(System.IO.Path.DirectorySeparatorChar, '/');
+        }
+        private static void WalkDirectory(System.IO.DirectoryInfo Directory, string BaseDir, List<Entry> Res)
+        {
+            foreach (var Item in Directory.EnumerateFileSystemInfos())
+            {
+                var Full = RelativeName(BaseDir, Item.FullName);
+                if (Item is System.IO.DirectoryInfo Dir)
+                {
+                    if ((Dir.Attributes & System.IO.FileAttributes.ReparsePoint) != 0)
+                        continue;
+
+                    Res.Add(new Entry
+                    {
+                        Path = Full,
+                        Type = FilesystemItemType.Directory,
+                        IsDir = true,
+                        User = 0,
+                        Group = 0,
+                        Mode = 0x1ED
+                    });
+                    WalkDirectory(Dir, BaseDir, Res);
+                }
+                else if (Item is System.IO.FileInfo File)
+                {
+                    if ((File.Attributes & System.IO.FileAttributes.ReparsePoint) != 0)
+                        continue;
+
+                    Res.Add(new Entry
+                    {
+                        Path = Full,
+                        Type = FilesystemItemType.File,
+                        User = 0,
+                        Group = 0,
+                        Mode = 0x1A4,
+                        Content = System.IO.File.ReadAllBytes(File.FullName)
+                    });
+                }
+            }
+        }
+        public byte[] ToFile() => ToFile(Metadata.Compression);
+
+        public byte[] ToFile(string Compression)
+        {
+            var Format = String.IsNullOrEmpty(Compression) ? "gzip" : Compression.Trim().ToLowerInvariant();
+            Metadata.Compression = Format;
+
             var B = new Filesystem.Tar.TarFsBuilder();
             B.Directory(DataDir, 0, 0, 0x1ED);
             B.File(ControlName, Metadata.ToControl(), 0, 0, 0x1A4);
@@ -152,7 +216,17 @@ namespace NyaFs.Packages
             }
 
             var Tar = B.GetFilesystemImage();
-            return ImageFormat.Compressors.Gzip.CompressWithHeader(Tar);
+            switch (Format)
+            {
+                case "gzip":
+                case "gz":
+                    return ImageFormat.Compressors.Gzip.CompressWithHeader(Tar);
+                case "zstd":
+                case "zst":
+                    return ImageFormat.Compressors.ZStd.CompressWithHeader(Tar);
+                default:
+                    throw new ArgumentException("Unsupported package compression: " + Compression);
+            }
         }
 
         // ---- read ----
@@ -160,7 +234,13 @@ namespace NyaFs.Packages
         public static NyaPackage Open(byte[] File)
         {
             var Res = new NyaPackage();
-            var Tar = ImageFormat.Compressors.Gzip.Decompress(File);
+            byte[] Tar;
+            if ((File.Length >= 2) && (File[0] == 0x1F) && (File[1] == 0x8B))
+                Tar = ImageFormat.Compressors.Gzip.Decompress(File);
+            else if ((File.Length >= 4) && (File[0] == 0x28) && (File[1] == 0xB5) && (File[2] == 0x2F) && (File[3] == 0xFD))
+                Tar = ImageFormat.Compressors.ZStd.Decompress(File);
+            else
+                throw new ArgumentException("Unknown package compression");
             var Reader = new Filesystem.Tar.TarFsReader(Tar);
 
             var Control = Reader.Read(ControlName);

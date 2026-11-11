@@ -2,11 +2,14 @@ using System;
 using System.IO;
 using System.Text;
 using NyaFs.Packages;
+using NyaFs.Processor.Scripting.Helper;
 
 namespace NyaFs.Processor.Scripting.Commands
 {
     /// <summary>
-    /// Package commands: pkg info/add &lt;file&gt;, pkg create &lt;file&gt; &lt;fs-path&gt; &lt;name&gt; &lt;version&gt;.
+    /// Package commands: pkg info/add &lt;file&gt;, pkg create &lt;file&gt; &lt;fs-path&gt;
+    /// &lt;name&gt; &lt;version&gt; [compression], pkg createdir &lt;file&gt; &lt;local-dir&gt;
+    /// &lt;name&gt; &lt;version&gt; [compression].
     /// </summary>
     public class Pkg : ScriptStepGenerator
     {
@@ -14,27 +17,57 @@ namespace NyaFs.Processor.Scripting.Commands
         {
             AddConfig(new ScriptArgsConfig(0, new ScriptArgsParam[]
             {
-                new Params.EnumScriptArgsParam("action", new[] { "info", "add", "create" }),
+                new Params.EnumScriptArgsParam("action", new[] { "info", "add" }),
                 new Params.StringScriptArgsParam("file")
             }));
 
             AddConfig(new ScriptArgsConfig(1, new ScriptArgsParam[]
             {
-                new Params.EnumScriptArgsParam("action", new[] { "info", "add", "create" }),
+                new Params.EnumScriptArgsParam("action", new[] { "create" }),
                 new Params.StringScriptArgsParam("file"),
                 new Params.FsPathScriptArgsParam(),
                 new Params.StringScriptArgsParam("name"),
                 new Params.StringScriptArgsParam("version")
+            }));
+
+            AddConfig(new ScriptArgsConfig(2, new ScriptArgsParam[]
+            {
+                new Params.EnumScriptArgsParam("action", new[] { "create" }),
+                new Params.StringScriptArgsParam("file"),
+                new Params.FsPathScriptArgsParam(),
+                new Params.StringScriptArgsParam("name"),
+                new Params.StringScriptArgsParam("version"),
+                new Params.StringScriptArgsParam("compression")
+            }));
+
+            AddConfig(new ScriptArgsConfig(3, new ScriptArgsParam[]
+            {
+                new Params.EnumScriptArgsParam("action", new[] { "createdir" }),
+                new Params.StringScriptArgsParam("file"),
+                new Params.StringScriptArgsParam("directory"),
+                new Params.StringScriptArgsParam("name"),
+                new Params.StringScriptArgsParam("version")
+            }));
+
+            AddConfig(new ScriptArgsConfig(4, new ScriptArgsParam[]
+            {
+                new Params.EnumScriptArgsParam("action", new[] { "createdir" }),
+                new Params.StringScriptArgsParam("file"),
+                new Params.StringScriptArgsParam("directory"),
+                new Params.StringScriptArgsParam("name"),
+                new Params.StringScriptArgsParam("version"),
+                new Params.StringScriptArgsParam("compression")
             }));
         }
 
         public override ScriptStep Get(ScriptArgs Args)
         {
             var A = Args.RawArgs;
+            var Compression = (Args.ArgConfig == 2 || Args.ArgConfig == 4) ? A[5] : null;
             if (Args.ArgConfig == 0)
-                return new PkgScriptStep(A[0], A[1], null, null, null);
+                return new PkgScriptStep(A[0], A[1], null, null, null, null);
 
-            return new PkgScriptStep(A[0], A[1], A[2], A[3], A[4]);
+            return new PkgScriptStep(A[0], A[1], A[2], A[3], A[4], Compression);
         }
 
         public class PkgScriptStep : ScriptStep
@@ -44,14 +77,16 @@ namespace NyaFs.Processor.Scripting.Commands
             private readonly string Path;
             private readonly string PkgName;
             private readonly string PkgVersion;
+            private readonly string Compression;
 
-            public PkgScriptStep(string Action, string File, string Path, string Name, string Version) : base("pkg")
+            public PkgScriptStep(string Action, string File, string Path, string Name, string Version, string Compression) : base("pkg")
             {
                 this.Action = Action.ToLowerInvariant();
                 this.File = File;
                 this.Path = Path;
                 this.PkgName = Name;
                 this.PkgVersion = Version;
+                this.Compression = Compression;
             }
 
             public override ScriptStepResult Exec(ImageProcessor Processor)
@@ -90,7 +125,7 @@ namespace NyaFs.Processor.Scripting.Commands
                                     return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
                                 if (string.IsNullOrEmpty(Path) || string.IsNullOrEmpty(PkgName))
                                     return new ScriptStepResult(ScriptStepStatus.Error,
-                                        "Usage: pkg create <file> <fs-path> <name> <version>");
+                                        "Usage: pkg create <file> <fs-path> <name> <version> [gzip|zstd]");
 
                                 var Meta = new PackageMetadata { Name = PkgName, Version = PkgVersion ?? "" };
                                 if (Fs.Info.Architecture != ImageFormat.Types.CPU.IH_ARCH_INVALID)
@@ -99,7 +134,23 @@ namespace NyaFs.Processor.Scripting.Commands
                                     Meta.Os = Fs.Info.OperatingSystem.ToString().Replace("IH_OS_", "").ToLowerInvariant();
 
                                 var P = NyaPackage.FromFilesystem(Fs, Path, Meta);
-                                System.IO.File.WriteAllBytes(Resolved, P.ToFile());
+                                System.IO.File.WriteAllBytes(Resolved, P.ToFile(Compression));
+                                return new ScriptStepResult(ScriptStepStatus.Ok,
+                                    $"Created package {Resolved}: {P.Metadata}, entries={P.Entries.Count}");
+                            }
+                        case "createdir":
+                            {
+                                if (string.IsNullOrEmpty(Path) || string.IsNullOrEmpty(PkgName))
+                                    return new ScriptStepResult(ScriptStepStatus.Error,
+                                        "Usage: pkg createdir <file> <local-dir> <name> <version> [gzip|zstd]");
+
+                                var Dir = this.DetectDirPath(Path);
+                                if (Dir == null)
+                                    return new ScriptStepResult(ScriptStepStatus.Error, "Directory not found: " + Path);
+
+                                var Meta = new PackageMetadata { Name = PkgName, Version = PkgVersion ?? "" };
+                                var P = NyaPackage.FromDirectory(Dir, Meta);
+                                System.IO.File.WriteAllBytes(Resolved, P.ToFile(Compression));
                                 return new ScriptStepResult(ScriptStepStatus.Ok,
                                     $"Created package {Resolved}: {P.Metadata}, entries={P.Entries.Count}");
                             }

@@ -21,7 +21,8 @@ namespace NyaFs.ImageFormat.Composite
         }
 
         public bool CanWrite => (Plan != null) && (Plan.Root != null) &&
-            ((Plan.Root.Format == "cimg") || (Plan.Root.Format == "fit"));
+            ((Plan.Root.Format == "cimg") || (Plan.Root.Format == "fit") ||
+             ((Plan.Root.Children.Count == 0) && (Plan.Root.Kind != ImageKind.Unknown)));
 
         public byte[] Build(out string Error)
         {
@@ -36,8 +37,10 @@ namespace NyaFs.ImageFormat.Composite
             {
                 if (Plan.Root.Format == "fit")
                     return BuildFit(Plan.Root, out Error);
+                if (Plan.Root.Format == "cimg")
+                    return BuildCImg(Plan.Root, out Error);
 
-                return BuildCImg(Plan.Root, out Error);
+                return SerializeLeaf(Plan.Root, out Error);
             }
             catch (Exception E)
             {
@@ -187,7 +190,14 @@ namespace NyaFs.ImageFormat.Composite
                         Error = "No filesystem object for " + Node.Path;
                         return null;
                     }
-                    var FsWriter = Elements.Fs.Writer.Writer.GetRawFilesystemWriter(Node.Fs);
+                    var FsPlugin = Plugins.PluginHost.Current.ResolveFilesystem(Node.Fs.FilesystemFormat);
+                    var FsWriter = FsPlugin?.GetFilesystemWriter(Node.Fs)
+                        ?? Elements.Fs.Writer.Writer.GetRawFilesystemWriter(Node.Fs);
+                    if ((FsWriter == null) || !FsWriter.CheckFilesystem(Node.Fs))
+                    {
+                        Error = "Cannot serialize filesystem " + Node.Path;
+                        return null;
+                    }
                     FsWriter.WriteFs(Node.Fs);
                     if (!FsWriter.HasRawStreamData)
                     {

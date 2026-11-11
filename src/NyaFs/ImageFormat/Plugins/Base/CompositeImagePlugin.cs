@@ -25,6 +25,11 @@ namespace NyaFs.ImageFormat.Plugins.Base
         public virtual IEnumerable<KeyValuePair<string, string>> ReadOptions(ImageData Image) =>
             Array.Empty<KeyValuePair<string, string>>();
 
+        public virtual string ReadDefaultConfiguration(ImageData Image) => null;
+
+        public virtual ImageContainerConfiguration[] ReadConfigurations(ImageData Image) =>
+            Array.Empty<ImageContainerConfiguration>();
+
         public virtual bool TryApplyOption(BaseImageBlob Blob, string Name, string Value, out string Error)
         {
             Error = null;

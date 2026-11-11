@@ -93,6 +93,7 @@ namespace NyaFs.ImageFormat.Composite
             Error = null;
 
             var Images = new List<Tuple<string, ImageBuildNode, byte[], ImageInfo>>();
+            var ImageNames = new Dictionary<string, string>(StringComparer.Ordinal);
             var Used = new HashSet<string>();
 
             foreach (var Child in Node.Children)
@@ -106,6 +107,8 @@ namespace NyaFs.ImageFormat.Composite
 
                 var Info = Child.Dirty ? GetInfo(Child) : (Child.Info ?? GetInfo(Child));
                 var Name = Unique(Child.Name, Used);
+                if (!ImageNames.ContainsKey(Child.Name))
+                    ImageNames[Child.Name] = Name;
                 Images.Add(Tuple.Create(Name, Child, Data, Info));
             }
 
@@ -120,8 +123,6 @@ namespace NyaFs.ImageFormat.Composite
 
             var ImagesNode = new FlattenedDeviceTree.Types.Node("images");
             ImagesNode.AddUInt32Value("#address-cells", 1);
-            var Config = new FlattenedDeviceTree.Types.Node("config@default");
-            Config.AddStringValue("description", "Image package");
 
             foreach (var Item in Images)
             {
@@ -142,7 +143,6 @@ namespace NyaFs.ImageFormat.Composite
 
                 if (Child.Kind == ImageKind.Kernel)
                 {
-                    Config.AddStringValue("kernel", Name);
                     if (FitHelper.Is64BitArchitecture(Info.Architecture))
                     {
                         ImageNode.AddUInt64Value("load", Info.DataLoadAddress);
@@ -154,10 +154,6 @@ namespace NyaFs.ImageFormat.Composite
                         ImageNode.AddUInt32Value("entry", Convert.ToUInt32(Info.EntryPointAddress & 0xFFFFFFFFUL));
                     }
                 }
-                else if (Child.Kind == ImageKind.Devtree)
-                    Config.AddStringValue("fdt", Name);
-                else if (Child.Kind == ImageKind.Filesystem)
-                    Config.AddStringValue("ramdisk", Name);
 
                 var Hash = new FlattenedDeviceTree.Types.Node("hash@1");
                 Hash.AddStringValue("algo", "sha1");
@@ -168,13 +164,52 @@ namespace NyaFs.ImageFormat.Composite
             }
 
             var Configurations = new FlattenedDeviceTree.Types.Node("configurations");
-            Configurations.AddStringValue("default", "config@default");
-            Configurations.Nodes.Add(Config);
+            var Default = !String.IsNullOrEmpty(Node.DefaultConfiguration)
+                ? Node.DefaultConfiguration
+                : ((Node.Configurations.Count > 0) ? Node.Configurations[0].Name : "config@default");
+            Configurations.AddStringValue("default", Default);
+
+            if (Node.Configurations.Count > 0)
+            {
+                foreach (var SourceConfig in Node.Configurations)
+                {
+                    var Config = new FlattenedDeviceTree.Types.Node(SourceConfig.Name);
+                    if (!String.IsNullOrEmpty(SourceConfig.Description))
+                        Config.AddStringValue("description", SourceConfig.Description);
+                    AddLink(Config, "kernel", SourceConfig.Kernel, ImageNames);
+                    AddLink(Config, "ramdisk", SourceConfig.Ramdisk, ImageNames);
+                    AddLink(Config, "fdt", SourceConfig.Fdt, ImageNames);
+                    Configurations.Nodes.Add(Config);
+                }
+            }
+            else
+            {
+                var Config = new FlattenedDeviceTree.Types.Node("config@default");
+                Config.AddStringValue("description", "Image package");
+                foreach (var Item in Images)
+                {
+                    if (Item.Item2.Kind == ImageKind.Kernel) Config.AddStringValue("kernel", Item.Item1);
+                    if (Item.Item2.Kind == ImageKind.Filesystem) Config.AddStringValue("ramdisk", Item.Item1);
+                    if (Item.Item2.Kind == ImageKind.Devtree) Config.AddStringValue("fdt", Item.Item1);
+                }
+                Configurations.Nodes.Add(Config);
+            }
 
             FitImage.Root.Nodes.Add(ImagesNode);
             FitImage.Root.Nodes.Add(Configurations);
 
             return new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+        }
+
+        private static void AddLink(FlattenedDeviceTree.Types.Node Config, string Property, string SourceName,
+            Dictionary<string, string> ImageNames)
+        {
+            if (String.IsNullOrEmpty(SourceName))
+                return;
+
+            string Name;
+            if (ImageNames.TryGetValue(SourceName, out Name))
+                Config.AddStringValue(Property, Name);
         }
 
         private byte[] SerializeLeaf(ImageBuildNode Node, out string Error)

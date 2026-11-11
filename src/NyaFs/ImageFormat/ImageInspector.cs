@@ -138,6 +138,8 @@ namespace NyaFs.ImageFormat
 
                 foreach (var Option in Image.ReadOptions(Data))
                     Node.Options[Option.Key] = Option.Value;
+                Node.DefaultConfiguration = Image.ReadDefaultConfiguration(Data);
+                Node.Configurations.AddRange(Image.ReadConfigurations(Data));
 
                 var Used = new HashSet<string>();
                 var Contained = Image.GetImages(Data);

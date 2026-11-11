@@ -2,6 +2,16 @@ using System.Collections.Generic;
 
 namespace NyaFs.ImageFormat
 {
+    /// <summary>One configuration entry from a FIT/container header.</summary>
+    public class ImageContainerConfiguration
+    {
+        public string Name = "";
+        public string Description = "";
+        public string Kernel;
+        public string Ramdisk;
+        public string Fdt;
+    }
+
     /// <summary>
     /// A node of the image hierarchy discovered by <see cref="ImageInspector"/>.
     /// <see cref="Path"/> is a stable identifier (identical for listing and for loading
@@ -38,6 +48,12 @@ namespace NyaFs.ImageFormat
 
         /// <summary>Options read from the container header.</summary>
         public readonly Dictionary<string, string> Options = new Dictionary<string, string>();
+
+        /// <summary>Default configuration name, when the container declares one.</summary>
+        public string DefaultConfiguration = null;
+
+        /// <summary>All container configurations, in source order.</summary>
+        public readonly List<ImageContainerConfiguration> Configurations = new List<ImageContainerConfiguration>();
 
         /// <summary>Nested elements (for composite containers).</summary>
         public readonly List<ImageNode> Children = new List<ImageNode>();

@@ -27,6 +27,8 @@ namespace NyaFs.ImageFormat
         public readonly List<ImageBuildNode> Children = new List<ImageBuildNode>();
         public readonly Dictionary<string, string> Options =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public string DefaultConfiguration = null;
+        public readonly List<ImageContainerConfiguration> Configurations = new List<ImageContainerConfiguration>();
         public bool Dirty;
 
         public bool IsContainer => Children.Count > 0;
@@ -219,11 +221,15 @@ namespace NyaFs.ImageFormat
                 Format = Source.Format,
                 Compression = Source.Compression,
                 Info = Source.Info,
-                Raw = Source.Raw
+                Raw = Source.Raw,
+                DefaultConfiguration = Source.DefaultConfiguration
             };
 
             foreach (var Option in Source.Options)
                 Node.Options[Option.Key] = Option.Value;
+
+            foreach (var Config in Source.Configurations)
+                Node.Configurations.Add(Config);
 
             foreach (var Child in Source.Children)
                 Node.Children.Add(Convert(Child));

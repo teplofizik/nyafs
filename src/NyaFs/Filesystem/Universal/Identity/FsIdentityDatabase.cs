@@ -309,6 +309,44 @@ namespace NyaFs.Filesystem.Universal.Identity
             return true;
         }
 
+        public bool UpdateGroup(string Name, uint? Gid, out string Error)
+        {
+            EnsureLoaded();
+            Error = null;
+
+            var Group = FindGroup(Name);
+            if (Group == null)
+            {
+                Error = "Group '" + Name + "' not found";
+                return false;
+            }
+
+            if (Gid.HasValue && (Gid.Value != Group.Gid))
+            {
+                if (FindGroup(Gid.Value) != null)
+                {
+                    Error = "GID " + Gid.Value + " already exists";
+                    return false;
+                }
+
+                var OldGid = Group.Gid;
+                Group.Gid = Gid.Value;
+                foreach (var User in Users)
+                {
+                    if (User.Gid == OldGid)
+                    {
+                        User.Gid = Gid.Value;
+                        User.Modified = true;
+                    }
+                }
+                PasswdDirty = true;
+            }
+
+            Group.Modified = true;
+            GroupDirty = true;
+            return true;
+        }
+
         public bool RemoveGroup(string Name, out string Error)
         {
             EnsureLoaded();

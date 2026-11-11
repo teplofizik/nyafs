@@ -365,6 +365,76 @@ namespace NyaFs.Filesystem.Universal.Identity
             return true;
         }
 
+        public bool SetUserGroups(string UserName, string[] GroupNames, bool Append, out string Error)
+        {
+            EnsureLoaded();
+            Error = null;
+
+            var User = FindUser(UserName);
+            if (User == null)
+            {
+                Error = "User '" + UserName + "' not found";
+                return false;
+            }
+
+            var Wanted = new HashSet<string>(GroupNames ?? new string[0], StringComparer.Ordinal);
+            foreach (var Name in Wanted)
+            {
+                if (FindGroup(Name) == null)
+                {
+                    Error = "Group '" + Name + "' not found";
+                    return false;
+                }
+            }
+
+            foreach (var Group in Groups)
+            {
+                var ShouldHave = Wanted.Contains(Group.Name) || (Append && Group.Members.Contains(UserName));
+                var Has = Group.Members.Contains(UserName);
+                if (ShouldHave && !Has)
+                {
+                    Group.Members.Add(UserName);
+                    Group.Modified = true;
+                    GroupDirty = true;
+                }
+                else if (!ShouldHave && Has)
+                {
+                    Group.Members.Remove(UserName);
+                    Group.Modified = true;
+                    GroupDirty = true;
+                }
+            }
+
+            return true;
+        }
+
+        public bool RenameGroup(string OldName, string NewName, out string Error)
+        {
+            EnsureLoaded();
+            Error = null;
+
+            var Group = FindGroup(OldName);
+            if (Group == null)
+            {
+                Error = "Group '" + OldName + "' not found";
+                return false;
+            }
+            if (FindGroup(NewName) != null)
+            {
+                Error = "Group '" + NewName + "' already exists";
+                return false;
+            }
+            if (!IsValidName(NewName))
+            {
+                Error = "Invalid group name '" + NewName + "'";
+                return false;
+            }
+
+            Group.Name = NewName;
+            Group.Modified = true;
+            GroupDirty = true;
+            return true;
+        }
         public bool AddUserToGroup(string UserName, string GroupName, out string Error)
         {
             EnsureLoaded();

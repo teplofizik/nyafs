@@ -82,6 +82,10 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Plan == null)
                     return new StoreScriptStep(Path, "all", "fit").Exec(Processor);
 
+                var Hash = Processor.GetBlob().GetContainerOption("fit", "hash", null);
+                if (!String.IsNullOrEmpty(Hash))
+                    Plan.Root.Options["hash"] = Hash;
+
                 var PlanWriter = new ImageFormat.Composite.ImageBuildPlanWriter(Plan);
                 string BuildError;
                 var BuildData = PlanWriter.Build(out BuildError);

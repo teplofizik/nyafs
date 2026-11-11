@@ -18,6 +18,10 @@ namespace NyaFs.ImageFormat
         public string Kernel;
         public string Ramdisk;
         public string Fdt;
+        public string Setup;
+        public string Fpga;
+        public string Firmware;
+        public readonly List<string> Loadables = new List<string>();
     }
 
     /// <summary>

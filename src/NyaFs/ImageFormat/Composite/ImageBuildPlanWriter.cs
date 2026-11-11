@@ -4,6 +4,7 @@ using NyaFs.ImageFormat.Types;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 
 namespace NyaFs.ImageFormat.Composite
 {
@@ -98,7 +99,9 @@ namespace NyaFs.ImageFormat.Composite
 
             foreach (var Child in Node.Children)
             {
-                if ((Child.Kind != ImageKind.Kernel) && (Child.Kind != ImageKind.Filesystem) && (Child.Kind != ImageKind.Devtree))
+                if ((Child.Kind == ImageKind.Unknown) && (Child.Raw == null))
+                    continue;
+                if ((Child.Kind != ImageKind.Kernel) && (Child.Kind != ImageKind.Filesystem) && (Child.Kind != ImageKind.Devtree) && (Child.Kind != ImageKind.Unknown))
                     continue;
 
                 var Data = BuildNode(Child, out Error);
@@ -145,9 +148,13 @@ namespace NyaFs.ImageFormat.Composite
                     (Child.Kind == ImageKind.Filesystem))
                     AddLoadEntry(ImageNode, Info);
 
-                var Hashes = (Child.Hashes.Count > 0)
-                    ? Child.Hashes
-                    : new List<ImageHash> { new ImageHash { Name = "hash@1", Algorithm = "sha1" } };
+                string HashOverride = null;
+                Plan.Root.Options.TryGetValue("hash", out HashOverride);
+                var Hashes = (!String.IsNullOrEmpty(HashOverride))
+                    ? new List<ImageHash> { new ImageHash { Name = "hash@1", Algorithm = HashOverride } }
+                    : (Child.Hashes.Count > 0
+                        ? Child.Hashes
+                        : new List<ImageHash> { new ImageHash { Name = "hash@1", Algorithm = "sha1" } });
                 foreach (var HashInfo in Hashes)
                 {
                     var HashValue = (!Child.Dirty && (HashInfo.Value != null))
@@ -181,6 +188,10 @@ namespace NyaFs.ImageFormat.Composite
                     AddLink(Config, "kernel", SourceConfig.Kernel, ImageNames);
                     AddLink(Config, "ramdisk", SourceConfig.Ramdisk, ImageNames);
                     AddLink(Config, "fdt", SourceConfig.Fdt, ImageNames);
+                    AddLink(Config, "setup", SourceConfig.Setup, ImageNames);
+                    AddLink(Config, "fpga", SourceConfig.Fpga, ImageNames);
+                    AddLink(Config, "firmware", SourceConfig.Firmware, ImageNames);
+                    AddStringList(Config, "loadables", SourceConfig.Loadables, ImageNames);
                     Configurations.Nodes.Add(Config);
                 }
             }
@@ -201,6 +212,19 @@ namespace NyaFs.ImageFormat.Composite
             FitImage.Root.Nodes.Add(Configurations);
 
             return new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+        }
+
+        private static void AddStringList(FlattenedDeviceTree.Types.Node Config, string Property, System.Collections.Generic.List<string> SourceNames, Dictionary<string, string> ImageNames)
+        {
+            var Names = new System.Collections.Generic.List<string>();
+            foreach (var SourceName in SourceNames)
+            {
+                string Name;
+                if (ImageNames.TryGetValue(SourceName, out Name))
+                    Names.Add(Name);
+            }
+            if (Names.Count > 0)
+                Config.AddRawValue(Property, Encoding.UTF8.GetBytes(String.Join("\0", Names) + "\0"));
         }
 
         private static void AddLink(FlattenedDeviceTree.Types.Node Config, string Property, string SourceName,

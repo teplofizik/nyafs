@@ -3,12 +3,18 @@ using NyaFs.ImageFormat.Types;
 using NyaIO.Data;
 using System;
 using System.Collections.Generic;
+using System.Text;
 
 namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
 {
     public class FitPlugin : CompositeImagePlugin
     {
         public FitPlugin() : base("image.fit", "fit") { }
+
+        public override NyaFs.ImageFormat.Plugins.Base.FilesystemOption[] Options => new[]
+        {
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("hash", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Enum, "sha1", "FIT hash algorithm", new[] { "sha1", "sha256", "sha512", "crc32" })
+        };
 
         public override bool DetectImage(ImageData Image)
         {
@@ -40,6 +46,11 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 AddNodeImage(Res, Fit, Configuration.GetStringValue("kernel"), ImageKind.Kernel, Added);
                 AddNodeImage(Res, Fit, Configuration.GetStringValue("ramdisk"), ImageKind.Filesystem, Added);
                 AddNodeImage(Res, Fit, Configuration.GetStringValue("fdt"), ImageKind.Devtree, Added);
+                AddNodeImage(Res, Fit, Configuration.GetStringValue("setup"), ImageKind.Unknown, Added);
+                AddNodeImage(Res, Fit, Configuration.GetStringValue("fpga"), ImageKind.Unknown, Added);
+                AddNodeImage(Res, Fit, Configuration.GetStringValue("firmware"), ImageKind.Unknown, Added);
+                foreach (var Loadable in ReadStrings(Configuration.GetValue("loadables")))
+                    AddNodeImage(Res, Fit, Loadable, ImageKind.Unknown, Added);
             }
             return Res.ToArray();
         }
@@ -117,16 +128,29 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             var Res = new List<ImageContainerConfiguration>();
             foreach (var C in Configurations.Nodes)
             {
-                Res.Add(new ImageContainerConfiguration
+                var Config = new ImageContainerConfiguration
                 {
                     Name = C.Name,
                     Description = C.GetStringValue("description"),
                     Kernel = C.GetStringValue("kernel"),
                     Ramdisk = C.GetStringValue("ramdisk"),
-                    Fdt = C.GetStringValue("fdt")
-                });
+                    Fdt = C.GetStringValue("fdt"),
+                    Setup = C.GetStringValue("setup"),
+                    Fpga = C.GetStringValue("fpga"),
+                    Firmware = C.GetStringValue("firmware")
+                };
+                foreach (var Loadable in ReadStrings(C.GetValue("loadables")))
+                    Config.Loadables.Add(Loadable);
+                Res.Add(Config);
             }
             return Res.ToArray();
+        }
+
+        private static string[] ReadStrings(byte[] Value)
+        {
+            if (Value == null)
+                return new string[0];
+            return Encoding.UTF8.GetString(Value).Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
         }
 
         private static FlattenedDeviceTree.FlattenedDeviceTree ReadFit(ImageData Image)

@@ -49,6 +49,7 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Export());
             Add(new Commands.Info());
             Add(new Commands.Inspect());
+            Add(new Commands.ExportFit());
             Add(new Commands.Reset());
             Add(new Commands.Var());
             Add(new Commands.Service()); 

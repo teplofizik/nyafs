@@ -73,7 +73,14 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 External = Data != null;
             }
             if (Data == null)
+            {
+                var Position = Node.GetValue("data-position");
+                if (Position != null)
+                    NyaFs.Log.Warning(0, "FIT image '" + NodeName + "' uses data-position (a memory/device address); payload is not inside the FIT and cannot be loaded.");
+                else
+                    NyaFs.Log.Warning(0, "FIT image '" + NodeName + "' has no embedded data; external payload is not available.");
                 return;
+            }
 
             var Compression = Helper.FitHelper.GetCompression(
                 Node.GetStringValue("compression") ?? "none");
@@ -145,6 +152,36 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             }
             return -1;
         }
+        public override IEnumerable<KeyValuePair<string, string>> ReadOptions(ImageData Image)
+        {
+            var Fit = ReadFit(Image);
+            if ((Fit != null) && HasSignatures(Fit))
+                yield return new KeyValuePair<string, string>("signatures", "true");
+        }
+
+        private static bool HasSignatures(FlattenedDeviceTree.FlattenedDeviceTree Fit)
+        {
+            var Images = Fit.Get("images");
+            if (Images != null)
+            {
+                foreach (var Node in Images.Nodes)
+                    foreach (var Child in Node.Nodes)
+                        if (Child.Name.StartsWith("signature"))
+                            return true;
+            }
+
+            var Configurations = Fit.Get("configurations");
+            if (Configurations != null)
+            {
+                foreach (var Node in Configurations.Nodes)
+                    foreach (var Child in Node.Nodes)
+                        if (Child.Name.StartsWith("signature"))
+                            return true;
+            }
+
+            return false;
+        }
+
         public override string ReadDescription(ImageData Image)
         {
             var Fit = ReadFit(Image);

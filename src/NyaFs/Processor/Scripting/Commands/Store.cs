@@ -73,7 +73,9 @@ namespace NyaFs.Processor.Scripting.Commands
             private ScriptStepResult StoreAuto(ImageProcessor Processor)
             {
                 var Plan = Processor.GetBlob().BuildPlan;
-                if ((Plan != null) && Plan.CanPassthrough)
+                var SignProfile = Processor.GetBlob().GetContainerOption("fit", "sign", null);
+                var SignControl = Processor.GetBlob().GetContainerOption("fit", "sign-control", null);
+                if ((Plan != null) && String.IsNullOrEmpty(SignProfile) && Plan.CanPassthrough)
                 {
                     System.IO.File.WriteAllBytes(Path, Plan.Root.Raw);
                     return new ScriptStepResult(ScriptStepStatus.Ok, $"Image is stored to file {Path} using the loaded build plan.");
@@ -87,13 +89,59 @@ namespace NyaFs.Processor.Scripting.Commands
                     Plan.Root.Options["hash"] = Hash;
 
                 var PlanWriter = new ImageFormat.Composite.ImageBuildPlanWriter(Plan);
+                if (!String.IsNullOrEmpty(SignProfile))
+                {
+                    var Profile = String.Equals(SignProfile, "active", StringComparison.OrdinalIgnoreCase)
+                        ? Processor.KeyStore.ActiveProfile
+                        : SignProfile;
+                    if (String.IsNullOrEmpty(Profile))
+                        return new ScriptStepResult(ScriptStepStatus.Error, "No active KeyStore profile for FIT signing");
+
+                    var Record = Processor.KeyStore.Find(Profile);
+                    if (Record == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"KeyStore profile not found: {Profile}");
+
+                    var Material = Processor.KeyStore.GetPrivateMaterial(Record);
+                    if ((Material == null) || (Material.Length == 0))
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"KeyStore profile has no private key: {Profile}");
+
+                    PlanWriter.SigningKey = ImageFormat.Composite.FitSignature.LoadPrivateKey(Material);
+                    PlanWriter.SigningKeyName = Processor.GetBlob().GetContainerOption("fit", "sign-key-name", Record.Name);
+                    var Algo = Processor.GetBlob().GetContainerOption("fit", "sign-algo", null);
+                    if (!String.IsNullOrEmpty(Algo))
+                        PlanWriter.SigningAlgorithm = Algo;
+                }
+
                 string BuildError;
                 var BuildData = PlanWriter.Build(out BuildError);
                 if (BuildData != null)
                 {
                     System.IO.File.WriteAllBytes(Path, BuildData);
+
+                    if (!String.IsNullOrEmpty(SignControl))
+                    {
+                        if (PlanWriter.SigningKey == null)
+                            return new ScriptStepResult(ScriptStepStatus.Error, "FIT signing key is not selected");
+
+                        try
+                        {
+                            var Control = ImageFormat.Composite.FitPublicKey.BuildControlDtb(
+                                PlanWriter.SigningKey,
+                                PlanWriter.SigningKeyName ?? "key",
+                                PlanWriter.SigningAlgorithm);
+                            System.IO.File.WriteAllBytes(SignControl, Control);
+                        }
+                        catch (Exception E)
+                        {
+                            return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot write FIT control DTB: {E.Message}");
+                        }
+                    }
+
                     return new ScriptStepResult(ScriptStepStatus.Ok, $"Image is stored to file {Path} from the build plan.");
                 }
+
+                if (!String.IsNullOrEmpty(SignProfile))
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"FIT signing failed: {BuildError}");
 
                 switch (Plan.Root.Format)
                 {

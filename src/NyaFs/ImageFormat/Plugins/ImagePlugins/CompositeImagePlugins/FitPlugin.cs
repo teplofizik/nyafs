@@ -13,7 +13,11 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
 
         public override NyaFs.ImageFormat.Plugins.Base.FilesystemOption[] Options => new[]
         {
-            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("hash", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Enum, "sha1", "FIT hash algorithm", new[] { "sha1", "sha256", "sha512", "crc32" })
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("hash", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Enum, "sha1", "FIT hash algorithm", new[] { "sha1", "sha256", "sha512", "crc32" }),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, null, "KeyStore profile used to sign FIT configurations (or active)"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign-algo", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, "sha256,rsa2048", "FIT signature algorithm"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign-key-name", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, null, "FIT key-name-hint"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign-control", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, null, "Write U-Boot control DTB with the signing public key")
         };
 
         public override bool DetectImage(ImageData Image)
@@ -114,7 +118,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 });
             }
 
-            Res.Add(new ContainedImage(NodeName, Kind, "fit", -1, Data.Length, Data, Compression, Info,
+            var LeafFormat = (Kind == ImageKind.Devtree) ? "dtb" : "raw";
+            Res.Add(new ContainedImage(NodeName, Kind, LeafFormat, -1, Data.Length, Data, Compression, Info,
                 Node.GetStringValue("description"), Hashes.ToArray(), External));
         }
 

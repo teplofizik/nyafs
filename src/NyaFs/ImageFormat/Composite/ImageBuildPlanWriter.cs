@@ -4,6 +4,7 @@ using NyaFs.ImageFormat.Types;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace NyaFs.ImageFormat.Composite
@@ -15,6 +16,10 @@ namespace NyaFs.ImageFormat.Composite
     public class ImageBuildPlanWriter
     {
         private readonly ImageBuildPlan Plan;
+
+        public RSA SigningKey { get; set; }
+        public string SigningKeyName { get; set; }
+        public string SigningAlgorithm { get; set; }
 
         public ImageBuildPlanWriter(ImageBuildPlan Plan)
         {
@@ -214,8 +219,104 @@ namespace NyaFs.ImageFormat.Composite
             FitImage.Root.Nodes.Add(ImagesNode);
             FitImage.Root.Nodes.Add(Configurations);
 
-            return new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+            if (SigningKey == null)
+                return new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+
+            var SignatureNodes = new List<FlattenedDeviceTree.Types.Node>();
+            AddFitSignatures(ImagesNode, Configurations, SignatureNodes);
+
+            var Unsigned = new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+            var StringsSize = ReadU32BE(Unsigned, 32);
+            foreach (var Signature in SignatureNodes)
+                SetSignatureStringsSize(Signature, StringsSize);
+
+            Unsigned = new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+            var Signed = FitSignature.Sign(Unsigned, SigningKey, out _, out var SignError);
+            if (Signed == null)
+            {
+                Error = SignError;
+                return null;
+            }
+
+            return Signed;
         }
+
+        private void AddFitSignatures(FlattenedDeviceTree.Types.Node ImagesNode,
+            FlattenedDeviceTree.Types.Node ConfigurationsNode,
+            List<FlattenedDeviceTree.Types.Node> SignatureNodes)
+        {
+            var Algo = String.IsNullOrEmpty(SigningAlgorithm)
+                ? $"sha256,rsa{SigningKey.KeySize}"
+                : SigningAlgorithm;
+            var KeyName = String.IsNullOrEmpty(SigningKeyName) ? "key" : SigningKeyName;
+            var ImageProperties = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "kernel", "ramdisk", "fdt", "setup", "fpga", "firmware", "loadables", "script"
+            };
+
+            foreach (var Config in ConfigurationsNode.Nodes)
+            {
+                var Paths = new List<string> { "/", "/configurations/" + Config.Name };
+                foreach (var Property in Config.Properties)
+                {
+                    if (!ImageProperties.Contains(Property.Name))
+                        continue;
+
+                    var Text = Encoding.UTF8.GetString(Property.Value);
+                    foreach (var ImageName in Text.Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var Image = ImagesNode.GetNode(ImageName);
+                        if (Image == null)
+                            continue;
+
+                        var ImagePath = "/images/" + ImageName;
+                        AddUnique(Paths, ImagePath);
+                        foreach (var Child in Image.Nodes)
+                        {
+                            if (Child.Name.StartsWith("hash", StringComparison.Ordinal) ||
+                                Child.Name.StartsWith("cipher", StringComparison.Ordinal) ||
+                                Child.Name.StartsWith("dm-verity", StringComparison.Ordinal))
+                                AddUnique(Paths, ImagePath + "/" + Child.Name);
+                        }
+                    }
+                }
+
+                var Signature = new FlattenedDeviceTree.Types.Node("signature1");
+                Signature.AddStringValue("algo", Algo);
+                Signature.AddStringValue("key-name-hint", KeyName);
+                Signature.AddRawValue("hashed-nodes", Encoding.UTF8.GetBytes(String.Join("\0", Paths) + "\0"));
+                Signature.AddRawValue("hashed-strings", new byte[8]);
+                Signature.AddRawValue("value", new byte[SigningKey.KeySize / 8]);
+                Config.Nodes.Add(Signature);
+                SignatureNodes.Add(Signature);
+            }
+        }
+
+        private static void AddUnique(List<string> Paths, string Path)
+        {
+            if (!Paths.Contains(Path))
+                Paths.Add(Path);
+        }
+
+        private static void SetSignatureStringsSize(FlattenedDeviceTree.Types.Node Signature, uint Size)
+        {
+            foreach (var Property in Signature.Properties)
+            {
+                if (Property.Name != "hashed-strings")
+                    continue;
+
+                var Value = new byte[8];
+                Value[4] = (byte)(Size >> 24);
+                Value[5] = (byte)(Size >> 16);
+                Value[6] = (byte)(Size >> 8);
+                Value[7] = (byte)Size;
+                Property.Value = Value;
+                return;
+            }
+        }
+
+        private static uint ReadU32BE(byte[] Data, int Offset) =>
+            (uint)((Data[Offset] << 24) | (Data[Offset + 1] << 16) | (Data[Offset + 2] << 8) | Data[Offset + 3]);
 
         private static void AddStringList(FlattenedDeviceTree.Types.Node Config, string Property, System.Collections.Generic.List<string> SourceNames, Dictionary<string, string> ImageNames)
         {

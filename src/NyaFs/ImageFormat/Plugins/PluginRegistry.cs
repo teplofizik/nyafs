@@ -1,6 +1,7 @@
 using NyaFs.ImageFormat;
 using NyaFs.ImageFormat.Plugins.Base;
 using NyaFs.ImageFormat.Types;
+using NyaFs.Keys;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,6 +14,9 @@ namespace NyaFs.ImageFormat.Plugins
     /// </summary>
     public class PluginRegistry
     {
+        /// <summary>Shared key profile store for security-aware plugins.</summary>
+        public IKeyStore KeyStore { get; set; } = new FileKeyStore();
+
         private readonly List<NyaPlugin> LoadedPlugins = new List<NyaPlugin>();
         private readonly List<CompositeImagePlugin> Images = new List<CompositeImagePlugin>();
         private readonly List<CompressorPlugin> Compressors = new List<CompressorPlugin>();

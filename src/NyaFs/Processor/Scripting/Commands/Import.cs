@@ -76,6 +76,10 @@ namespace NyaFs.Processor.Scripting.Commands
 
                 Target.Raw = Located.Content;
                 Target.Format = Located.Format;
+                if ((Located.Format == "fit") && (Target.Kind == ImageKind.Devtree))
+                    Target.Format = "dtb";
+                else if ((Located.Format == "fit") && (Target.Kind != ImageKind.Unknown))
+                    Target.Format = "raw";
                 var DetectedCompression = NyaFs.ImageFormat.Helper.FitHelper.DetectCompression(Located.Content);
                 Target.Compression = (DetectedCompression != NyaFs.ImageFormat.Types.CompressionType.IH_COMP_NONE)
                     ? DetectedCompression

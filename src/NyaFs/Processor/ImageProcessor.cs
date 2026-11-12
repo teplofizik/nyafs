@@ -35,6 +35,7 @@ namespace NyaFs.Processor
         public ImageProcessor(Scripting.ScriptParser Parser, string[] PluginsDirs, bool LoadAll = false)
         {
             this.Parser = Parser;
+            Plugins.KeyStore = KeyStore;
             LoadInternalPlugins();
 
             var Loaded = new HashSet<string>();

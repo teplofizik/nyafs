@@ -116,6 +116,9 @@ namespace NyaFs.Processor
 
         public ImageFormat.BaseImageBlob GetBlob() => Blob;
 
+        /// <summary>User/profile key store shared by security-aware plugins.</summary>
+        public Keys.IKeyStore KeyStore = new Keys.FileKeyStore();
+
         /// <summary>Currently selected plan node for use/import and editing.</summary>
         public ImageFormat.ImageBuildNode ActiveNode { get; set; }
 

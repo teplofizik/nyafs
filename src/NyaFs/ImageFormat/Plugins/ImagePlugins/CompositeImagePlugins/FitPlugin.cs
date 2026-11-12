@@ -43,19 +43,19 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             var Added = new HashSet<string>();
             foreach (var Configuration in Configurations.Nodes)
             {
-                AddNodeImage(Res, Fit, Configuration.GetStringValue("kernel"), ImageKind.Kernel, Added);
-                AddNodeImage(Res, Fit, Configuration.GetStringValue("ramdisk"), ImageKind.Filesystem, Added);
-                AddNodeImage(Res, Fit, Configuration.GetStringValue("fdt"), ImageKind.Devtree, Added);
-                AddNodeImage(Res, Fit, Configuration.GetStringValue("setup"), ImageKind.Unknown, Added);
-                AddNodeImage(Res, Fit, Configuration.GetStringValue("fpga"), ImageKind.Unknown, Added);
-                AddNodeImage(Res, Fit, Configuration.GetStringValue("firmware"), ImageKind.Unknown, Added);
+                AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("kernel"), ImageKind.Kernel, Added);
+                AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("ramdisk"), ImageKind.Filesystem, Added);
+                AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("fdt"), ImageKind.Devtree, Added);
+                AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("setup"), ImageKind.Unknown, Added);
+                AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("fpga"), ImageKind.Unknown, Added);
+                AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("firmware"), ImageKind.Unknown, Added);
                 foreach (var Loadable in ReadStrings(Configuration.GetValue("loadables")))
-                    AddNodeImage(Res, Fit, Loadable, ImageKind.Unknown, Added);
+                    AddNodeImage(Res, Image, Fit, Loadable, ImageKind.Unknown, Added);
             }
             return Res.ToArray();
         }
 
-        private static void AddNodeImage(List<ContainedImage> Res, FlattenedDeviceTree.FlattenedDeviceTree Fit,
+        private static void AddNodeImage(List<ContainedImage> Res, ImageData Image, FlattenedDeviceTree.FlattenedDeviceTree Fit,
             string NodeName, ImageKind Kind, HashSet<string> Added)
         {
             if ((NodeName == null) || !Added.Add(NodeName))
@@ -66,6 +66,12 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 return;
 
             var Data = Node.GetValue("data");
+            var External = false;
+            if (Data == null)
+            {
+                Data = ReadExternalData(Image, Node);
+                External = Data != null;
+            }
             if (Data == null)
                 return;
 
@@ -102,9 +108,43 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             }
 
             Res.Add(new ContainedImage(NodeName, Kind, "fit", -1, Data.Length, Data, Compression, Info,
-                Node.GetStringValue("description"), Hashes.ToArray()));
+                Node.GetStringValue("description"), Hashes.ToArray(), External));
         }
 
+        private static byte[] ReadExternalData(ImageData Image, FlattenedDeviceTree.Types.Node Node)
+        {
+            var OffsetValue = Node.GetValue("data-offset");
+            var SizeValue = Node.GetValue("data-size");
+            if ((OffsetValue == null) || (SizeValue == null))
+                return null;
+
+            var DataOffset = ReadCell(OffsetValue);
+            var DataSize = ReadCell(SizeValue);
+            if ((DataOffset < 0) || (DataSize < 0) || (DataSize > Int32.MaxValue))
+                return null;
+
+            var TotalSize = Image.ReadUInt32BE(4);
+            var Base = (long)((TotalSize + 3) & ~3u);
+            var Start = Base + DataOffset;
+            if ((Start < 0) || (Start + DataSize > Image.Length))
+                return null;
+
+            return Image.ReadArray((int)Start, (int)DataSize);
+        }
+
+        private static long ReadCell(byte[] Value)
+        {
+            if (Value.Length == 4)
+                return (uint)((Value[0] << 24) | (Value[1] << 16) | (Value[2] << 8) | Value[3]);
+            if (Value.Length == 8)
+            {
+                ulong Result = 0;
+                for (var I = 0; I < 8; I++)
+                    Result = (Result << 8) | Value[I];
+                return (long)Result;
+            }
+            return -1;
+        }
         public override string ReadDescription(ImageData Image)
         {
             var Fit = ReadFit(Image);

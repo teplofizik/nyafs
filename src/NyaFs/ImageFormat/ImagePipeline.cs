@@ -159,7 +159,7 @@ namespace NyaFs.ImageFormat
                 // Re-run the pipeline on elements whose type is not declared in the container.
                 foreach (var Contained in Image.GetImages(Data))
                 {
-                    if ((Contained.Kind == ImageKind.Unknown) && (Contained.Content != null))
+                    if (((Contained.Kind == ImageKind.Unknown) || Contained.External) && (Contained.Content != null))
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Unknown, Contained.Format, Contained.Compression, Container, Image.Name + "/" + Contained.Name));
                         if (LoadElement(new ImageData(Contained.Content), Container + "/" + Image.Name + "/" + Contained.Name, Contained.Kind, Contained.Format, Contained.Info, Depth + 1))

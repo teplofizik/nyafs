@@ -21,8 +21,9 @@ namespace NyaFs.ImageFormat
         public readonly ImageInfo Info;
         public readonly string Description;
         public readonly ImageHash[] Hashes;
+        public readonly bool External;
 
-        public ContainedImage(string Name, ImageKind Kind, string Format, long Offset, long Size, byte[] Content, CompressionType Compression = CompressionType.IH_COMP_NONE, ImageInfo Info = null, string Description = null, ImageHash[] Hashes = null)
+        public ContainedImage(string Name, ImageKind Kind, string Format, long Offset, long Size, byte[] Content, CompressionType Compression = CompressionType.IH_COMP_NONE, ImageInfo Info = null, string Description = null, ImageHash[] Hashes = null, bool External = false)
         {
             this.Name = Name;
             this.Kind = Kind;
@@ -34,6 +35,7 @@ namespace NyaFs.ImageFormat
             this.Info = Info;
             this.Description = Description;
             this.Hashes = Hashes;
+            this.External = External;
         }
 
         public override string ToString() => $"{Name}: {Kind}/{Format ?? "?"} ({Size} bytes)";

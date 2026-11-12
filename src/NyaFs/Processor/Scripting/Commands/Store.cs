@@ -125,10 +125,15 @@ namespace NyaFs.Processor.Scripting.Commands
 
                         try
                         {
+                            var ExistingControl = System.IO.File.Exists(SignControl)
+                                ? System.IO.File.ReadAllBytes(SignControl)
+                                : null;
                             var Control = ImageFormat.Composite.FitPublicKey.BuildControlDtb(
                                 PlanWriter.SigningKey,
                                 PlanWriter.SigningKeyName ?? "key",
-                                PlanWriter.SigningAlgorithm);
+                                PlanWriter.SigningAlgorithm,
+                                "conf",
+                                ExistingControl);
                             System.IO.File.WriteAllBytes(SignControl, Control);
                         }
                         catch (Exception E)

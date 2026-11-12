@@ -1,3 +1,4 @@
+using NyaFs.FlattenedDeviceTree.Reader;
 using NyaFs.FlattenedDeviceTree.Types;
 using System;
 using System.Collections.Generic;
@@ -15,7 +16,7 @@ namespace NyaFs.ImageFormat.Composite
         public static string DefaultAlgo(RSA Rsa) => $"sha256,rsa{Rsa.KeySize}";
 
         public static byte[] BuildControlDtb(RSA Rsa, string KeyName, string Algo = null,
-            string Required = "conf")
+            string Required = "conf", byte[] ExistingControlDtb = null)
         {
             var Parameters = Rsa.ExportParameters(false);
             var Bits = Rsa.KeySize;
@@ -27,10 +28,22 @@ namespace NyaFs.ImageFormat.Composite
             var R2Bytes = PadLeft(ToBigEndian(R2), Size);
             var N0 = ModInverse32(LowWord(Modulus));
 
-            var Root = new Node("");
-            var Signature = new Node("signature");
-            var Key = new Node("key-" + SafeName(String.IsNullOrEmpty(KeyName) ? "key" : KeyName));
+            var Tree = (ExistingControlDtb != null)
+                ? new FDTReader(ExistingControlDtb).Read()
+                : new FlattenedDeviceTree.FlattenedDeviceTree();
+            var Signature = Tree.Root.GetNode("signature");
+            if (Signature == null)
+            {
+                Signature = new Node("signature");
+                Tree.Root.Nodes.Add(Signature);
+            }
 
+            var NodeName = "key-" + SafeName(String.IsNullOrEmpty(KeyName) ? "key" : KeyName);
+            var OldKey = Signature.GetNode(NodeName);
+            if (OldKey != null)
+                Signature.Nodes.Remove(OldKey);
+
+            var Key = new Node(NodeName);
             if (!String.IsNullOrEmpty(Required))
                 Key.AddStringValue("required", Required);
             Key.AddStringValue("algo", String.IsNullOrEmpty(Algo) ? DefaultAlgo(Rsa) : Algo);
@@ -42,8 +55,7 @@ namespace NyaFs.ImageFormat.Composite
             Key.AddStringValue("key-name-hint", KeyName ?? "");
 
             Signature.Nodes.Add(Key);
-            Root.Nodes.Add(Signature);
-            return new FlattenedDeviceTree.Writer.FDTWriter(new FlattenedDeviceTree.FlattenedDeviceTree { Root = Root }).GetBinary();
+            return new FlattenedDeviceTree.Writer.FDTWriter(Tree).GetBinary();
         }
 
         private static byte[] Cells(byte[] Value)

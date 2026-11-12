@@ -56,7 +56,8 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Target == null)
                     return new ScriptStepResult(ScriptStepStatus.Error,
                         (TargetPath != null) ? $"Target node '{TargetPath}' is not found" : "No active element; use <path> first");
-                if ((Target.Fs == null) && (Target.Kernel == null) && (Target.Dtb == null))
+                if ((Target.Fs == null) && (Target.Kernel == null) && (Target.Dtb == null) &&
+                    ((Target.Raw == null) || (Target.Children.Count > 0)))
                     return new ScriptStepResult(ScriptStepStatus.Error, $"'{Target.Path}' is a container, not an editable element");
 
                 var Data = System.IO.File.ReadAllBytes(Filename);
@@ -65,12 +66,16 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Located == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Sub-image '{SourcePath}' is not found in {Source}");
 
-                var Temp = new BaseImageBlob();
-                var Pipeline = new ImagePipeline(Processor.Plugins, Temp);
-                if (!Pipeline.LoadInto(Located.Content, Located.Kind, Located.Format, Located.Info))
-                    return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot load sub-image '{SourcePath}'");
+                var Temp = (Target.Kind == ImageKind.Unknown) ? null : new BaseImageBlob();
+                if (Temp != null)
+                {
+                    var Pipeline = new ImagePipeline(Processor.Plugins, Temp);
+                    if (!Pipeline.LoadInto(Located.Content, Located.Kind, Located.Format, Located.Info))
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot load sub-image '{SourcePath}'");
+                }
 
                 Target.Raw = Located.Content;
+                Target.Format = Located.Format;
                 var DetectedCompression = NyaFs.ImageFormat.Helper.FitHelper.DetectCompression(Located.Content);
                 Target.Compression = (DetectedCompression != NyaFs.ImageFormat.Types.CompressionType.IH_COMP_NONE)
                     ? DetectedCompression
@@ -99,6 +104,8 @@ namespace NyaFs.Processor.Scripting.Commands
                         if (Target.Dtb == null)
                             return new ScriptStepResult(ScriptStepStatus.Error, $"Sub-image '{SourcePath}' is not a device tree");
                         Processor.GetBlob().SetDevTree(0, Target.Dtb);
+                        break;
+                    case ImageKind.Unknown:
                         break;
                     default:
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot import into '{Target.Kind}'");

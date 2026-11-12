@@ -86,6 +86,9 @@ namespace NyaFs.ImageFormat.Composite
             if (Node.Format == "cimg")
                 return BuildCImg(Node, out Error);
 
+            if ((Node.Kind == ImageKind.Unknown) && (Node.Raw != null))
+                return Node.Raw;
+
             return SerializeLeaf(Node, out Error);
         }
 
@@ -153,7 +156,7 @@ namespace NyaFs.ImageFormat.Composite
                 var Hashes = (!String.IsNullOrEmpty(HashOverride))
                     ? new List<ImageHash> { new ImageHash { Name = "hash@1", Algorithm = HashOverride } }
                     : (Child.Hashes.Count > 0
-                        ? Child.Hashes
+                        ? new List<ImageHash> { Child.Hashes[0] }
                         : new List<ImageHash> { new ImageHash { Name = "hash@1", Algorithm = "sha1" } });
                 foreach (var HashInfo in Hashes)
                 {

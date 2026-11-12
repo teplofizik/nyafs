@@ -35,7 +35,8 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Node == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Build plan node '{Path}' is not found");
 
-                if ((Node.Fs == null) && (Node.Kernel == null) && (Node.Dtb == null))
+                if ((Node.Fs == null) && (Node.Kernel == null) && (Node.Dtb == null) &&
+                    ((Node.Raw == null) || (Node.Children.Count > 0)))
                     return new ScriptStepResult(ScriptStepStatus.Error, $"'{Path}' is a container, not an editable element");
 
                 Processor.ActiveNode = Node;

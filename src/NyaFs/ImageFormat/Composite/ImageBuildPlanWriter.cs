@@ -20,6 +20,10 @@ namespace NyaFs.ImageFormat.Composite
         public RSA SigningKey { get; set; }
         public string SigningKeyName { get; set; }
         public string SigningAlgorithm { get; set; }
+        public bool FitExternalData { get; set; }
+        public uint? FitExternalPosition { get; set; }
+        public int FitExternalAlign { get; set; } = 4;
+        public bool SigningImages { get; set; }
 
         public ImageBuildPlanWriter(ImageBuildPlan Plan)
         {
@@ -102,6 +106,7 @@ namespace NyaFs.ImageFormat.Composite
             Error = null;
 
             var Images = new List<Tuple<string, ImageBuildNode, byte[], ImageInfo>>();
+            var ExternalNodes = new List<Tuple<FlattenedDeviceTree.Types.Node, byte[]>>();
             var ImageNames = new Dictionary<string, string>(StringComparer.Ordinal);
             var Used = new HashSet<string>();
 
@@ -144,7 +149,19 @@ namespace NyaFs.ImageFormat.Composite
 
                 var ImageNode = new FlattenedDeviceTree.Types.Node(Name);
                 ImageNode.AddStringValue("description", GetDescription(Child));
-                ImageNode.AddRawValue("data", Data);
+                if (FitExternalData)
+                {
+                    if (FitExternalPosition.HasValue)
+                        ImageNode.AddUInt32Value("data-position", 0);
+                    else
+                        ImageNode.AddUInt32Value("data-offset", 0);
+                    ImageNode.AddUInt32Value("data-size", (uint)Data.Length);
+                    ExternalNodes.Add(Tuple.Create(ImageNode, Data));
+                }
+                else
+                {
+                    ImageNode.AddRawValue("data", Data);
+                }
                 ImageNode.AddStringValue("type", FitHelper.GetType(Info.Type));
                 ImageNode.AddStringValue("compression", FitHelper.GetCompression(GetCompression(Child)));
                 if (Info.Architecture != CPU.IH_ARCH_INVALID)
@@ -175,6 +192,15 @@ namespace NyaFs.ImageFormat.Composite
                     Hash.AddStringValue("algo", HashInfo.Algorithm);
                     Hash.AddRawValue("value", HashValue);
                     ImageNode.Nodes.Add(Hash);
+                }
+
+                if (SigningImages && (SigningKey != null))
+                {
+                    var Signature = new FlattenedDeviceTree.Types.Node("signature1");
+                    Signature.AddStringValue("algo", GetSigningAlgo());
+                    Signature.AddStringValue("key-name-hint", GetSigningKeyName());
+                    Signature.AddRawValue("value", new byte[SigningKey.KeySize / 8]);
+                    ImageNode.Nodes.Add(Signature);
                 }
 
                 ImagesNode.Nodes.Add(ImageNode);
@@ -219,36 +245,120 @@ namespace NyaFs.ImageFormat.Composite
             FitImage.Root.Nodes.Add(ImagesNode);
             FitImage.Root.Nodes.Add(Configurations);
 
-            if (SigningKey == null)
-                return new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+            var Fdt = new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
 
-            var SignatureNodes = new List<FlattenedDeviceTree.Types.Node>();
-            AddFitSignatures(ImagesNode, Configurations, SignatureNodes);
-
-            var Unsigned = new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
-            var StringsSize = ReadU32BE(Unsigned, 32);
-            foreach (var Signature in SignatureNodes)
-                SetSignatureStringsSize(Signature, StringsSize);
-
-            Unsigned = new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
-            var Signed = FitSignature.Sign(Unsigned, SigningKey, out _, out var SignError);
-            if (Signed == null)
+            if (SigningKey != null)
             {
-                Error = SignError;
-                return null;
+                var SignatureNodes = new List<FlattenedDeviceTree.Types.Node>();
+                AddFitSignatures(ImagesNode, Configurations, SignatureNodes);
+
+                Fdt = new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+                var StringsSize = ReadU32BE(Fdt, 32);
+                foreach (var Signature in SignatureNodes)
+                    SetSignatureStringsSize(Signature, StringsSize);
+
+                Fdt = new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
             }
 
-            return Signed;
+            uint ExternalBase = 0;
+            if (FitExternalData)
+            {
+                ExternalBase = ApplyExternalData(FitImage, ExternalNodes, Fdt.Length);
+                Fdt = new FlattenedDeviceTree.Writer.FDTWriter(FitImage).GetBinary();
+            }
+
+            if (SigningKey != null)
+            {
+                var Signed = FitSignature.Sign(Fdt, SigningKey, out _, out var SignError);
+                if (Signed == null)
+                {
+                    Error = SignError;
+                    return null;
+                }
+                Fdt = Signed;
+            }
+
+            if (FitExternalData && !FitExternalPosition.HasValue)
+            {
+                Fdt = AppendExternalData(Fdt, ExternalBase, ExternalNodes, Math.Max(4, FitExternalAlign));
+                if (Fdt == null)
+                {
+                    Error = "Cannot append FIT external payloads";
+                    return null;
+                }
+            }
+
+            return Fdt;
         }
+
+        private uint ApplyExternalData(FlattenedDeviceTree.FlattenedDeviceTree FitImage,
+            List<Tuple<FlattenedDeviceTree.Types.Node, byte[]>> ExternalNodes, int FdtSize)
+        {
+            var Align = Math.Max(4, FitExternalAlign);
+            var Base = FitExternalPosition ?? (uint)((FdtSize + Align - 1) / Align * Align);
+            uint Offset = 0;
+            foreach (var Item in ExternalNodes)
+            {
+                var Position = FitExternalPosition.HasValue ? Base + Offset : Offset;
+                SetU32Property(Item.Item1, FitExternalPosition.HasValue ? "data-position" : "data-offset", Position);
+                Offset += (uint)((Item.Item2.Length + Align - 1) / Align * Align);
+            }
+
+            return Base;
+        }
+
+        private static byte[] AppendExternalData(byte[] Fdt, uint Base,
+            List<Tuple<FlattenedDeviceTree.Types.Node, byte[]>> ExternalNodes, int Align)
+        {
+            var Total = (long)Base;
+            foreach (var Item in ExternalNodes)
+                Total += (Item.Item2.Length + Align - 1) / Align * Align;
+
+            if ((Total <= 0) || (Total > Int32.MaxValue))
+                return null;
+
+            var Result = new byte[(int)Total];
+            Buffer.BlockCopy(Fdt, 0, Result, 0, Fdt.Length);
+            var Position = (int)Base;
+            foreach (var Item in ExternalNodes)
+            {
+                Buffer.BlockCopy(Item.Item2, 0, Result, Position, Item.Item2.Length);
+                Position += (Item.Item2.Length + Align - 1) / Align * Align;
+            }
+            return Result;
+        }
+
+        private static void SetU32Property(FlattenedDeviceTree.Types.Node Node, string Name, uint Value)
+        {
+            foreach (var Property in Node.Properties)
+            {
+                if (Property.Name != Name)
+                    continue;
+
+                var Raw = new byte[4];
+                Raw[0] = (byte)(Value >> 24);
+                Raw[1] = (byte)(Value >> 16);
+                Raw[2] = (byte)(Value >> 8);
+                Raw[3] = (byte)Value;
+                Property.Value = Raw;
+                return;
+            }
+
+            Node.AddUInt32Value(Name, Value);
+        }
+
+        private string GetSigningAlgo() => String.IsNullOrEmpty(SigningAlgorithm)
+            ? $"sha256,rsa{SigningKey.KeySize}"
+            : SigningAlgorithm;
+
+        private string GetSigningKeyName() => String.IsNullOrEmpty(SigningKeyName) ? "key" : SigningKeyName;
 
         private void AddFitSignatures(FlattenedDeviceTree.Types.Node ImagesNode,
             FlattenedDeviceTree.Types.Node ConfigurationsNode,
             List<FlattenedDeviceTree.Types.Node> SignatureNodes)
         {
-            var Algo = String.IsNullOrEmpty(SigningAlgorithm)
-                ? $"sha256,rsa{SigningKey.KeySize}"
-                : SigningAlgorithm;
-            var KeyName = String.IsNullOrEmpty(SigningKeyName) ? "key" : SigningKeyName;
+            var Algo = GetSigningAlgo();
+            var KeyName = GetSigningKeyName();
             var ImageProperties = new HashSet<string>(StringComparer.Ordinal)
             {
                 "kernel", "ramdisk", "fdt", "setup", "fpga", "firmware", "loadables", "script"

@@ -149,9 +149,12 @@ namespace NyaFs.ImageFormat.Composite
         {
             Error = null;
 
-            if (!Signature.Properties.TryGetValue("hashed-nodes", out var HashedNodes))
+            if (!Signature.Properties.ContainsKey("hashed-nodes"))
             {
-                Error = "hashed-nodes property is missing (only mkimage-prepared FITs are supported)";
+                if (Signature.Path.StartsWith("/images/", StringComparison.Ordinal))
+                    return BuildImageData(Data, Parsed, Signature, out Error);
+
+                Error = "hashed-nodes property is missing (only mkimage-prepared configuration signatures are supported)";
                 return null;
             }
             if (!Signature.Properties.TryGetValue("hashed-strings", out var HashedStrings) || HashedStrings.Length < 8)
@@ -160,6 +163,7 @@ namespace NyaFs.ImageFormat.Composite
                 return null;
             }
 
+            var HashedNodes = Signature.Properties["hashed-nodes"];
             var Included = new HashSet<string>(
                 ReadStringList(Data, HashedNodes).Where(P => P.Length > 0),
                 StringComparer.Ordinal);
@@ -188,6 +192,58 @@ namespace NyaFs.ImageFormat.Composite
                 Pos += Region.Size;
             }
             return Blob;
+        }
+
+        private static byte[] BuildImageData(byte[] Data, FdtInfo Parsed, NodeInfo Signature, out string Error)
+        {
+            Error = null;
+            var Slash = Signature.Path.LastIndexOf('/');
+            if (Slash <= 0)
+            {
+                Error = "image signature has no parent image";
+                return null;
+            }
+
+            var ImagePath = Signature.Path.Substring(0, Slash);
+            var Image = Parsed.Nodes.FirstOrDefault(N => N.Path == ImagePath);
+            if (Image == null)
+            {
+                Error = "image signature parent is not found";
+                return null;
+            }
+
+            if (Image.Properties.TryGetValue("data", out var DataProperty))
+            {
+                var Result = new byte[DataProperty.Length];
+                Buffer.BlockCopy(Data, DataProperty.ValueOffset, Result, 0, Result.Length);
+                return Result;
+            }
+
+            if (Image.Properties.TryGetValue("data-position", out _))
+            {
+                Error = "data-position points outside the FIT; the payload is not available";
+                return null;
+            }
+
+            if (!Image.Properties.TryGetValue("data-offset", out var OffsetProperty) ||
+                !Image.Properties.TryGetValue("data-size", out var SizeProperty))
+            {
+                Error = "image has neither data nor data-offset/data-size";
+                return null;
+            }
+
+            var Base = Align4((int)ReadU32BE(Data, 4));
+            var Offset = (int)ReadU32BE(Data, OffsetProperty.ValueOffset);
+            var Size = (int)ReadU32BE(Data, SizeProperty.ValueOffset);
+            if ((Base < 0) || (Offset < 0) || (Size < 0) || (Base + Offset + Size > Data.Length))
+            {
+                Error = "external image data is out of bounds";
+                return null;
+            }
+
+            var Content = new byte[Size];
+            Buffer.BlockCopy(Data, Base + Offset, Content, 0, Size);
+            return Content;
         }
 
         private static List<(int Offset, int Size)> BuildRegions(byte[] Data, FdtInfo Parsed,

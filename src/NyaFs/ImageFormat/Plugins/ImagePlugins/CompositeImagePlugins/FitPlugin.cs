@@ -17,7 +17,11 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, null, "KeyStore profile used to sign FIT configurations (or active)"),
             new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign-algo", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, "sha256,rsa2048", "FIT signature algorithm"),
             new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign-key-name", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, null, "FIT key-name-hint"),
-            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign-control", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, null, "Write U-Boot control DTB with the signing public key")
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign-control", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, null, "Write U-Boot control DTB with the signing public key"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("external", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Bool, "false", "Write FIT payloads outside the FDT"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("external-position", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.String, null, "Use data-position instead of data-offset (absolute address)"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("external-align", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Integer, "4", "External payload alignment"),
+            new NyaFs.ImageFormat.Plugins.Base.FilesystemOption("sign-images", NyaFs.ImageFormat.Plugins.Base.FilesystemOptionType.Bool, "false", "Sign each FIT image node (in addition to configuration signatures)")
         };
 
         public override bool DetectImage(ImageData Image)

@@ -112,6 +112,31 @@ namespace NyaFs.Processor.Scripting.Commands
                         PlanWriter.SigningAlgorithm = Algo;
                 }
 
+                var SignImages = Processor.GetBlob().GetContainerOption("fit", "sign-images", null);
+                if (Boolean.TryParse(SignImages, out var SignImagesEnabled) && SignImagesEnabled)
+                {
+                    if (PlanWriter.SigningKey == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "FIT image signing requires fit.sign");
+                    PlanWriter.SigningImages = true;
+                }
+
+                var External = Processor.GetBlob().GetContainerOption("fit", "external", null);
+                if (Boolean.TryParse(External, out var ExternalEnabled) && ExternalEnabled)
+                    PlanWriter.FitExternalData = true;
+
+                var ExternalPosition = Processor.GetBlob().GetContainerOption("fit", "external-position", null);
+                if (!String.IsNullOrEmpty(ExternalPosition))
+                {
+                    if (!TryParseUInt(ExternalPosition, out var Position))
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid FIT external-position: {ExternalPosition}");
+                    PlanWriter.FitExternalData = true;
+                    PlanWriter.FitExternalPosition = Position;
+                }
+
+                var ExternalAlign = Processor.GetBlob().GetContainerOption("fit", "external-align", null);
+                if (!String.IsNullOrEmpty(ExternalAlign) && Int32.TryParse(ExternalAlign, out var Align) && (Align >= 4))
+                    PlanWriter.FitExternalAlign = Align;
+
                 string BuildError;
                 var BuildData = PlanWriter.Build(out BuildError);
                 if (BuildData != null)
@@ -384,6 +409,15 @@ namespace NyaFs.Processor.Scripting.Commands
 
                 return Result * Multiplier;
             }
+
+            private static bool TryParseUInt(string Value, out uint Result)
+            {
+                var Text = Value.Trim();
+                if (Text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                    return UInt32.TryParse(Text.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out Result);
+                return UInt32.TryParse(Text, out Result);
+            }
+
 
             private ImageFormat.Elements.Fs.Writer.Writer GetFsWriter(ImageProcessor Processor, ImageFormat.Elements.Fs.LinuxFilesystem Fs)
             {

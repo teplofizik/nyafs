@@ -20,15 +20,19 @@ namespace NyaFs.ImageFormat.Composite
             this.Path = Path;
         }
 
-        public bool Write(BaseImageBlob Blob)
+        public byte[] Build(BaseImageBlob Blob, out string Error)
         {
+            Error = null;
             try
             {
                 var Kernel = Blob.GetKernel(0);
                 var Fs = Blob.GetFilesystem(0);
                 var Dtb = Blob.GetDevTree(0);
                 if (((Kernel == null) || !Kernel.Loaded) && ((Fs == null) || !Fs.Loaded))
-                    return false;
+                {
+                    Error = "Android boot image requires a kernel or ramdisk";
+                    return null;
+                }
 
                 var Version = (int)GetUInt(Blob, "header-version", 0);
                 if ((Version < 0) || (Version > 3))
@@ -45,7 +49,7 @@ namespace NyaFs.ImageFormat.Composite
                 var DtbData = Version >= 2 ? (GetDtbData(Dtb) ?? Array.Empty<byte>()) : Array.Empty<byte>();
 
                 if (Version == 3)
-                    return WriteV3(Blob, KernelData, RamdiskData);
+                    return BuildV3(Blob, KernelData, RamdiskData);
 
                 var HeaderSize = Version == 2 ? 0x680 : (Version == 1 ? 0x670 : 0x800);
                 var KernelOffset = Align(HeaderSize, PageSize);
@@ -92,17 +96,26 @@ namespace NyaFs.ImageFormat.Composite
                 if (Version >= 2)
                     Copy(Result, DtbOffset, DtbData);
 
-                File.WriteAllBytes(Path, Result);
-                return true;
+                return Result;
             }
             catch (Exception E)
             {
+                Error = E.Message;
                 Log.Error(0, $"Cannot write Android boot image: {E.Message}");
-                return false;
+                return null;
             }
         }
 
-        private bool WriteV3(BaseImageBlob Blob, byte[] KernelData, byte[] RamdiskData)
+        public bool Write(BaseImageBlob Blob)
+        {
+            var Data = Build(Blob, out var Error);
+            if (Data == null)
+                return false;
+            File.WriteAllBytes(Path, Data);
+            return true;
+        }
+
+        private byte[] BuildV3(BaseImageBlob Blob, byte[] KernelData, byte[] RamdiskData)
         {
             const int PageSize = 4096;
             const int HeaderSize = 1580;
@@ -126,8 +139,7 @@ namespace NyaFs.ImageFormat.Composite
 
             Copy(Result, KernelOffset, KernelData);
             Copy(Result, RamdiskOffset, RamdiskData);
-            File.WriteAllBytes(Path, Result);
-            return true;
+            return Result;
         }
 
         private static byte[] GetKernelData(LinuxKernel Kernel)

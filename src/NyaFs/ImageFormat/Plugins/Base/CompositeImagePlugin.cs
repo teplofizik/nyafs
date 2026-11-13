@@ -83,5 +83,14 @@ namespace NyaFs.ImageFormat.Plugins.Base
         /// </summary>
         /// <returns></returns>
         public virtual Elements.Dtb.Reader.Reader GetDtbReader(byte[] Data) => null;
+        /// <summary>Can this composite format be built from the loaded blob.</summary>
+        public virtual bool SupportWrite => false;
+
+        /// <summary>Build a composite image from the loaded elements (no file I/O).</summary>
+        public virtual byte[] Build(BaseImageBlob Blob, out string Error)
+        {
+            Error = null;
+            return null;
+        }
     }
 }

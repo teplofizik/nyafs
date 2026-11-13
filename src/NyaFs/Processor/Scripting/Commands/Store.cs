@@ -189,6 +189,10 @@ namespace NyaFs.Processor.Scripting.Commands
                         return new StoreScriptStep(Path, "all", "android").Exec(Processor);
                 }
 
+                var Plugin = Processor.Plugins.ResolveImage(Plan.Root.Format);
+                if ((Plugin != null) && Plugin.SupportWrite)
+                    return new StoreScriptStep(Path, "all", Plugin.Format).Exec(Processor);
+
                 return new ScriptStepResult(ScriptStepStatus.Error,
                     $"Image was modified; specify an explicit output format for root container '{Plan.Root.Format}'.");
             }
@@ -240,6 +244,17 @@ namespace NyaFs.Processor.Scripting.Commands
                             return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build Android boot image!");
                         }
                     default:
+                        foreach (var Plugin in Processor.Plugins.GetImages())
+                        {
+                            if (!Plugin.SupportWrite || !String.Equals(Plugin.Format, Format, StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            var Data = Plugin.Build(Processor.GetBlob(), out var Error);
+                            if (Data == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, Error ?? $"Cannot build {Format} image");
+                            System.IO.File.WriteAllBytes(Path, Data);
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as {Format} image!");
+                        }
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown multiimage format!");
 
                 }

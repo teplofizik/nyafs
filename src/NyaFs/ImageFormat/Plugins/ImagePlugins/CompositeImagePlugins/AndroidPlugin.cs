@@ -15,6 +15,21 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
 
         }
 
+        public override FilesystemOption[] Options => new[]
+        {
+            new FilesystemOption("header-version", FilesystemOptionType.Integer, "0", "Android boot header version (0-2)"),
+            new FilesystemOption("page-size", FilesystemOptionType.Integer, "2048", "Android boot page size"),
+            new FilesystemOption("name", FilesystemOptionType.String, "", "Image name"),
+            new FilesystemOption("cmdline", FilesystemOptionType.String, "", "Kernel command line"),
+            new FilesystemOption("extra-cmdline", FilesystemOptionType.String, "", "Extra kernel command line"),
+            new FilesystemOption("kernel-addr", FilesystemOptionType.String, null, "Kernel load address"),
+            new FilesystemOption("ramdisk-addr", FilesystemOptionType.String, null, "Ramdisk load address"),
+            new FilesystemOption("second-addr", FilesystemOptionType.String, null, "Second stage load address"),
+            new FilesystemOption("tags-addr", FilesystemOptionType.String, null, "Tags address"),
+            new FilesystemOption("recovery-dtbo-addr", FilesystemOptionType.String, null, "Recovery DTBO address"),
+            new FilesystemOption("dtb-addr", FilesystemOptionType.String, null, "DTB address")
+        };
+
         /// <summary>
         /// Is image contain this image
         /// </summary>
@@ -36,10 +51,13 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
             if (Image.Length < 0x670)
                 return new ContainedImage[0];
 
-            var Img = new LegacyAndroidImage(Image.ReadArray(0, Image.Length));
+            var Raw = Image.ReadArray(0, Image.Length);
+            var Img = new LegacyAndroidImage(Raw);
             if (!Img.IsMagicCorrect || (Img.HeaderVersion >= 3))
                 return new ContainedImage[0];
 
+            var V1 = (Img.HeaderVersion >= 1) ? new AndroidImagev1(Raw) : null;
+            var V2 = (Img.HeaderVersion >= 2) ? new AndroidImagev2(Raw) : null;
             var Res = new List<ContainedImage>();
 
             var Kernel = Img.Kernel;
@@ -54,7 +72,53 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
             if ((Second != null) && (Second.Length > 0))
                 Res.Add(new ContainedImage("second", ImageKind.Unknown, null, -1, Second.Length, Second));
 
+            if (V1 != null)
+            {
+                var Recovery = V1.RecoveryDtbo;
+                if ((Recovery != null) && (Recovery.Length > 0))
+                    Res.Add(new ContainedImage("recovery_dtbo", ImageKind.Unknown, null, -1, Recovery.Length, Recovery));
+            }
+            if (V2 != null)
+            {
+                var DtbImage = V2.Dtbo;
+                if ((DtbImage != null) && (DtbImage.Length > 0))
+                    Res.Add(new ContainedImage("dtb", ImageKind.Unknown, null, -1, DtbImage.Length, DtbImage));
+            }
+
             return Res.ToArray();
+        }
+
+        public override IEnumerable<KeyValuePair<string, string>> ReadOptions(ImageData Image)
+        {
+            if (Image.Length < 0x670)
+                yield break;
+
+            var Raw = Image.ReadArray(0, Image.Length);
+            var Img = new LegacyAndroidImage(Raw);
+            if (!Img.IsMagicCorrect || (Img.HeaderVersion >= 3))
+                yield break;
+
+            yield return new KeyValuePair<string, string>("header-version", Img.HeaderVersion.ToString());
+            yield return new KeyValuePair<string, string>("page-size", Img.PageSize.ToString());
+            yield return new KeyValuePair<string, string>("name", (Img.Name ?? "").TrimEnd('\0'));
+            yield return new KeyValuePair<string, string>("cmdline", (Img.BootAgrs ?? "").TrimEnd('\0'));
+            yield return new KeyValuePair<string, string>("extra-cmdline", (Img.ExtraAgrs ?? "").TrimEnd('\0'));
+            yield return new KeyValuePair<string, string>("kernel-addr", "0x" + Img.KernelAddress.ToString("x"));
+            yield return new KeyValuePair<string, string>("ramdisk-addr", "0x" + Img.RamdiskAddress.ToString("x"));
+            yield return new KeyValuePair<string, string>("second-addr", "0x" + Img.SecondAddress.ToString("x"));
+            yield return new KeyValuePair<string, string>("tags-addr", "0x" + Img.TagsAddress.ToString("x"));
+            yield return new KeyValuePair<string, string>("os-version", Img.OSVersion.ToString());
+
+            if (Img.HeaderVersion >= 1)
+            {
+                var V1 = new AndroidImagev1(Raw);
+                yield return new KeyValuePair<string, string>("recovery-dtbo-addr", "0x" + V1.RecoveryDtboAddress.ToString("x"));
+            }
+            if (Img.HeaderVersion >= 2)
+            {
+                var V2 = new AndroidImagev2(Raw);
+                yield return new KeyValuePair<string, string>("dtb-addr", "0x" + V2.DtboAddress.ToString("x"));
+            }
         }
 
         /// <summary>

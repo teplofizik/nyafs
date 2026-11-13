@@ -185,6 +185,8 @@ namespace NyaFs.Processor.Scripting.Commands
                         break;
                     case "fit":
                         return new StoreScriptStep(Path, "all", "fit").Exec(Processor);
+                    case "android":
+                        return new StoreScriptStep(Path, "all", "android").Exec(Processor);
                 }
 
                 return new ScriptStepResult(ScriptStepStatus.Error,
@@ -229,6 +231,13 @@ namespace NyaFs.Processor.Scripting.Commands
 
                             System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, Payload));
                             return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as CIMG/FIT image!");
+                        }
+                    case "android":
+                        {
+                            var Writer = new ImageFormat.Composite.AndroidImageWriter(Path);
+                            if (Writer.Write(Processor.GetBlob()))
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as Android image!");
+                            return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build Android boot image!");
                         }
                     default:
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown multiimage format!");

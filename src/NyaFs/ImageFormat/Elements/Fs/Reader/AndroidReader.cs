@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
@@ -8,10 +8,12 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
     public class AndroidReader : Reader
     {
         Types.Android.LegacyAndroidImage Image;
+        readonly byte[] Raw;
 
         public AndroidReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename)) { }
         public AndroidReader(byte[] Raw)
         {
+            this.Raw = Raw;
             Image = new Types.Android.LegacyAndroidImage(Raw);
         }
 
@@ -24,11 +26,31 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                 {
                     ReadToFsv0(Dst);
                 }
+                else if (Version == 3)
+                {
+                    ReadToFsv3(Dst);
+                }
                 else
                 {
-                    // Different image format!..
-                    throw new NotImplementedException("Android image v3-4 are not supported now!");
+                    throw new NotImplementedException("Android image v4 is not supported yet!");
                 }
+            }
+        }
+
+        private void ReadToFsv3(LinuxFilesystem Dst)
+        {
+            var V3 = new Types.Android.AndroidImageV3(Raw);
+            var RD = V3.Ramdisk;
+            if (RD.Length > 0)
+            {
+                var Comp = (RD.ReadUInt32(0) == 0x04224D18)
+                    ? Types.CompressionType.IH_COMP_LZ4
+                    : Helper.FitHelper.DetectCompression(RD);
+                var Uncompressed = Helper.FitHelper.GetDecompressedData(RD, Comp);
+                Dst.Info.Compression = Comp;
+                Dst.Info.Type = Types.ImageType.IH_TYPE_RAMDISK;
+                Dst.Info.OperatingSystem = Types.OS.IH_OS_LINUX;
+                DetectAndRead(Dst, Uncompressed);
             }
         }
         private void ReadToFsv0(LinuxFilesystem Dst)

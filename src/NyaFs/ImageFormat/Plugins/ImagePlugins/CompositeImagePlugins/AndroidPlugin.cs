@@ -53,7 +53,22 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
 
             var Raw = Image.ReadArray(0, Image.Length);
             var Img = new LegacyAndroidImage(Raw);
-            if (!Img.IsMagicCorrect || (Img.HeaderVersion >= 3))
+            if (!Img.IsMagicCorrect)
+                return new ContainedImage[0];
+
+            if (Img.HeaderVersion == 3)
+            {
+                var V3 = new AndroidImageV3(Raw);
+                var V3Res = new List<ContainedImage>();
+                var V3Kernel = V3.Kernel;
+                if ((V3Kernel != null) && (V3Kernel.Length > 0))
+                    V3Res.Add(new ContainedImage("kernel", ImageKind.Kernel, "android", -1, V3Kernel.Length, V3Kernel));
+                var V3Ramdisk = V3.Ramdisk;
+                if ((V3Ramdisk != null) && (V3Ramdisk.Length > 0))
+                    V3Res.Add(new ContainedImage("ramdisk", ImageKind.Filesystem, "android", -1, V3Ramdisk.Length, V3Ramdisk));
+                return V3Res.ToArray();
+            }
+            if (Img.HeaderVersion >= 4)
                 return new ContainedImage[0];
 
             var V1 = (Img.HeaderVersion >= 1) ? new AndroidImagev1(Raw) : null;
@@ -95,7 +110,19 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
 
             var Raw = Image.ReadArray(0, Image.Length);
             var Img = new LegacyAndroidImage(Raw);
-            if (!Img.IsMagicCorrect || (Img.HeaderVersion >= 3))
+            if (!Img.IsMagicCorrect)
+                yield break;
+
+            if (Img.HeaderVersion == 3)
+            {
+                var V3 = new AndroidImageV3(Raw);
+                yield return new KeyValuePair<string, string>("header-version", "3");
+                yield return new KeyValuePair<string, string>("page-size", "4096");
+                yield return new KeyValuePair<string, string>("cmdline", (V3.Cmdline ?? "").TrimEnd('\0'));
+                yield return new KeyValuePair<string, string>("os-version", V3.OSVersion.ToString());
+                yield break;
+            }
+            if (Img.HeaderVersion >= 4)
                 yield break;
 
             yield return new KeyValuePair<string, string>("header-version", Img.HeaderVersion.ToString());

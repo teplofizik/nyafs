@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -7,11 +7,13 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
     public class AndroidReader : Reader
     {
         Types.Android.LegacyAndroidImage Image;
+        readonly byte[] Raw;
 
         public AndroidReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename)) { }
 
         public AndroidReader(byte[] Raw)
         {
+            this.Raw = Raw;
             Image = new Types.Android.LegacyAndroidImage(Raw);
         }
 
@@ -24,12 +26,26 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
                 {
                     ReadToKernelv0(Dst);
                 }
+                else if (Version == 3)
+                {
+                    ReadToKernelv3(Dst);
+                }
                 else
                 {
-                    // Different image format!..
-                    throw new NotImplementedException("Android image v3-4 are not supported now!");
+                    throw new NotImplementedException("Android image v4 is not supported yet!");
                 }
             }
+        }
+
+        private void ReadToKernelv3(LinuxKernel Dst)
+        {
+            var V3 = new Types.Android.AndroidImageV3(Raw);
+            Dst.Info.Type = Types.ImageType.IH_TYPE_KERNEL;
+            Dst.Info.OperatingSystem = Types.OS.IH_OS_LINUX;
+            Dst.Info.Compression = Types.CompressionType.IH_COMP_NONE;
+            Dst.Info.DataLoadAddress = 0;
+            Dst.Info.EntryPointAddress = 0;
+            Dst.Image = V3.Kernel;
         }
 
         private void ReadToKernelv0(LinuxKernel Dst)

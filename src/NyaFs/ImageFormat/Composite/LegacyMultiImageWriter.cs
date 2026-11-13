@@ -46,10 +46,14 @@ namespace NyaFs.ImageFormat.Composite
 
         private static byte[] BuildTable(IReadOnlyList<byte[]> Payloads)
         {
-            var Size = 0;
-            foreach (var Payload in Payloads)
-                Size += 4 + (Payload?.Length ?? 0);
-            Size += 4;
+            var Size = 4 * Payloads.Count + 4;
+            for (var I = 0; I < Payloads.Count; I++)
+            {
+                var Length = Payloads[I]?.Length ?? 0;
+                Size += Length;
+                if (I + 1 < Payloads.Count)
+                    Size += Align4(Length) - Length;
+            }
 
             var Result = new byte[Size];
             var Position = 0;
@@ -62,16 +66,22 @@ namespace NyaFs.ImageFormat.Composite
             WriteU32(Result, Position, 0);
             Position += 4;
 
-            foreach (var Payload in Payloads)
+            for (var I = 0; I < Payloads.Count; I++)
             {
-                if (Payload == null)
-                    continue;
-                Buffer.BlockCopy(Payload, 0, Result, Position, Payload.Length);
-                Position += Payload.Length;
+                var Payload = Payloads[I];
+                if (Payload != null)
+                {
+                    Buffer.BlockCopy(Payload, 0, Result, Position, Payload.Length);
+                    Position += Payload.Length;
+                }
+                if (I + 1 < Payloads.Count)
+                    Position += Align4(Payload?.Length ?? 0) - (Payload?.Length ?? 0);
             }
 
             return Result;
         }
+
+        private static int Align4(int Value) => (Value + 3) & ~3;
 
         private static void WriteU32(byte[] Data, int Offset, uint Value)
         {

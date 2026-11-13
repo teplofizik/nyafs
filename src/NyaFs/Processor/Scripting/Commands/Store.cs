@@ -243,6 +243,34 @@ namespace NyaFs.Processor.Scripting.Commands
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as Android image!");
                             return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build Android boot image!");
                         }
+                    case "multi":
+                        {
+                            var Payloads = new List<byte[]>();
+                            var Kernel = Processor.GetKernel();
+                            var Fs = Processor.GetFs();
+                            var Dtb = Processor.GetDevTree();
+                            if ((Kernel != null) && Kernel.Loaded && (Kernel.Image != null))
+                                Payloads.Add(Kernel.Image);
+                            if ((Fs != null) && Fs.Loaded)
+                            {
+                                var FsWriter = ImageFormat.Elements.Fs.Writer.Writer.GetRawFilesystemWriter(Fs);
+                                FsWriter.WriteFs(Fs);
+                                if (FsWriter.HasRawStreamData)
+                                    Payloads.Add(FsWriter.RawStream);
+                            }
+                            if ((Dtb != null) && Dtb.Loaded)
+                                Payloads.Add(new FlattenedDeviceTree.Writer.FDTWriter(Dtb.DevTree).GetBinary());
+
+                            if (Payloads.Count == 0)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "No images are loaded!");
+
+                            var Image = ImageFormat.Composite.LegacyMultiImageWriter.BuildMulti(
+                                Payloads, Kernel?.Info, Processor.GetBlob().GetContainerOption("multi", "name", "multi"));
+                            if (Image == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build legacy multi image!");
+                            System.IO.File.WriteAllBytes(Path, Image);
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as legacy multi image!");
+                        }
                     default:
                         foreach (var Plugin in Processor.Plugins.GetImages())
                         {

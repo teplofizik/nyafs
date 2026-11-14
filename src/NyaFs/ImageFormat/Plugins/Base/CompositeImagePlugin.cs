@@ -5,6 +5,15 @@ using ZstdSharp;
 
 namespace NyaFs.ImageFormat.Plugins.Base
 {
+    [Flags]
+    public enum DetectionCapabilities
+    {
+        None = 0,
+        Magic = 1,
+        Extension = 2,
+        ExplicitFormat = 4
+    }
+
     public class CompositeImagePlugin : NyaPlugin
     {
         public readonly string ImageName;
@@ -19,6 +28,13 @@ namespace NyaFs.ImageFormat.Plugins.Base
         public virtual string DisplayName => ImageName;
         public virtual string[] Aliases => Array.Empty<string>();
         public virtual string[] Extensions => Array.Empty<string>();
+
+        /// <summary>
+        /// How this container may be selected. Existing plugins are magic-based by default;
+        /// formats without a reliable magic can opt into extension/explicit-format loading.
+        /// </summary>
+        public virtual DetectionCapabilities DetectCapabilities => DetectionCapabilities.Magic;
+
         public virtual FilesystemOption[] Options => Array.Empty<FilesystemOption>();
 
         /// <summary>Metadata read from the container header (for pre-filling options).</summary>

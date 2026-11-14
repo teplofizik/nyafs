@@ -13,20 +13,26 @@ namespace NyaFs.ImageFormat
         public readonly byte[] Raw;
         public readonly long Offset;
         public readonly long Length;
+        public readonly string SourceName;
 
-        public ImageData(byte[] Raw) : this(Raw, 0, Raw.Length)
+        public ImageData(byte[] Raw) : this(Raw, 0, Raw.Length, null)
         {
         }
 
-        public ImageData(byte[] Raw, long Offset) : this(Raw, Offset, Raw.Length - Offset)
+        public ImageData(byte[] Raw, string SourceName) : this(Raw, 0, Raw.Length, SourceName)
         {
         }
 
-        public ImageData(byte[] Raw, long Offset, long Length)
+        public ImageData(byte[] Raw, long Offset) : this(Raw, Offset, Raw.Length - Offset, null)
+        {
+        }
+
+        public ImageData(byte[] Raw, long Offset, long Length, string SourceName = null)
         {
             this.Raw = Raw;
             this.Offset = Offset;
             this.Length = Length;
+            this.SourceName = SourceName;
         }
 
         public byte ReadByte(long Index) => Raw[Offset + Index];

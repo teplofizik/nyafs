@@ -163,6 +163,27 @@ namespace NyaFs.ImageFormat.Plugins
         public CompositeImagePlugin GetImage(string Name) =>
             ResolveImage(Name);
 
+        /// <summary>Resolve a container by one of its declared file extensions.</summary>
+        public CompositeImagePlugin ResolveImageByExtension(string SourceName)
+        {
+            if (String.IsNullOrEmpty(SourceName))
+                return null;
+
+            var Extension = System.IO.Path.GetExtension(SourceName);
+            if (String.IsNullOrEmpty(Extension))
+                return null;
+
+            foreach (var Image in Images)
+            {
+                if ((Image.DetectCapabilities & DetectionCapabilities.Extension) == 0)
+                    continue;
+                foreach (var Candidate in Image.Extensions)
+                    if (String.Equals(Candidate, Extension, StringComparison.OrdinalIgnoreCase))
+                        return Image;
+            }
+            return null;
+        }
+
         public RemoteFilesystemPlugin GetRemote(string Protocol)
         {
             if (string.IsNullOrEmpty(Protocol))

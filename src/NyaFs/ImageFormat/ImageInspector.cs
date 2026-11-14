@@ -29,10 +29,10 @@ namespace NyaFs.ImageFormat
             this.Plugins = Plugins;
         }
 
-        public ImageNode Inspect(string Name, byte[] Raw)
+        public ImageNode Inspect(string Name, byte[] Raw, string SourceName = null, string ForceFormat = null)
         {
             var Root = new ImageNode { Name = Name, Path = "" };
-            Build(Root, new ImageData(Raw), Raw.Length, ImageKind.Unknown, null, null, 0);
+            Build(Root, new ImageData(Raw, SourceName), Raw.Length, ImageKind.Unknown, null, null, 0, ForceFormat);
             return Root;
         }
 
@@ -100,7 +100,8 @@ namespace NyaFs.ImageFormat
             return null;
         }
 
-        private void Build(ImageNode Node, ImageData Data, long Size, ImageKind HintKind, string HintFormat, Types.ImageInfo HintInfo, int Depth)
+        private void Build(ImageNode Node, ImageData Data, long Size, ImageKind HintKind, string HintFormat,
+            Types.ImageInfo HintInfo, int Depth, string ForceFormat = null)
         {
             Node.Size = Size;
             if (Node.Raw == null)
@@ -121,7 +122,7 @@ namespace NyaFs.ImageFormat
                 if (Unpacked != null)
                 {
                     Node.Compression = Compressor.Compression;
-                    Build(Node, new ImageData(Unpacked), Unpacked.Length, HintKind, HintFormat, HintInfo, Depth);
+                    Build(Node, new ImageData(Unpacked, Data.SourceName), Unpacked.Length, HintKind, HintFormat, HintInfo, Depth);
                     return;
                 }
             }
@@ -129,7 +130,7 @@ namespace NyaFs.ImageFormat
             // Composite container.
             foreach (var Image in Plugins.GetImages())
             {
-                if (!Image.DetectImage(Data))
+                if (!ImagePipeline.ShouldTry(Image, Data, ForceFormat))
                     continue;
 
                 Node.Kind = ImageKind.Unknown;
@@ -159,7 +160,7 @@ namespace NyaFs.ImageFormat
 
                     var ChildSize = (CI.Size >= 0) ? CI.Size : (CI.Content?.Length ?? 0);
                     if (CI.Content != null)
-                        Build(Child, new ImageData(CI.Content), ChildSize, CI.Kind, CI.Format, CI.Info, Depth + 1);
+                        Build(Child, new ImageData(CI.Content, CI.Name), ChildSize, CI.Kind, CI.Format, CI.Info, Depth + 1);
                     else
                     {
                         Child.Kind = CI.Kind;

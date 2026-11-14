@@ -26,7 +26,10 @@ namespace NyaFs.Processor.Scripting.Commands
 
             AddConfig(new ScriptArgsConfig(4, new ScriptArgsParam[] { new Params.FsPathScriptArgsParam(), new Params.StringScriptArgsParam("config") }));
 
-            AddConfig(new Configs.ErrorConfig("Invalid image type: %1%. Must be one of: kernel, ramfs, devtree"));
+            AddConfig(new Configs.ImageScriptArgsConfig(5, "all",
+                new string[] { "disk", "bgz", "iceriver.bgz", "swu", "rkfw", "wty" }));
+
+            AddConfig(new Configs.ErrorConfig("Invalid image type: %1%. Must be one of: kernel, ramfs, devtree, all"));
         }
 
         public override ScriptStep Get(ScriptArgs Args)
@@ -37,6 +40,8 @@ namespace NyaFs.Processor.Scripting.Commands
                 return new LoadScriptStep(A[0], "detect", null);
             else if (Args.ArgConfig == 4)
                 return new LoadScriptStep(A[0], "detect", A[1]);
+            else if (Args.ArgConfig == 5)
+                return new LoadScriptStep(A[0], "all", A[2]);
             else
                 return new LoadScriptStep(A[0], A[1], A[2]);
         }
@@ -81,7 +86,9 @@ namespace NyaFs.Processor.Scripting.Commands
                 // only act as a hint when content detection cannot decide.
                 var Pipeline = new ImagePipeline(Processor.Plugins, Processor.GetBlob());
 
-                var Loaded = (Type == "detect") ? Pipeline.Load(Data) : Pipeline.Load(Data, Kind, Hint);
+                var Loaded = (Type == "detect") ? Pipeline.Load(Data, Path) :
+                    (Type == "all") ? Pipeline.Load(Data, Kind, Hint, Path, true) :
+                    Pipeline.Load(Data, Kind, Hint, Path);
 
                 if (Loaded)
                     return new ScriptStepResult(ScriptStepStatus.Ok, "Images are loaded (auto-detected).");

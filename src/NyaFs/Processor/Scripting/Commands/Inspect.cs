@@ -41,7 +41,7 @@ namespace NyaFs.Processor.Scripting.Commands
 
                 var Data = System.IO.File.ReadAllBytes(Filename);
                 var Inspector = new ImageInspector(Processor.Plugins);
-                var Root = Inspector.Inspect(System.IO.Path.GetFileName(Filename), Data);
+                var Root = Inspector.Inspect(System.IO.Path.GetFileName(Filename), Data, Filename);
 
                 Dump(Root, 0);
 

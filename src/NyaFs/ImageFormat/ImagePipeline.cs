@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using NyaFs.ImageFormat.Plugins;
+using NyaFs.ImageFormat.Plugins.Base;
 using NyaFs.ImageFormat.Types;
 
 namespace NyaFs.ImageFormat
@@ -37,19 +38,25 @@ namespace NyaFs.ImageFormat
             this.Blob = Blob;
         }
 
-        public bool Load(byte[] Raw)
+        public bool Load(byte[] Raw) =>
+            Load(Raw, null, null);
+
+        public bool Load(byte[] Raw, string SourceName, string ForceFormat = null)
         {
-            var Ok = LoadElement(new ImageData(Raw), "image", ImageKind.Unknown, null, null, 0);
+            var Ok = LoadElement(new ImageData(Raw, SourceName), "image", ImageKind.Unknown,
+                null, null, 0, ForceFormat);
             if (Ok)
-                CapturePlan(Raw);
+                CapturePlan(Raw, SourceName, ForceFormat);
             return Ok;
         }
 
-        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat)
+        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat,
+            string SourceName = null, bool ForceFormat = false)
         {
-            var Ok = LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, null, 0);
+            var Ok = LoadElement(new ImageData(Raw, SourceName), "sub", HintKind, HintFormat,
+                null, 0, ForceFormat ? HintFormat : null);
             if (Ok)
-                CapturePlan(Raw);
+                CapturePlan(Raw, SourceName, ForceFormat ? HintFormat : null);
             return Ok;
         }
 
@@ -57,18 +64,18 @@ namespace NyaFs.ImageFormat
         {
             var Ok = LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, Info, 0);
             if (Ok)
-                CapturePlan(Raw);
+                CapturePlan(Raw, null, null);
             return Ok;
         }
 
         public bool LoadInto(byte[] Raw, ImageKind HintKind, string HintFormat, ImageInfo Info) =>
             LoadElement(new ImageData(Raw), "plan", HintKind, HintFormat, Info, 0);
 
-        private void CapturePlan(byte[] Raw)
+        private void CapturePlan(byte[] Raw, string SourceName, string ForceFormat)
         {
             try
             {
-                var Tree = new ImageInspector(Plugins).Inspect("image", Raw);
+                var Tree = new ImageInspector(Plugins).Inspect("image", Raw, SourceName, ForceFormat);
                 var Plan = ImageBuildPlan.From(Tree);
                 PlanFsBound = false;
                 PlanKernelBound = false;
@@ -124,7 +131,42 @@ namespace NyaFs.ImageFormat
 
         }
 
-        private bool LoadElement(ImageData Data, string Container, ImageKind HintKind, string HintFormat, ImageInfo HintInfo, int Depth)
+        internal static bool ShouldTry(CompositeImagePlugin Image, ImageData Data, string ForceFormat)
+        {
+            if (!String.IsNullOrEmpty(ForceFormat))
+                return MatchesFormat(Image, ForceFormat);
+
+            if ((Image.DetectCapabilities & DetectionCapabilities.Extension) != 0)
+            {
+                var Extension = String.IsNullOrEmpty(Data.SourceName)
+                    ? null : System.IO.Path.GetExtension(Data.SourceName);
+                if (!String.IsNullOrEmpty(Extension))
+                {
+                    foreach (var Candidate in Image.Extensions)
+                        if (String.Equals(Candidate, Extension, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                }
+            }
+
+            return ((Image.DetectCapabilities & DetectionCapabilities.Magic) != 0) &&
+                Image.DetectImage(Data);
+        }
+
+        internal static bool MatchesFormat(CompositeImagePlugin Image, string Format)
+        {
+            if (String.Equals(Image.Format, Format, StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(Image.Name, Format, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            foreach (var Alias in Image.Aliases)
+                if (String.Equals(Alias, Format, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+            return false;
+        }
+
+        private bool LoadElement(ImageData Data, string Container, ImageKind HintKind, string HintFormat,
+            ImageInfo HintInfo, int Depth, string ForceFormat = null)
         {
             if (Depth > MaxDepth)
                 return false;
@@ -139,7 +181,7 @@ namespace NyaFs.ImageFormat
                 if (Unpacked != null)
                 {
                     Blob.Elements.Add(new LoadedElement(ImageKind.Unknown, Compressor.CompressorName, Compressor.Compression, Container, Compressor.CompressorName));
-                    return LoadElement(new ImageData(Unpacked), Container + ":" + Compressor.CompressorName, HintKind, HintFormat, HintInfo, Depth + 1);
+                    return LoadElement(new ImageData(Unpacked, Data.SourceName), Container + ":" + Compressor.CompressorName, HintKind, HintFormat, HintInfo, Depth + 1);
                 }
             }
 
@@ -148,7 +190,7 @@ namespace NyaFs.ImageFormat
             // 2) Composite containers.
             foreach (var Image in Plugins.GetImages())
             {
-                if (!Image.DetectImage(Data))
+                if (!ShouldTry(Image, Data, ForceFormat))
                     continue;
 
                 bool Any = false;
@@ -162,7 +204,7 @@ namespace NyaFs.ImageFormat
                     if (((Contained.Kind == ImageKind.Unknown) || Contained.External) && (Contained.Content != null))
                     {
                         Blob.Elements.Add(new LoadedElement(ImageKind.Unknown, Contained.Format, Contained.Compression, Container, Image.Name + "/" + Contained.Name));
-                        if (LoadElement(new ImageData(Contained.Content), Container + "/" + Image.Name + "/" + Contained.Name, Contained.Kind, Contained.Format, Contained.Info, Depth + 1))
+                        if (LoadElement(new ImageData(Contained.Content, Contained.Name), Container + "/" + Image.Name + "/" + Contained.Name, Contained.Kind, Contained.Format, Contained.Info, Depth + 1))
                             Any = true;
                     }
                 }

@@ -75,7 +75,21 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                     break;
                 var Content = new byte[Sizes[I]];
                 Buffer.BlockCopy(Data, DataOffset, Content, 0, Content.Length);
-                Result.Add(new ContainedImage($"image{I}", ImageKind.Unknown, null, -1, Content.Length, Content));
+                if (I == 0)
+                {
+                    var Info = new ImageInfo
+                    {
+                        Architecture = Image.CPUArchitecture,
+                        OperatingSystem = Image.OperatingSystem,
+                        Type = ImageType.IH_TYPE_KERNEL
+                    };
+                    Result.Add(new ContainedImage("image0", ImageKind.Kernel, "raw", -1, Content.Length, Content,
+                        CompressionType.IH_COMP_NONE, Info, null, null, true));
+                }
+                else
+                {
+                    Result.Add(new ContainedImage($"image{I}", ImageKind.Unknown, null, -1, Content.Length, Content));
+                }
                 DataOffset += Align4(Sizes[I]);
             }
             return Result.ToArray();

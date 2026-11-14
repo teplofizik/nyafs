@@ -11,6 +11,9 @@ namespace NyaFs.Filesystem.Cpio
         private readonly string ExpectedMagic;
         private List<Types.CpioNode> Nodes = new List<Types.CpioNode>();
 
+        /// <summary>Parsed non-trailer entries, in archive order.</summary>
+        public IReadOnlyList<Types.CpioNode> Items => Nodes;
+
         public CpioFsReader(byte[] Data, string expectedMagic = "070701") : base(Data)
         {
             ExpectedMagic = expectedMagic;

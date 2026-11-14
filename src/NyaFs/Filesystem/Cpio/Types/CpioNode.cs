@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -64,6 +64,7 @@ namespace NyaFs.Filesystem.Cpio.Types
 
             var File = new CpioNode(NewRaw);
             File.FileSize = Convert.ToUInt32(Data.Length);
+            File.UpdateCheck();
 
             return File;
         }
@@ -221,6 +222,27 @@ namespace NyaFs.Filesystem.Cpio.Types
         /// 0 for "new" portable format; for CRC format, the sum of all the bytes in the file
         /// </summary>
         public UInt32 Check => GetAsciiValue(102, 8);
+
+        /// <summary>Raw cpio record including header, data and alignment.</summary>
+        public byte[] RawBytes => ReadArray(0, FullFileBlockSize);
+
+        /// <summary>Change the archive magic (`070701` or `070702`) in place.</summary>
+        public void SetMagic(string Magic)
+        {
+            WriteArray(0, UTF8Encoding.UTF8.GetBytes(Magic), 6);
+        }
+
+        /// <summary>Recompute the checksum field of a 070702 (CRC) record.</summary>
+        public void UpdateCheck()
+        {
+            if (Magic != "070702")
+                return;
+
+            var Sum = 0L;
+            foreach (var Byte in Content)
+                Sum += Byte;
+            SetAsciiValue(102, 8, (uint)Sum);
+        }
 
         public CpioModeFlags Flags => (CpioModeFlags)(Mode & 0xFFF);
 

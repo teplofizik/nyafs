@@ -18,7 +18,8 @@ namespace NyaFs.ImageFormat.Plugins
             new ImagePlugins.CompositeImagePlugins.CImgImagePlugin(),
             new ImagePlugins.CompositePlugins.AndroidPlugin(),
             new ImagePlugins.CompositeImagePlugins.FitPlugin(),
-            new ImagePlugins.CompositeImagePlugins.LegacyImagePlugin()
+            new ImagePlugins.CompositeImagePlugins.LegacyImagePlugin(),
+            new ImagePlugins.CompositeImagePlugins.DiskImagePlugin()
         };
 
         public static readonly Base.FilesystemPlugin[] Filesystems = new Base.FilesystemPlugin[]

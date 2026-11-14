@@ -274,7 +274,15 @@ namespace NyaFs.Processor.Scripting.Commands
                     default:
                         foreach (var Plugin in Processor.Plugins.GetImages())
                         {
-                            if (!Plugin.SupportWrite || !String.Equals(Plugin.Format, Format, StringComparison.OrdinalIgnoreCase))
+                            if (!Plugin.SupportWrite)
+                                continue;
+
+                            var FormatMatch = String.Equals(Plugin.Format, Format, StringComparison.OrdinalIgnoreCase) ||
+                                String.Equals(Plugin.Name, Format, StringComparison.OrdinalIgnoreCase);
+                            foreach (var Alias in Plugin.Aliases)
+                                if (String.Equals(Alias, Format, StringComparison.OrdinalIgnoreCase))
+                                    FormatMatch = true;
+                            if (!FormatMatch)
                                 continue;
 
                             var Data = Plugin.Build(Processor.GetBlob(), out var Error);

@@ -76,6 +76,7 @@ namespace NyaFs.ImageFormat.Composite
         private static bool TryParseMbr(byte[] Raw, DiskImage Image)
         {
             var DiskSectors = Raw.Length / SectorSize;
+            var LogicalIndex = 0;
             for (var I = 0; I < 4; I++)
             {
                 var Offset = 446 + I * 16;
@@ -87,6 +88,12 @@ namespace NyaFs.ImageFormat.Composite
                 if ((Start + (long)Count) > DiskSectors)
                     continue;
 
+                if (IsExtendedType(Type))
+                {
+                    ParseExtended(Raw, Image, Start, Count, ref LogicalIndex);
+                    continue;
+                }
+
                 Image.Partitions.Add(new DiskPartition
                 {
                     Index = I,
@@ -97,6 +104,55 @@ namespace NyaFs.ImageFormat.Composite
                 });
             }
             return Image.Partitions.Count > 0;
+        }
+
+        private static bool IsExtendedType(byte Type) =>
+            (Type == 0x05) || (Type == 0x0F) || (Type == 0x85);
+
+        private static void ParseExtended(byte[] Raw, DiskImage Image, long ExtendedStart,
+            long ExtendedCount, ref int LogicalIndex)
+        {
+            var DiskSectors = Raw.Length / SectorSize;
+            var ExtendedEnd = ExtendedStart + ExtendedCount;
+            var Visited = new HashSet<long>();
+            var EbrLba = ExtendedStart;
+
+            while ((EbrLba >= ExtendedStart) && (EbrLba < ExtendedEnd) &&
+                (EbrLba + 1 < DiskSectors) && Visited.Add(EbrLba) && (LogicalIndex < 128))
+            {
+                var Base = (int)(EbrLba * SectorSize);
+                if ((Raw[Base + 510] != 0x55) || (Raw[Base + 511] != 0xAA))
+                    break;
+
+                var Entry = Base + 446;
+                var Type = Raw[Entry + 4];
+                var Start = ReadU32(Raw, Entry + 8);
+                var Count = ReadU32(Raw, Entry + 12);
+                var LogicalStart = EbrLba + Start;
+                if ((Type != 0) && (Start != 0) && (Count != 0) &&
+                    (LogicalStart >= ExtendedStart) &&
+                    (LogicalStart + (long)Count <= ExtendedEnd) &&
+                    (LogicalStart + (long)Count <= DiskSectors))
+                {
+                    Image.Partitions.Add(new DiskPartition
+                    {
+                        Index = 4 + LogicalIndex,
+                        Name = "partition" + (5 + LogicalIndex),
+                        MbrType = Type,
+                        StartLba = LogicalStart,
+                        SectorCount = Count
+                    });
+                    LogicalIndex++;
+                }
+
+                var Next = Base + 446 + 16;
+                var NextType = Raw[Next + 4];
+                var NextStart = ReadU32(Raw, Next + 8);
+                if (!IsExtendedType(NextType) || (NextStart == 0))
+                    break;
+
+                EbrLba = ExtendedStart + NextStart;
+            }
         }
 
         private static bool TryParseGpt(byte[] Raw, DiskImage Image)

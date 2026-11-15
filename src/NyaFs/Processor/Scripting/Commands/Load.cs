@@ -27,7 +27,7 @@ namespace NyaFs.Processor.Scripting.Commands
             AddConfig(new ScriptArgsConfig(4, new ScriptArgsParam[] { new Params.FsPathScriptArgsParam(), new Params.StringScriptArgsParam("config") }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(5, "all",
-                new string[] { "disk", "bgz", "iceriver.bgz", "swu", "rkfw", "wty" }));
+                new string[] { "disk", "bgz", "iceriver.bgz", "swu", "rkfw", "wty", "aup" }));
 
             AddConfig(new Configs.ErrorConfig("Invalid image type: %1%. Must be one of: kernel, ramfs, devtree, all"));
         }

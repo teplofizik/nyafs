@@ -102,6 +102,9 @@ namespace NyaFs.ImageFormat.Plugins.Base
         /// <summary>Can this composite format be built from the loaded blob.</summary>
         public virtual bool SupportWrite => false;
 
+        /// <summary>Keep opaque children in the loaded plan even when no nested reader accepts them.</summary>
+        public virtual bool PreserveUnknownChildren => false;
+
         /// <summary>Build a composite image from the loaded elements (no file I/O).</summary>
         public virtual byte[] Build(BaseImageBlob Blob, out string Error)
         {

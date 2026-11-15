@@ -245,6 +245,9 @@ namespace NyaFs.ImageFormat
                     }
                 }
 
+                if (!Any && Image.PreserveUnknownChildren && (Image.GetImages(Data).Length > 0))
+                    Any = true;
+
                 if (Any)
                     return true;
             }

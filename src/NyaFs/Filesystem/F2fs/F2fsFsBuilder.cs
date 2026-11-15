@@ -1126,6 +1126,26 @@ namespace NyaFs.Filesystem.F2fs
             for (int i = 0; i < 6; i++)
                 WriteSummaryBlock(Base + 1 + i, i, Cursegs[i]);
             Array.Copy(Cp, 0, Image, (long)(Base + 7) * BlockSize, BlockSize);
+
+            if (Base == CpBlkaddr && TotalBytes >= LargeImageThreshold)
+                WriteNatBits(Cp);
+        }
+
+        private void WriteNatBits(byte[] Cp)
+        {
+            var NatBytes = SegNat << 5;
+            var Blocks = (NatBytes * 2 + 8 + BlockSize - 1) / BlockSize;
+            var NatBits = new byte[Blocks * BlockSize];
+            PutU64(NatBits, 0, BitConverter.ToUInt64(Cp, 0) |
+                ((ulong)BitConverter.ToUInt32(Cp, 4092) << 32));
+
+            var Empty = 8 + NatBytes;
+            for (var I = 0; I < NatBytes; I++)
+                NatBits[Empty + I] = 0xFF;
+            NatBits[Empty] &= 0xFE;
+
+            var Addr = Segment0Blkaddr + BlocksPerSeg - Blocks;
+            Buffer.BlockCopy(NatBits, 0, Image, (int)((long)Addr * BlockSize), NatBits.Length);
         }
 
         private void WriteSit(int Segno, int Type, int Count)
@@ -1180,8 +1200,6 @@ namespace NyaFs.Filesystem.F2fs
 
         private void WriteNatArea()
         {
-            int PerCopy = (SegNat / 2) * BlocksPerSeg;
-
             for (uint Nid = 0; Nid < (uint)NextFreeNid; Nid++)
             {
                 uint Ino;
@@ -1195,9 +1213,12 @@ namespace NyaFs.Filesystem.F2fs
                 int Bo = (int)(Nid / NatsPerBlock);
                 int SlotOff = (int)(Nid % NatsPerBlock) * NatEntrySize;
 
+                long BaseBlock = NatBlkaddr +
+                    (Bo / BlocksPerSeg) * (2 * BlocksPerSeg) +
+                    (Bo % BlocksPerSeg);
                 for (int Copy = 0; Copy < 2; Copy++)
                 {
-                    long Block = NatBlkaddr + Copy * PerCopy + Bo;
+                    long Block = BaseBlock + Copy * BlocksPerSeg;
                     long Off = Block * BlockSize + SlotOff;
                     Image[Off + 0] = 0;
                     PutU32(Image, Off + 1, Ino);
@@ -1233,7 +1254,10 @@ namespace NyaFs.Filesystem.F2fs
                 PutU32(Cp, 0x54 + i * 4, 0xFFFFFFFF);
             }
 
-            PutU32(Cp, 0x84, CpFlagUmount);
+            var Flags = CpFlagUmount;
+            if (TotalBytes >= LargeImageThreshold)
+                Flags |= 0x80;
+            PutU32(Cp, 0x84, Flags);
             PutU32(Cp, 0x88, 8);
             PutU32(Cp, 0x8C, 1);
             PutU32(Cp, 0x90, (uint)NodeBlocks);

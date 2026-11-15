@@ -35,8 +35,13 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 var Content = Partition.Read(Raw);
                 if (Content == null)
                     continue;
-                Result.Add(new ContainedImage(Partition.Name, ImageKind.Unknown, null,
-                    Partition.Offset, Partition.Size, Content));
+
+                // Truncated SD images may end before the declared partition slot.
+                // Keep the slot visible but do not feed partial filesystem data.
+                var Truncated = (Partition.Offset + Partition.Size) > Raw.Length;
+                Result.Add(new ContainedImage(Partition.Name, ImageKind.Unknown,
+                    Truncated ? "truncated" : null,
+                    Partition.Offset, Partition.Size, Truncated ? null : Content));
             }
             return Result.ToArray();
         }

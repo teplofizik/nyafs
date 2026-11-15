@@ -21,11 +21,16 @@ namespace NyaFs.ImageFormat.Composite
 
         public byte[] Read(byte[] Disk)
         {
-            if ((Disk == null) || (Offset < 0) || (Size <= 0) || (Offset + Size > Disk.Length))
+            if ((Disk == null) || (Offset < 0) || (Size <= 0) || (Offset >= Disk.Length))
                 return null;
 
-            var Result = new byte[Size];
-            Buffer.BlockCopy(Disk, (int)Offset, Result, 0, (int)Size);
+            // A truncated SD-card image can end before the declared partition slot.
+            var Available = Math.Min(Size, Disk.Length - Offset);
+            if (Available <= 0)
+                return null;
+
+            var Result = new byte[Available];
+            Buffer.BlockCopy(Disk, (int)Offset, Result, 0, (int)Available);
             return Result;
         }
     }
@@ -85,7 +90,7 @@ namespace NyaFs.ImageFormat.Composite
                 var Count = ReadU32(Raw, Offset + 12);
                 if ((Type == 0) || (Start == 0) || (Count == 0))
                     continue;
-                if ((Start + (long)Count) > DiskSectors)
+                if (Start >= DiskSectors)
                     continue;
 
                 if (IsExtendedType(Type))
@@ -187,7 +192,7 @@ namespace NyaFs.ImageFormat.Composite
 
                 var First = ReadU64(Raw, Base + 32);
                 var Last = ReadU64(Raw, Base + 40);
-                if ((Last < First) || (First == 0) || (Last >= (ulong)DiskSectors))
+                if ((Last < First) || (First == 0) || (First >= (ulong)DiskSectors))
                     continue;
 
                 var Name = ReadUtf16(Raw, Base + 56, 72).TrimEnd('\0', ' ');

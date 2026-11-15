@@ -963,8 +963,9 @@ namespace NyaFs.Filesystem.F2fs
                 case F2fsCompression.Lz4:
                     return NyaFs.ImageFormat.Compressors.Lz4Raw.Compress(Data);
                 case F2fsCompression.Lzo:
-                case F2fsCompression.LzoRle:
                     return NyaLZO.LZO1xCompressor.Compress(Data);
+                case F2fsCompression.LzoRle:
+                    return NyaLZO.LZO1xRleCompressor.Compress(Data);
                 default:
                     throw new NotSupportedException($"F2FS compression algorithm {Compression} is not implemented");
             }

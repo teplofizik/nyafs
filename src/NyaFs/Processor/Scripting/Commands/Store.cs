@@ -9,7 +9,7 @@ namespace NyaFs.Processor.Scripting.Commands
         public Store() : base("store")
         {
             AddConfig(new Configs.ImageScriptArgsConfig(0, "kernel",
-                new string[] { "raw", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "legacy" }));
+                new string[] { "raw", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "legacy", "image" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(1, "ramfs",
                 new string[] { "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd", "legacy", "ext2", "squashfs", "cramfs", "romfs",
@@ -203,6 +203,11 @@ namespace NyaFs.Processor.Scripting.Commands
                 {
                     case "fit":
                         {
+                            // A loaded FIT keeps its plan (node names, hashes, script/config links,
+                            // external data and signatures) when it is stored again.
+                            if (Processor.GetBlob().BuildPlan?.Root?.Format == "fit")
+                                return StoreAuto(Processor);
+
                             var Kernel = Processor.GetKernel();
                             var Fs = Processor.GetFs();
                             var Dtb = Processor.GetDevTree();

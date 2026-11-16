@@ -2,6 +2,7 @@ using NyaFs.ImageFormat.Elements.Fs;
 using NyaFs.ImageFormat.Elements.Kernel;
 using NyaFs.ImageFormat.Helper;
 using NyaFs.ImageFormat.Plugins;
+using NyaFs.ImageFormat.Types.Android;
 using System;
 using System.IO;
 using System.Text;
@@ -35,7 +36,7 @@ namespace NyaFs.ImageFormat.Composite
                 }
 
                 var Version = (int)GetUInt(Blob, "header-version", 0);
-                if ((Version < 0) || (Version > 3))
+                if ((Version < 0) || (Version > 4))
                     Version = 0;
 
                 var PageSize = (int)GetUInt(Blob, "page-size", 2048);
@@ -48,8 +49,11 @@ namespace NyaFs.ImageFormat.Composite
                 var RecoveryData = Version >= 1 ? (GetPlanRaw(Blob, "recovery_dtbo") ?? Array.Empty<byte>()) : Array.Empty<byte>();
                 var DtbData = Version >= 2 ? (GetDtbData(Dtb) ?? Array.Empty<byte>()) : Array.Empty<byte>();
 
-                if (Version == 3)
-                    return BuildV3(Blob, KernelData, RamdiskData);
+                if (Version >= 3)
+                {
+                    var SignatureData = Version >= 4 ? (GetPlanRaw(Blob, "boot_signature") ?? Array.Empty<byte>()) : Array.Empty<byte>();
+                    return BuildV3(Blob, KernelData, RamdiskData, Version, SignatureData);
+                }
 
                 var HeaderSize = Version == 2 ? 0x680 : (Version == 1 ? 0x670 : 0x800);
                 var KernelOffset = Align(HeaderSize, PageSize);
@@ -115,21 +119,26 @@ namespace NyaFs.ImageFormat.Composite
             return true;
         }
 
-        private byte[] BuildV3(BaseImageBlob Blob, byte[] KernelData, byte[] RamdiskData)
+        private byte[] BuildV3(BaseImageBlob Blob, byte[] KernelData, byte[] RamdiskData,
+            int Version, byte[] SignatureData)
         {
             const int PageSize = 4096;
-            const int HeaderSize = 1580;
+            var HeaderSize = (Version >= 4) ? AndroidImageV3.HeaderSizeV4 : AndroidImageV3.HeaderSizeV3;
             var KernelOffset = PageSize;
             var RamdiskOffset = Align(KernelOffset + KernelData.Length, PageSize);
-            var Total = Align(RamdiskOffset + RamdiskData.Length, PageSize);
+            var SignatureOffset = Align(RamdiskOffset + RamdiskData.Length, PageSize);
+            var SignatureSize = (Version >= 4) ? (SignatureData?.Length ?? 0) : 0;
+            var Total = (Version >= 4)
+                ? Align(SignatureOffset + SignatureSize, PageSize)
+                : Align(RamdiskOffset + RamdiskData.Length, PageSize);
             var Result = new byte[Total];
 
             SetString(Result, 0, 8, "ANDROID!");
             SetU32(Result, 0x08, (uint)KernelData.Length);
             SetU32(Result, 0x0C, (uint)RamdiskData.Length);
             SetU32(Result, 0x10, (uint)GetUInt(Blob, "os-version", 0));
-            SetU32(Result, 0x14, HeaderSize);
-            SetU32(Result, 0x28, 3);
+            SetU32(Result, 0x14, (uint)HeaderSize);
+            SetU32(Result, 0x28, (uint)Version);
 
             var Cmdline = GetString(Blob, "cmdline", "");
             var Extra = GetString(Blob, "extra-cmdline", "");
@@ -137,8 +146,13 @@ namespace NyaFs.ImageFormat.Composite
                 Cmdline = String.IsNullOrEmpty(Cmdline) ? Extra : (Cmdline + " " + Extra);
             SetString(Result, 0x2C, 0x600, Cmdline);
 
+            if (Version >= 4)
+                SetU32(Result, AndroidImageV3.SignatureSizeField, (uint)SignatureSize);
+
             Copy(Result, KernelOffset, KernelData);
             Copy(Result, RamdiskOffset, RamdiskData);
+            if (Version >= 4)
+                Copy(Result, SignatureOffset, SignatureData);
             return Result;
         }
 

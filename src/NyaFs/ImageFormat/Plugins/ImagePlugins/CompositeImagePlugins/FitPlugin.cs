@@ -37,6 +37,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
             return Fit.HasNode("configurations") && Fit.HasNode("images");
         }
 
+        public override bool PreserveUnknownChildren => true;
+
         public override ContainedImage[] GetImages(ImageData Image)
         {
             var Fit = ReadFit(Image);
@@ -57,6 +59,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("setup"), ImageKind.Unknown, Added);
                 AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("fpga"), ImageKind.Unknown, Added);
                 AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("firmware"), ImageKind.Unknown, Added);
+                AddNodeImage(Res, Image, Fit, Configuration.GetStringValue("script"), ImageKind.Unknown, Added, "script");
                 foreach (var Loadable in ReadStrings(Configuration.GetValue("loadables")))
                     AddNodeImage(Res, Image, Fit, Loadable, ImageKind.Unknown, Added);
             }
@@ -64,7 +67,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
         }
 
         private static void AddNodeImage(List<ContainedImage> Res, ImageData Image, FlattenedDeviceTree.FlattenedDeviceTree Fit,
-            string NodeName, ImageKind Kind, HashSet<string> Added)
+            string NodeName, ImageKind Kind, HashSet<string> Added, string LeafFormatOverride = null)
         {
             if ((NodeName == null) || !Added.Add(NodeName))
                 return;
@@ -122,7 +125,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 });
             }
 
-            var LeafFormat = (Kind == ImageKind.Devtree) ? "dtb" : "raw";
+            var LeafFormat = LeafFormatOverride ?? ((Kind == ImageKind.Devtree) ? "dtb" : "raw");
             Res.Add(new ContainedImage(NodeName, Kind, LeafFormat, -1, Data.Length, Data, Compression, Info,
                 Node.GetStringValue("description"), Hashes.ToArray(), External));
         }
@@ -223,7 +226,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                     Fdt = C.GetStringValue("fdt"),
                     Setup = C.GetStringValue("setup"),
                     Fpga = C.GetStringValue("fpga"),
-                    Firmware = C.GetStringValue("firmware")
+                    Firmware = C.GetStringValue("firmware"),
+                    Script = C.GetStringValue("script")
                 };
                 foreach (var Loadable in ReadStrings(C.GetValue("loadables")))
                     Config.Loadables.Add(Loadable);

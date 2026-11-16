@@ -14,7 +14,7 @@ namespace NyaFs.Processor.Scripting.Commands
             // actual readers come from the plugins (see ImagePipeline). New formats added as
             // plugins work without touching this command.
             AddConfig(new Configs.ImageScriptArgsConfig(0, "kernel",
-                new string[] { "raw", "gz", "gzip", "lzma", "lz4", "bz2", "lzo", "zstd", "bzip2", "legacy", "fit", "android", "zimage", "cimg" }));
+                new string[] { "raw", "gz", "gzip", "lzma", "lz4", "bz2", "lzo", "zstd", "bzip2", "legacy", "fit", "android", "zimage", "image", "cimg" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(1, "ramfs",
                 new string[] { "cpio", "gz", "gzip", "lzma", "lz4", "bz2", "lzo", "zstd", "bzip2", "fit", "android", "legacy", "ext2", "squashfs", "cramfs", "romfs", "iso9660", "iso", "exfat", "erofs", "cimg" }));

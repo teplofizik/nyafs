@@ -37,7 +37,8 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                 return false;
             }
 
-            if (Image.Type != Types.ImageType.IH_TYPE_RAMDISK)
+            if ((Image.Type != Types.ImageType.IH_TYPE_RAMDISK) &&
+                (Image.Type != Types.ImageType.IH_TYPE_FILESYSTEM))
             {
                 Log.Error(0, $"File is not ramdisk legacy file.");
                 return false;

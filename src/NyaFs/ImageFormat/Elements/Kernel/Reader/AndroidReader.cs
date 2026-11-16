@@ -26,13 +26,13 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
                 {
                     ReadToKernelv0(Dst);
                 }
-                else if (Version == 3)
+                else if ((Version == 3) || (Version == 4))
                 {
                     ReadToKernelv3(Dst);
                 }
                 else
                 {
-                    throw new NotImplementedException("Android image v4 is not supported yet!");
+                    throw new NotImplementedException($"Android image v{Version} is not supported yet!");
                 }
             }
         }

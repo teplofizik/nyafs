@@ -21,6 +21,7 @@ namespace NyaFs.ImageFormat
         public string Setup;
         public string Fpga;
         public string Firmware;
+        public string Script;
         public readonly List<string> Loadables = new List<string>();
     }
 

@@ -56,8 +56,11 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
             if (!Img.IsMagicCorrect)
                 return new ContainedImage[0];
 
-            if (Img.HeaderVersion == 3)
+            if (Img.HeaderVersion >= 3)
             {
+                if ((Img.HeaderVersion != 3) && (Img.HeaderVersion != 4))
+                    return new ContainedImage[0];
+
                 var V3 = new AndroidImageV3(Raw);
                 var V3Res = new List<ContainedImage>();
                 var V3Kernel = V3.Kernel;
@@ -66,10 +69,11 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
                 var V3Ramdisk = V3.Ramdisk;
                 if ((V3Ramdisk != null) && (V3Ramdisk.Length > 0))
                     V3Res.Add(new ContainedImage("ramdisk", ImageKind.Filesystem, "android", -1, V3Ramdisk.Length, V3Ramdisk));
+                var V3Signature = V3.Signature;
+                if (V3Signature.Length > 0)
+                    V3Res.Add(new ContainedImage("boot_signature", ImageKind.Unknown, "signature", -1, V3Signature.Length, V3Signature));
                 return V3Res.ToArray();
             }
-            if (Img.HeaderVersion >= 4)
-                return new ContainedImage[0];
 
             var V1 = (Img.HeaderVersion >= 1) ? new AndroidImagev1(Raw) : null;
             var V2 = (Img.HeaderVersion >= 2) ? new AndroidImagev2(Raw) : null;
@@ -113,17 +117,20 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositePlugins
             if (!Img.IsMagicCorrect)
                 yield break;
 
-            if (Img.HeaderVersion == 3)
+            if (Img.HeaderVersion >= 3)
             {
+                if ((Img.HeaderVersion != 3) && (Img.HeaderVersion != 4))
+                    yield break;
+
                 var V3 = new AndroidImageV3(Raw);
-                yield return new KeyValuePair<string, string>("header-version", "3");
+                yield return new KeyValuePair<string, string>("header-version", Img.HeaderVersion.ToString());
                 yield return new KeyValuePair<string, string>("page-size", "4096");
                 yield return new KeyValuePair<string, string>("cmdline", (V3.Cmdline ?? "").TrimEnd('\0'));
                 yield return new KeyValuePair<string, string>("os-version", V3.OSVersion.ToString());
+                if (Img.HeaderVersion >= 4)
+                    yield return new KeyValuePair<string, string>("signature-size", V3.SignatureSize.ToString());
                 yield break;
             }
-            if (Img.HeaderVersion >= 4)
-                yield break;
 
             yield return new KeyValuePair<string, string>("header-version", Img.HeaderVersion.ToString());
             yield return new KeyValuePair<string, string>("page-size", Img.PageSize.ToString());

@@ -161,6 +161,20 @@ namespace NyaFs.ImageFormat.Types
 
 		public byte[] ImageData => ReadArray(0x40, Length);
 
+		/// <summary>
+		/// Header fields as a reusable <see cref="ImageInfo"/> (name/arch/os/type/compression/addresses).
+		/// </summary>
+		public ImageInfo Info => new ImageInfo
+		{
+			Architecture = CPUArchitecture,
+			OperatingSystem = OperatingSystem,
+			Type = Type,
+			Compression = Compression,
+			Name = Name,
+			DataLoadAddress = DataLoadAddress,
+			EntryPointAddress = EntryPointAddress
+		};
+
 		static UInt32 CalcCrc(byte[] data)
 		{
 			var crc32 = new Crc(new CrcParameters(32, 0x04c11db7, 0xffffffff, 0xffffffff, true, true));

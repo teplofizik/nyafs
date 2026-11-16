@@ -7,8 +7,8 @@ firmware images (kernel, ramfs/rootfs, device tree and composite containers).
 
 - Filesystems: CPIO, TAR, EXT2/3/4, SquashFS, CramFS (LE/BE), ROMFS, FAT12/16/32,
   F2FS, UBIFS, LittleFS/SPIFFS (plugins).
-- Image formats: raw/compressed kernels, FIT, Android and legacy images,
-  device trees, vendor containers.
+- Image formats: raw/compressed kernels (including bare arm64/riscv `Image`),
+  FIT, Android and all legacy uImage types, device trees, vendor containers.
 - Extended attributes (xattr), Unix permissions, uid/gid and symlinks.
 - `.nyapkg` packages with TAR/PAX xattrs and filtering.
 - Plugin architecture for filesystems, compressors, images and commands,

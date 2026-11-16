@@ -46,6 +46,7 @@ namespace NyaFs.ImageFormat.Plugins
         public static readonly Base.KernelPlugin[] Kernels = new Base.KernelPlugin[]
         {
             new ZImageKernelPlugin(),
+            new ImageKernelPlugin(),
             new RawKernelPlugin()
         };
 

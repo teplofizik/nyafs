@@ -6,10 +6,17 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
 {
     /// <summary>
     /// u-boot legacy image (uImage): a single-payload or multi-file container.
+    /// Supports kernel/ramdisk/flat_dt/multi plus the remaining legacy header types
+    /// (standalone, firmware, script, filesystem, kernel_noload, vendor boot images)
+    /// which are exposed as opaque payloads (preserved and extractable).
     /// </summary>
     class LegacyImagePlugin : Base.CompositeImagePlugin
     {
         public LegacyImagePlugin() : base("image.legacy", "legacy") { }
+
+        public override bool SupportWrite => true;
+
+        public override bool PreserveUnknownChildren => true;
 
         public override bool DetectImage(ImageData Image)
         {
@@ -17,10 +24,12 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 return false;
 
             var Type = (ImageType)Image.ReadByte(0x1E);
-            return (Type == ImageType.IH_TYPE_KERNEL) ||
-                   (Type == ImageType.IH_TYPE_RAMDISK) ||
-                   (Type == ImageType.IH_TYPE_FLATDT) ||
-                   (Type == ImageType.IH_TYPE_MULTI);
+            if ((Type == ImageType.IH_TYPE_INVALID) || (Type >= ImageType.IH_TYPE_COUNT))
+                return false;
+
+            // The declared payload must fit into the file (some dumps are truncated).
+            var PayloadLength = Image.ReadUInt32BE(0x0C);
+            return PayloadLength <= (Image.Length - 0x40);
         }
 
         public override ContainedImage[] GetImages(ImageData Image)
@@ -35,17 +44,25 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
 
             string Name;
             ImageKind Kind;
+            string Format = null;
             switch (Img.Type)
             {
-                case ImageType.IH_TYPE_KERNEL: Name = "kernel"; Kind = ImageKind.Kernel; break;
-                case ImageType.IH_TYPE_RAMDISK: Name = "ramdisk"; Kind = ImageKind.Filesystem; break;
-                case ImageType.IH_TYPE_FLATDT: Name = "devtree"; Kind = ImageKind.Devtree; break;
-                default: Name = "payload"; Kind = ImageKind.Unknown; break;
+                case ImageType.IH_TYPE_KERNEL:
+                case ImageType.IH_TYPE_KERNEL_NOLOAD:
+                    Name = "kernel"; Kind = ImageKind.Kernel; Format = "legacy"; break;
+                case ImageType.IH_TYPE_RAMDISK:
+                case ImageType.IH_TYPE_FILESYSTEM:
+                    Name = "ramdisk"; Kind = ImageKind.Filesystem; Format = "legacy"; break;
+                case ImageType.IH_TYPE_FLATDT:
+                    Name = "devtree"; Kind = ImageKind.Devtree; Format = "dtb"; break;
+                default:
+                    Name = "payload"; Kind = ImageKind.Unknown; break;
             }
 
             return new ContainedImage[]
             {
-                new ContainedImage(Name, Kind, "legacy", -1, Payload.Length, Payload, Img.Compression)
+                new ContainedImage(Name, Kind, Format, -1, Payload.Length, Payload, Img.Compression, Img.Info,
+                    Img.Name)
             };
         }
 
@@ -103,13 +120,112 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
         public override Elements.Kernel.Reader.Reader GetKernelReader(byte[] Data)
         {
             var Img = new LegacyImage(Data);
-            return (Img.Type == ImageType.IH_TYPE_KERNEL) ? new Elements.Kernel.Reader.LegacyReader(Data) : null;
+            return IsKernel(Img.Type) ? new Elements.Kernel.Reader.LegacyReader(Data) : null;
         }
 
         public override Elements.Fs.Reader.Reader GetFilesystemReader(byte[] Data)
         {
             var Img = new LegacyImage(Data);
-            return (Img.Type == ImageType.IH_TYPE_RAMDISK) ? new Elements.Fs.Reader.LegacyReader(Data) : null;
+            return IsFilesystem(Img.Type) ? new Elements.Fs.Reader.LegacyReader(Data) : null;
+        }
+
+        public override Elements.Dtb.Reader.Reader GetDtbReader(byte[] Data)
+        {
+            var Img = new LegacyImage(Data);
+            return (Img.Type == ImageType.IH_TYPE_FLATDT) ? new Elements.Dtb.Reader.LegacyReader(Data) : null;
+        }
+
+        private static bool IsKernel(ImageType Type) =>
+            (Type == ImageType.IH_TYPE_KERNEL) || (Type == ImageType.IH_TYPE_KERNEL_NOLOAD);
+
+        private static bool IsFilesystem(ImageType Type) =>
+            (Type == ImageType.IH_TYPE_RAMDISK) || (Type == ImageType.IH_TYPE_FILESYSTEM);
+
+        public override byte[] Build(BaseImageBlob Blob, out string Error)
+        {
+            Error = null;
+            try
+            {
+                var Root = Blob.BuildPlan?.Root;
+                if (Root?.Raw == null)
+                {
+                    Error = "Legacy image writer needs an existing source image";
+                    return null;
+                }
+
+                if (!Root.Dirty)
+                    return Root.Raw;
+
+                var Source = new LegacyImage(Root.Raw);
+                if (!Source.CorrectHeader)
+                {
+                    Error = "Invalid legacy header in the source image";
+                    return null;
+                }
+
+                if (Source.Type == ImageType.IH_TYPE_MULTI)
+                {
+                    var Payloads = new List<byte[]>();
+                    foreach (var Child in Root.Children)
+                    {
+                        var Payload = GetChildData(Child, CompressionType.IH_COMP_NONE);
+                        if (Payload != null)
+                            Payloads.Add(Payload);
+                    }
+
+                    if (Payloads.Count == 0)
+                    {
+                        Error = "Legacy multi image has no payloads";
+                        return null;
+                    }
+
+                    return Composite.LegacyMultiImageWriter.BuildMulti(Payloads, Source.Info, Source.Name);
+                }
+
+                var Leaf = (Root.Children.Count > 0) ? Root.Children[0] : null;
+                if (Leaf == null)
+                    return Root.Raw;
+
+                var Data = GetChildData(Leaf, Source.Compression, out var Compression);
+                if (Data == null)
+                {
+                    Error = "Cannot serialize the legacy payload";
+                    return null;
+                }
+
+                var Info = Source.Info.Clone();
+                Info.Compression = Compression;
+                return new LegacyImage(Info, Compression, Data).getPacket();
+            }
+            catch (Exception E)
+            {
+                Error = E.Message;
+                return null;
+            }
+        }
+
+        private static byte[] GetChildData(ImageBuildNode Node, CompressionType SourceCompression) =>
+            GetChildData(Node, SourceCompression, out _);
+
+        private static byte[] GetChildData(ImageBuildNode Node, CompressionType SourceCompression,
+            out CompressionType Compression)
+        {
+            Compression = (Node.Compression != CompressionType.IH_COMP_NONE) ? Node.Compression : SourceCompression;
+
+            if (!Node.Dirty && (Node.Raw != null))
+                return Node.Raw;
+
+            if (Node.Kind != ImageKind.Unknown)
+            {
+                var Writer = new Composite.ImageBuildPlanWriter(new ImageBuildPlan(Node));
+                var Serialized = Writer.Build(out _);
+                if (Serialized != null)
+                    return Serialized;
+            }
+
+            // Unknown payload edited via import/use: the raw bytes are already in their final form.
+            Compression = Node.Compression;
+            return Node.Raw;
         }
     }
 }

@@ -122,6 +122,11 @@ namespace NyaFs.ImageFormat.Composite
                     return null;
 
                 var Info = Child.Dirty ? GetInfo(Child) : (Child.Info ?? GetInfo(Child));
+                if (IsScript(Child))
+                {
+                    Info = Info.Clone();
+                    Info.Type = ImageType.IH_TYPE_SCRIPT;
+                }
                 var Name = Unique(Child.Name, Used);
                 if (!ImageNames.ContainsKey(Child.Name))
                     ImageNames[Child.Name] = Name;
@@ -225,6 +230,7 @@ namespace NyaFs.ImageFormat.Composite
                     AddLink(Config, "setup", SourceConfig.Setup, ImageNames);
                     AddLink(Config, "fpga", SourceConfig.Fpga, ImageNames);
                     AddLink(Config, "firmware", SourceConfig.Firmware, ImageNames);
+                    AddLink(Config, "script", SourceConfig.Script, ImageNames);
                     AddStringList(Config, "loadables", SourceConfig.Loadables, ImageNames);
                     Configurations.Nodes.Add(Config);
                 }
@@ -238,6 +244,7 @@ namespace NyaFs.ImageFormat.Composite
                     if (Item.Item2.Kind == ImageKind.Kernel) Config.AddStringValue("kernel", Item.Item1);
                     if (Item.Item2.Kind == ImageKind.Filesystem) Config.AddStringValue("ramdisk", Item.Item1);
                     if (Item.Item2.Kind == ImageKind.Devtree) Config.AddStringValue("fdt", Item.Item1);
+                    if (IsScript(Item.Item2)) Config.AddStringValue("script", Item.Item1);
                 }
                 Configurations.Nodes.Add(Config);
             }
@@ -568,9 +575,13 @@ namespace NyaFs.ImageFormat.Composite
                 case ImageKind.Kernel: return "Linux kernel";
                 case ImageKind.Devtree: return "Flattened Device Tree blob";
                 case ImageKind.Filesystem: return "Ramdisk";
-                default: return Node.Name;
+                default: return IsScript(Node) ? "U-Boot script" : Node.Name;
             }
         }
+
+        private static bool IsScript(ImageBuildNode Node) =>
+            (Node.Format == "script") ||
+            ((Node.Info != null) && (Node.Info.Type == ImageType.IH_TYPE_SCRIPT));
 
         private static string GetOption(ImageBuildNode Node, string Name, string DefaultValue)
         {

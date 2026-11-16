@@ -26,7 +26,8 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
                 return;
             }
 
-            if (Image.Type != ImageFormat.Types.ImageType.IH_TYPE_KERNEL)
+            if ((Image.Type != ImageFormat.Types.ImageType.IH_TYPE_KERNEL) &&
+                (Image.Type != ImageFormat.Types.ImageType.IH_TYPE_KERNEL_NOLOAD))
             {
                 Log.Error(0, $"Legacy image is not kernel legacy file.");
                 return;
@@ -51,7 +52,8 @@ namespace NyaFs.ImageFormat.Elements.Kernel.Reader
                 return;
             }
 
-            if (Image.Type != ImageFormat.Types.ImageType.IH_TYPE_KERNEL)
+            if ((Image.Type != ImageFormat.Types.ImageType.IH_TYPE_KERNEL) &&
+                (Image.Type != ImageFormat.Types.ImageType.IH_TYPE_KERNEL_NOLOAD))
             {
                 Log.Error(0, $"File {Filename} is not kernel legacy file.");
                 return;

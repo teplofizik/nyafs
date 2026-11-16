@@ -9,11 +9,13 @@ namespace NyaFs.Filesystem.CramFs
     public class CramFsBuilder : IFilesystemBuilder
     {
         private readonly bool BigEndian;
+        private readonly bool WideInodes;
         private int BlockSize = 4096;
 
-        public CramFsBuilder(bool BigEndian = false)
+        public CramFsBuilder(bool BigEndian = false, bool WideInodes = false)
         {
             this.BigEndian = BigEndian;
+            this.WideInodes = WideInodes;
         }
 
         List<uint> InvalidGid = new List<uint>();
@@ -196,7 +198,7 @@ namespace NyaFs.Filesystem.CramFs
         private void WriteNode(List<byte> Res, Builder.Node N)
         {
             N.RelevantNodeOffset = Convert.ToUInt32(Res.Count);
-            var Data = N.GenerateNode(BigEndian);
+            var Data = N.GenerateNode(BigEndian, WideInodes);
 
             Res.AddRange(Data.getPacket());
         }
@@ -304,7 +306,7 @@ namespace NyaFs.Filesystem.CramFs
         {
             foreach(var N in Nodes)
             {
-                var Node = new Types.CrNode(preparedImage, N.RelevantNodeOffset, BigEndian);
+                var Node = new Types.CrNode(preparedImage, N.RelevantNodeOffset, BigEndian, WideInodes);
 
                 Node.Offset = N.DataOffset;
                 if (Node.FsNodeType == Universal.Types.FilesystemItemType.Directory)

@@ -14,11 +14,13 @@ namespace NyaFs.Filesystem.CramFs
         private bool Loaded = false;
 
         public bool BigEndian { get; }
+        public bool WideInodes { get; }
 
         public CramFsReader(byte[] Data) : base(Data)
         {
             var Magic = (Data.Length >= 4) ? Data.ReadUInt32BE(0) : 0;
             BigEndian = (Magic == 0x28cd3d45u);
+            WideInodes = DetectWideInodes(Data, BigEndian);
 
             Superblock = new Types.CrSuperblock(Data, 0, BigEndian);
 
@@ -33,7 +35,56 @@ namespace NyaFs.Filesystem.CramFs
             }
         }
 
-        private Types.CrNode GetRootNode() => new Types.CrNode(Raw, 0x40, BigEndian);
+        private Types.CrNode GetRootNode() => new Types.CrNode(Raw, 0x40, BigEndian, WideInodes);
+
+        /// <summary>
+        /// Some TVIP/U-Boot images use 16-byte CramFS inodes (separate name-length and
+        /// offset words). Probe the root inode to choose the layout that yields a
+        /// plausible first directory entry.
+        /// </summary>
+        private static bool DetectWideInodes(byte[] Data, bool BigEndian)
+        {
+            if ((Data == null) || (Data.Length < 0x40 + 0x10))
+                return false;
+
+            var Standard = new Types.CrNode(Data, 0x40, BigEndian, false);
+            var Wide = new Types.CrNode(Data, 0x40, BigEndian, true);
+
+            var StandardOk = IsPlausibleRoot(Data, Standard, BigEndian, false);
+            var WideOk = IsPlausibleRoot(Data, Wide, BigEndian, true);
+
+            return WideOk && !StandardOk;
+        }
+
+        private static bool IsPlausibleRoot(byte[] Data, Types.CrNode Root, bool BigEndian, bool Wide)
+        {
+            if (Root.FsNodeType != FilesystemItemType.Directory)
+                return false;
+
+            var Offset = Root.Offset;
+            var Size = Root.Size;
+            var MinOffset = Wide ? 0x50 : 0x4C;
+            if ((Offset < MinOffset) || (Offset > Data.Length) || ((long)Offset + Size > Data.Length))
+                return false;
+
+            if (Size == 0)
+                return true;
+
+            var First = new Types.CrNode(Data, Offset, BigEndian, Wide);
+            var NameLen = First.NameLen;
+            if ((NameLen < 1) || (NameLen > 252))
+                return false;
+
+            var Name = First.Name;
+            if (String.IsNullOrEmpty(Name))
+                return false;
+
+            foreach (var C in Name)
+                if ((C < 0x20) || (C > 0x7E))
+                    return false;
+
+            return true;
+        }
 
         public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
         {
@@ -62,7 +113,7 @@ namespace NyaFs.Filesystem.CramFs
             long Offset = 0x00;
             while (Offset < Dir.Size)
             {
-                var Node = new Types.CrNode(Raw, Dir.Offset + Offset, BigEndian);
+                var Node = new Types.CrNode(Raw, Dir.Offset + Offset, BigEndian, WideInodes);
 
                 Nodes.Add(Node);
                 Offset += Node.NodeSize;

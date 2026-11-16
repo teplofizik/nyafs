@@ -9,11 +9,16 @@ namespace NyaFs.Filesystem.CramFs.Types
     {
         // private int SizeWidth = 24;
         private readonly bool BigEndian;
+        private readonly bool WideInodes;
 
-        public CrNode(uint Mode, uint Uid, uint Gid, uint Size, string Filename, bool BigEndian = false) :
-            base(0x0C + Filename.Length.GetAligned(4))
+        private int HeaderSize => WideInodes ? 0x10 : 0x0C;
+
+        public CrNode(uint Mode, uint Uid, uint Gid, uint Size, string Filename, bool BigEndian = false,
+            bool WideInodes = false) :
+            base((WideInodes ? 0x10 : 0x0C) + Filename.Length.GetAligned(4))
         {
             this.BigEndian = BigEndian;
+            this.WideInodes = WideInodes;
 
             this.Mode = Mode;
             this.Size = Size;
@@ -21,19 +26,21 @@ namespace NyaFs.Filesystem.CramFs.Types
             GId = Gid;
 
             NameLen = Convert.ToUInt32(Filename.Length);
-            WriteString(0x0C, Filename, Filename.Length);
+            WriteString(HeaderSize, Filename, Filename.Length);
         }
 
-        public CrNode(byte[] Data, long Offset, bool BigEndian = false) : base(Data, Offset, 0x0C)
+        public CrNode(byte[] Data, long Offset, bool BigEndian = false, bool WideInodes = false) :
+            base(Data, Offset, WideInodes ? 0x10 : 0x0C)
         {
             this.BigEndian = BigEndian;
+            this.WideInodes = WideInodes;
             Resize(NodeSize);
         }
 
         /// <summary>
         /// Node size
         /// </summary>
-        public long NodeSize => 0x0C + NameLen;
+        public long NodeSize => HeaderSize + NameLen;
 
         private uint ReadWord(long Offset) => BigEndian ? ReadUInt32BE(Offset) : ReadUInt32(Offset);
 
@@ -112,38 +119,56 @@ namespace NyaFs.Filesystem.CramFs.Types
         }
 
         /// <summary>
-        /// NameLength
+        /// NameLength (padded to 4 bytes)
         /// </summary>
         public uint NameLen
         {
             get
             {
                 var Word = ReadWord(0x08);
+                if (WideInodes)
+                    return (Word >> 6) & 0x3FFu;
+
                 return (BigEndian ? ((Word >> 26) & 0x3Fu) : (Word & 0x3Fu)) * 4;
             }
             set
             {
-                var Units = ((value + 3) / 4) & 0x3Fu;
+                var Aligned = (value + 3) & ~3u;
                 var Word = ReadWord(0x08);
-                Word = BigEndian
-                    ? ((Word & 0x3FFFFFFu) | (Units << 26))
-                    : ((Word & 0xFFFFFFC0u) | Units);
+                if (WideInodes)
+                    Word = (Word & 0x3Fu) | (Aligned << 6);
+                else
+                {
+                    var Units = Aligned / 4;
+                    Word = BigEndian
+                        ? ((Word & 0x3FFFFFFu) | (Units << 26))
+                        : ((Word & 0xFFFFFFC0u) | Units);
+                }
                 WriteWord(0x08, Word);
             }
         }
 
         /// <summary>
-        /// Offset (8.6, u26)
+        /// Offset (byte offset, stored in 4-byte units)
         /// </summary>
         public uint Offset
         {
             get
             {
+                if (WideInodes)
+                    return ReadWord(0x0C) * 4;
+
                 var Word = ReadWord(0x08);
                 return (BigEndian ? (Word & 0x3FFFFFFu) : ((Word >> 6) & 0x3FFFFFFu)) * 4;
             }
             set
             {
+                if (WideInodes)
+                {
+                    WriteWord(0x0C, value / 4);
+                    return;
+                }
+
                 var Units = ((value + 3) / 4) & 0x3FFFFFFu;
                 var Word = ReadWord(0x08);
                 Word = BigEndian
@@ -166,6 +191,6 @@ namespace NyaFs.Filesystem.CramFs.Types
         /// <summary>
         /// Filename
         /// </summary>
-        public string Name => ReadString(0x0C, NameLen).Replace("\0", "");
+        public string Name => ReadString(HeaderSize, NameLen).Replace("\0", "");
     }
 }

@@ -54,7 +54,10 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
             Dst.UbiFsRaw = SourceRaw;
 
             if (FsReader is Filesystem.CramFs.ICramFsEndian Endian)
+            {
                 Dst.CramFsBigEndian = Endian.BigEndian;
+                Dst.CramFsWideInodes = Endian.WideInodes;
+            }
         }
 
         private void ImportDir(Filesystem.Universal.Items.Dir Dir, string Path)

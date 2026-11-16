@@ -51,6 +51,9 @@ namespace NyaFs.ImageFormat.Elements.Fs
         /// <summary>Write CramFS with big-endian field encoding.</summary>
         public bool CramFsBigEndian = false;
 
+        /// <summary>Use 16-byte CramFS inodes (TVIP/U-Boot variant).</summary>
+        public bool CramFsWideInodes = false;
+
         public bool EroFsFragments = false;
         public bool EroFsTailFragments = false;
         public bool EroFsSharedXattrs = false;

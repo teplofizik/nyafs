@@ -35,7 +35,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         /// </summary>
         /// <returns></returns>
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) =>
-            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.CramFs.CramFsBuilder(Fs.CramFsBigEndian));
+            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.CramFs.CramFsBuilder(Fs.CramFsBigEndian, Fs.CramFsWideInodes));
 
         public override bool CheckFilesystem(LinuxFilesystem Fs)
         {

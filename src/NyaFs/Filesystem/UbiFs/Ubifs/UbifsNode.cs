@@ -79,7 +79,33 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         }
 
         public static bool IsValidMagic(byte[] D, int Off) =>
-            (Off + 4 <= D.Length) && (BitConverter.ToUInt32(D, Off) == MAGIC);
+            (D != null) && (Off >= 0) && (Off + 4 <= D.Length) && (BitConverter.ToUInt32(D, Off) == MAGIC);
+
+        /// <summary>
+        /// A node is trustworthy only when its magic, declared length and CRC all check out.
+        /// Raw NAND dumps taken after an unclean shutdown contain torn nodes; following such a
+        /// node blindly leads to out-of-range reads instead of a clean "skip this branch".
+        /// </summary>
+        public static bool IsValidNode(byte[] D, int Off)
+        {
+            if (!IsValidMagic(D, Off) || (Off + HeaderSize > D.Length))
+                return false;
+
+            uint Len = BitConverter.ToUInt32(D, Off + 0x10);
+            if ((Len < HeaderSize) || (Off + (long)Len > D.Length))
+                return false;
+
+            uint Stored = BitConverter.ToUInt32(D, Off + 4);
+            return Stored == Crc32.CalcCrc(D, Off + 8, (int)Len - 8);
+        }
+
+        public static bool IsValidNode(byte[] D, int Off, UbifsNodeType Expected)
+        {
+            if (!IsValidNode(D, Off))
+                return false;
+
+            return (UbifsNodeType)D[Off + 0x14] == Expected;
+        }
 
         public uint Len => BitConverter.ToUInt32(Data, Off + 0x10);
 

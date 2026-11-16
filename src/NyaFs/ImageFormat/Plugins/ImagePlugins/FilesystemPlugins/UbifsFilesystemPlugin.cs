@@ -40,7 +40,15 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
                 var LebSize = (int)BitConverter.ToUInt32(Data, 0x24);
                 if ((LebSize <= 0x30 + 0x1000) || (LebSize > Data.Length))
                     return null;
-                return new Elements.Fs.Reader.BaseFsReader(Types.FsType.UbiFs, new Filesystem.UbiFs.Ubifs.UbifsReader(Data, LebSize), 0, true);
+
+                try
+                {
+                    return new Elements.Fs.Reader.BaseFsReader(Types.FsType.UbiFs, new Filesystem.UbiFs.Ubifs.UbifsReader(Data, LebSize), 0, true);
+                }
+                catch
+                {
+                    return null;
+                }
             }
 
             Filesystem.UbiFs.UbiFsReader Ubi;
@@ -61,7 +69,16 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
 
                 var Leb0 = Ubi.ReadLeb(Vol.Id, 0);
                 if ((Leb0 != null) && (BitConverter.ToUInt32(Leb0, 0) == UBIFS_NODE_MAGIC) && (Leb0[0x14] == UBIFS_SB_NODE))
-                    return new Elements.Fs.Reader.BaseFsReader(Types.FsType.UbiFs, new Filesystem.UbiFs.Ubifs.UbifsReader(Ubi, Vol));
+                {
+                    try
+                    {
+                        return new Elements.Fs.Reader.BaseFsReader(Types.FsType.UbiFs, new Filesystem.UbiFs.Ubifs.UbifsReader(Ubi, Vol));
+                    }
+                    catch
+                    {
+                        // Damaged volume: try the next one instead of aborting the whole image.
+                    }
+                }
             }
 
             return null;

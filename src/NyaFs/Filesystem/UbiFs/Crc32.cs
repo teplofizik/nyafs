@@ -13,5 +13,13 @@ namespace NyaFs.Filesystem.UbiFs
 
             return ~Convert.ToUInt32(crc32.CalculateAsNumeric(data));
         }
+
+        public static uint CalcCrc(byte[] data, int offset, int length)
+        {
+            var Buffer = new byte[length];
+            Array.Copy(data, offset, Buffer, 0, length);
+
+            return CalcCrc(Buffer);
+        }
     }
 }

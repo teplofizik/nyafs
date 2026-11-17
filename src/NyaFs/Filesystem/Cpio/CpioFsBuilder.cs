@@ -1,4 +1,4 @@
-﻿using NyaIO.Data;
+using NyaIO.Data;
 using NyaFs.Filesystem.Universal;
 using System;
 using System.Collections.Generic;
@@ -9,7 +9,23 @@ namespace NyaFs.Filesystem.Cpio
 {
     public class CpioFsBuilder : IFilesystemBuilder
     {
-        private List<Types.CpioNode> Files = new List<Types.CpioNode>();
+        private readonly List<Types.CpioNode> Files = new List<Types.CpioNode>();
+        private readonly string Magic;
+
+        public CpioFsBuilder(string Magic = "070701")
+        {
+            this.Magic = Magic;
+        }
+
+        /// <summary>Append an existing raw record without changing its metadata or magic.</summary>
+        public void Raw(Types.CpioNode Node) => Files.Add(Node);
+
+        private void Add(Types.CpioNode Node)
+        {
+            Node.SetMagic(Magic);
+            Node.UpdateCheck();
+            Files.Add(Node);
+        }
 
         /// <summary>
         /// Get builded filesystem image
@@ -20,9 +36,9 @@ namespace NyaFs.Filesystem.Cpio
             var Res = new List<byte>();
 
             foreach (var F in Files)
-                Res.AddRange(F.getPacket());
+                Res.AddRange(F.RawBytes);
 
-            Res.AddRange(new Types.Nodes.CpioTrailer().getPacket());
+            Res.AddRange(new Types.Nodes.CpioTrailer(Magic).RawBytes);
 
             var Padding = Convert.ToInt64(Res.Count).MakeSizeAligned(0x100);
             for (long i = 0; i < Padding; i++) Res.Add(0);
@@ -40,7 +56,7 @@ namespace NyaFs.Filesystem.Cpio
         /// <param name="Mode">Access mode</param>
         public void Block(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode)
         {
-            Files.Add(new Types.Nodes.CpioBlock(Path, Mode, User, Group, Major, Minor));
+            Add(new Types.Nodes.CpioBlock(Path, Mode, User, Group, Major, Minor));
         }
 
         /// <summary>
@@ -54,7 +70,7 @@ namespace NyaFs.Filesystem.Cpio
         /// <param name="Mode">Access mode</param>
         public void Char(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode)
         {
-            Files.Add(new Types.Nodes.CpioChar(Path, Mode, User, Group, Major, Minor));
+            Add(new Types.Nodes.CpioChar(Path, Mode, User, Group, Major, Minor));
         }
 
         /// <summary>
@@ -66,7 +82,7 @@ namespace NyaFs.Filesystem.Cpio
         /// <param name="Mode">Access mode</param>
         public void Directory(string Path, uint User, uint Group, uint Mode)
         {
-            Files.Add(new Types.Nodes.CpioDir(Path, Mode, User, Group));
+            Add(new Types.Nodes.CpioDir(Path, Mode, User, Group));
         }
 
         /// <summary>
@@ -78,7 +94,7 @@ namespace NyaFs.Filesystem.Cpio
         /// <param name="Mode">Access mode</param>
         public void Fifo(string Path, uint User, uint Group, uint Mode)
         {
-            Files.Add(new Types.Nodes.CpioFifo(Path, Mode, User, Group));
+            Add(new Types.Nodes.CpioFifo(Path, Mode, User, Group));
         }
 
         /// <summary>
@@ -91,7 +107,7 @@ namespace NyaFs.Filesystem.Cpio
         /// <param name="Mode">Access mode</param>
         public void File(string Path, byte[] Content, uint User, uint Group, uint Mode)
         {
-            Files.Add(new Types.Nodes.CpioFile(Path, Mode, User, Group, Content));
+            Add(new Types.Nodes.CpioFile(Path, Mode, User, Group, Content));
         }
 
         /// <summary>
@@ -103,7 +119,7 @@ namespace NyaFs.Filesystem.Cpio
         /// <param name="Mode">Access mode</param>
         public void Socket(string Path, uint User, uint Group, uint Mode)
         {
-            Files.Add(new Types.Nodes.CpioSocket(Path, Mode, User, Group));
+            Add(new Types.Nodes.CpioSocket(Path, Mode, User, Group));
         }
 
         /// <summary>
@@ -116,7 +132,7 @@ namespace NyaFs.Filesystem.Cpio
         /// <param name="Mode">Access mode</param>
         public void SymLink(string Path, string Target, uint User, uint Group, uint Mode)
         {
-            Files.Add(new Types.Nodes.CpioSLink(Path, Mode, User, Group, Target));
+            Add(new Types.Nodes.CpioSLink(Path, Mode, User, Group, Target));
         }
     }
 }

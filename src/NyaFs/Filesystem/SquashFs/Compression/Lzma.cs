@@ -26,7 +26,7 @@ namespace NyaFs.Filesystem.SquashFs.Compression
                     Size.WriteUInt64(0, Convert.ToUInt64(Data.Length));
 
                     encoder.WriteCoderProperties(output);
-                    output.Write(Size);
+                    output.Write(Size, 0, Size.Length);
                     encoder.Code(input, output, input.Length, outSize, null);
                     return output.ToArray();
                 }

@@ -1,4 +1,4 @@
-﻿using NyaFs.Filesystem.Universal;
+using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Items;
 using System;
 using System.Collections.Generic;
@@ -13,15 +13,99 @@ namespace NyaFs.ImageFormat.Elements.Fs
     {
         public Filesystem.Universal.Filesystem Fs = new Filesystem.Universal.Filesystem();
 
+        /// <summary>Canonical format reported by the loaded filesystem plugin (may be external).</summary>
+        public string FilesystemFormat;
+
+        private Filesystem.Universal.Identity.FsIdentityDatabase IdentityDatabase;
+
+        /// <summary>
+        /// User/group view backed by /etc/passwd and /etc/group of this filesystem.
+        /// Lazy-loaded; it is not part of the filesystem format.
+        /// </summary>
+        public Filesystem.Universal.Identity.FsIdentityDatabase Identities
+        {
+            get
+            {
+                if (IdentityDatabase == null)
+                    IdentityDatabase = new Filesystem.Universal.Identity.FsIdentityDatabase(Fs);
+
+                return IdentityDatabase;
+            }
+        }
+
+        public void ResetIdentityDatabase() => IdentityDatabase = null;
+
+        private readonly Dictionary<string, string> PluginOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        public void SetFilesystemOption(string Format, string Name, string Value) =>
+            PluginOptions[Format + "." + Name] = Value;
+
+        public string GetFilesystemOption(string Format, string Name, string DefaultValue = null) =>
+            PluginOptions.TryGetValue(Format + "." + Name, out string Value) ? Value : DefaultValue;
+
         /// <summary>
         /// Filesystem type
         /// </summary>
         public Filesystem.SquashFs.Types.SqCompressionType SquashFsCompression = Filesystem.SquashFs.Types.SqCompressionType.Gzip;
 
+        /// <summary>Write CramFS with big-endian field encoding.</summary>
+        public bool CramFsBigEndian = false;
+
+        /// <summary>Use 16-byte CramFS inodes (TVIP/U-Boot variant).</summary>
+        public bool CramFsWideInodes = false;
+
+        public bool EroFsFragments = false;
+        public bool EroFsTailFragments = false;
+        public bool EroFsSharedXattrs = false;
+        public int EroFsCompressionLevel = 10;
+        public readonly List<string> EroFsXattrPrefixes = new List<string>();
+
+        /// <summary>Write UDF with a virtual allocation table (VAT).</summary>
+        public bool UdfVat = false;
+
+        /// <summary>JFFS2 data compression mode.</summary>
+        public Filesystem.Jffs2.Jffs2Compression Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.None;
+
+        /// <summary>JFFS2 max data node/page size.</summary>
+        public int Jffs2PageSize = 4096;
+
+        /// <summary>JFFS2 erase-block size used for image padding.</summary>
+        public int Jffs2EraseBlockSize = 0x10000;
+
+        /// <summary>Write UDF with a sparable partition map.</summary>
+        public bool UdfSparable = false;
+
+        /// <summary>
+        /// Compression for regular file data nodes when writing a UBIFS image.
+        /// </summary>
+        public Filesystem.UbiFs.Ubifs.UbifsCompression UbiFsCompression = Filesystem.UbiFs.Ubifs.UbifsCompression.None;
+
+        /// <summary>Write a raw UBIFS volume instead of a UBI container.</summary>
+        public bool UbiFsRaw = false;
+
+        /// <summary>
+        /// Compression for regular file data when writing an F2FS image (None disables it).
+        /// </summary>
+        public Filesystem.F2fs.F2fsCompression F2fsCompression = Filesystem.F2fs.F2fsCompression.None;
+
+        /// <summary>log2 of the F2FS compression cluster size in blocks (2 = 16 KiB ... 8 = 1 MiB).</summary>
+        public int F2fsCompressionClusterLog = 2;
+
+        /// <summary>
+        /// Target FAT type when writing a FAT image: 0 = auto (by size), 12 / 16 / 32.
+        /// </summary>
+        public int FatType = 0;
+
         /// <summary>
         /// Filesystem type
         /// </summary>
         public Types.FsType FilesystemType = Types.FsType.Unknown;
+
+        /// <summary>
+        /// Total filesystem size in bytes (e.g. block_size * block_count for MCU filesystems),
+        /// or 0 if unknown. Used as the target size when writing back.
+        /// </summary>
+        public long FsSize = 0;
 
         /// <summary>
         /// Image information, arch or supported os

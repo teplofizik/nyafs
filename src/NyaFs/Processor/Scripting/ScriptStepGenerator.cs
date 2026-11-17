@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -13,6 +13,8 @@ namespace NyaFs.Processor.Scripting
         {
             this.Name = Name;
         }
+
+        public IReadOnlyList<ScriptArgsConfig> GetConfigs() => Configs;
 
         protected void AddConfig(ScriptArgsConfig Config)
         {

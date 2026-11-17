@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -14,6 +14,8 @@ namespace NyaFs.Processor.Scripting
             if(GetGenerator(G.Name) == null)
                 Commands.Add(G);
         }
+
+        public ScriptStepGenerator[] GetGenerators() => Commands.ToArray();
 
         public ScriptStepGenerator GetGenerator(string Name)
         {
@@ -31,18 +33,33 @@ namespace NyaFs.Processor.Scripting
     {
         public ScriptBaseAll()
         {
+            Add(new Commands.Help());
             Add(new Commands.Include());
             Add(new Commands.Echo());
 
             Add(new Commands.Load());
+            Add(new Commands.LoadP());
+            Add(new Commands.LoadSub());
+            Add(new Commands.Use());
+            Add(new Commands.Import());
+            Add(new Commands.Extract());
             Add(new Commands.Store());
+            Add(new Commands.StoreScript());
             Add(new Commands.Set());
+            Add(new Commands.Pkg());
             Add(new Commands.Export());
             Add(new Commands.Info());
+            Add(new Commands.Inspect());
+        Add(new Commands.MkImage());
+        Add(new Commands.Layout());
+        Add(new Commands.Build());
+            Add(new Commands.Keys());
             Add(new Commands.Reset());
             Add(new Commands.Var());
             Add(new Commands.Service()); 
+#if !NETSTANDARD2_0
             Add(new Commands.SystemCmd());
+#endif
             Add(new Commands.LoadPlugin());
 
             Add(new Commands.Fs.Dir());
@@ -55,7 +72,16 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Fs.Rm());
             Add(new Commands.Fs.Chmod());
             Add(new Commands.Fs.Chown());
+            Add(new Commands.Fs.Chgrp());
+            Add(new Commands.User());
+            Add(new Commands.Group());
+            Add(new Commands.Fs.Xattr());
             Add(new Commands.Fs.Mkfs());
+            Add(new Commands.Fs.Interactive.Ls());
+
+            Add(new Commands.Remote.RemoteGet());
+            Add(new Commands.Remote.RemotePut());
+            Add(new Commands.Remote.RemoteAuthCommand());
 
             // mknod
             // mkfifo

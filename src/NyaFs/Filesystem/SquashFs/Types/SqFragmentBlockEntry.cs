@@ -14,7 +14,8 @@ namespace NyaFs.Filesystem.SquashFs.Types
         { 
             this.Path = Path;
             this.Start = Start;
-            this.Size = Size & 0xffffffu + (Compressed ? 0 : 0x01000000u);
+            this.Size = Size;
+            this.IsCompressed = Compressed;
         }
 
         public SqFragmentBlockEntry(byte[] Data, long Offset) : base(Data, Offset, 0x10)
@@ -47,9 +48,9 @@ namespace NyaFs.Filesystem.SquashFs.Types
             get { return (ReadUInt32(0x08) & 0x01000000) == 0; }
             set { 
                 if(value)
-                    WriteUInt32(0x08, ReadUInt32(0x08) | 0x01000000);
-                else
                     WriteUInt32(0x08, ReadUInt32(0x08) & ~0x01000000u);
+                else
+                    WriteUInt32(0x08, ReadUInt32(0x08) | 0x01000000);
             }
         }
     }

@@ -29,13 +29,13 @@ namespace NyaFs.Filesystem.RomFs
 
         private void CheckId(uint Uid, uint Gid)
         {
-            if (Gid != 0)
+            if (Uid != 0)
             {
-                if (!InvalidGid.Contains(Gid)) InvalidGid.Add(Gid);
+                if (!InvalidUid.Contains(Uid)) InvalidUid.Add(Uid);
             }
             if (Gid != 0)
             {
-                if (!InvalidUid.Contains(Gid)) InvalidUid.Add(Gid);
+                if (!InvalidGid.Contains(Gid)) InvalidGid.Add(Gid);
             }
         }
 

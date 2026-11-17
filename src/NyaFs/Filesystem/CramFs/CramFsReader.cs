@@ -1,4 +1,4 @@
-﻿using NyaIO.Data;
+using NyaIO.Data;
 using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
@@ -7,15 +7,22 @@ using System.Text;
 
 namespace NyaFs.Filesystem.CramFs
 {
-    class CramFsReader : RawPacket, IFilesystemReader
+    class CramFsReader : RawPacket, IFilesystemReader, IRootFsInfo, ICramFsEndian
     {
         private int BlockSize = 4096;
         private Types.CrSuperblock Superblock;
         private bool Loaded = false;
 
+        public bool BigEndian { get; }
+        public bool WideInodes { get; }
+
         public CramFsReader(byte[] Data) : base(Data)
         {
-            Superblock = new Types.CrSuperblock(Data, 0);
+            var Magic = (Data.Length >= 4) ? Data.ReadUInt32BE(0) : 0;
+            BigEndian = (Magic == 0x28cd3d45u);
+            WideInodes = DetectWideInodes(Data, BigEndian);
+
+            Superblock = new Types.CrSuperblock(Data, 0, BigEndian);
 
             var Copy = ReadArray(0, Raw.Length);
             Copy.WriteUInt32(0x20, 0);
@@ -28,7 +35,71 @@ namespace NyaFs.Filesystem.CramFs
             }
         }
 
-        private Types.CrNode GetRootNode() => new Types.CrNode(Raw, 0x40);
+        private Types.CrNode GetRootNode() => new Types.CrNode(Raw, 0x40, BigEndian, WideInodes);
+
+        /// <summary>
+        /// Some TVIP/U-Boot images use 16-byte CramFS inodes (separate name-length and
+        /// offset words). Probe the root inode to choose the layout that yields a
+        /// plausible first directory entry.
+        /// </summary>
+        private static bool DetectWideInodes(byte[] Data, bool BigEndian)
+        {
+            if ((Data == null) || (Data.Length < 0x40 + 0x10))
+                return false;
+
+            var Standard = new Types.CrNode(Data, 0x40, BigEndian, false);
+            var Wide = new Types.CrNode(Data, 0x40, BigEndian, true);
+
+            var StandardOk = IsPlausibleRoot(Data, Standard, BigEndian, false);
+            var WideOk = IsPlausibleRoot(Data, Wide, BigEndian, true);
+
+            return WideOk && !StandardOk;
+        }
+
+        private static bool IsPlausibleRoot(byte[] Data, Types.CrNode Root, bool BigEndian, bool Wide)
+        {
+            if (Root.FsNodeType != FilesystemItemType.Directory)
+                return false;
+
+            var Offset = Root.Offset;
+            var Size = Root.Size;
+            var MinOffset = Wide ? 0x50 : 0x4C;
+            if ((Offset < MinOffset) || (Offset > Data.Length) || ((long)Offset + Size > Data.Length))
+                return false;
+
+            if (Size == 0)
+                return true;
+
+            var First = new Types.CrNode(Data, Offset, BigEndian, Wide);
+            var NameLen = First.NameLen;
+            if ((NameLen < 1) || (NameLen > 252))
+                return false;
+
+            var Name = First.Name;
+            if (String.IsNullOrEmpty(Name))
+                return false;
+
+            foreach (var C in Name)
+                if ((C < 0x20) || (C > 0x7E))
+                    return false;
+
+            return true;
+        }
+
+        public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
+        {
+            var N = GetRootNode();
+            if (N == null)
+            {
+                User = Group = Mode = 0;
+                return false;
+            }
+
+            User = N.UId;
+            Group = N.GId;
+            Mode = N.Mode & 0xFFF;
+            return true;
+        }
 
         public CramFsReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename))
         {
@@ -42,7 +113,7 @@ namespace NyaFs.Filesystem.CramFs
             long Offset = 0x00;
             while (Offset < Dir.Size)
             {
-                var Node = new Types.CrNode(Raw, Dir.Offset + Offset);
+                var Node = new Types.CrNode(Raw, Dir.Offset + Offset, BigEndian, WideInodes);
 
                 Nodes.Add(Node);
                 Offset += Node.NodeSize;
@@ -60,7 +131,7 @@ namespace NyaFs.Filesystem.CramFs
             if ((Path == ".") || (Path == "/")) return Root;
 
             if (Path[0] == '/') Path = Path.Substring(1);
-            var Parts = Path.Split("/");
+            var Parts = Path.Split('/');
 
             var Entries = GetDirEntries(Root);
 
@@ -113,7 +184,10 @@ namespace NyaFs.Filesystem.CramFs
             {
                 var Node = GetINodeByPath(Path);
 
-                return new DeviceInfo(Node.Size >> 20, Node.Size & 0xFFFFF);
+                uint Dev = Node.Size;
+                uint Major = (Dev & 0xFFF00) >> 8;
+                uint Minor = (Dev & 0xFF) | ((Dev >> 12) & 0xFFF00);
+                return new DeviceInfo(Major, Minor);
             }
             else
                 return null;
@@ -161,19 +235,24 @@ namespace NyaFs.Filesystem.CramFs
         {
             if (Loaded)
             {
+                if (Size == 0)
+                    return new byte[0];
+
                 long BlockCount = (Size - 1) / BlockSize + 1;
                 // Array of pointer to blocks end
-                uint[] Pointers = ReadUInt32Array(Offset, BlockCount);
+                uint[] Pointers = BigEndian ? ReadUInt32BEArray(Offset, BlockCount) : ReadUInt32Array(Offset, BlockCount);
 
                 var Res = new List<byte>();
                 // Start of first block
                 long Start = Offset + BlockCount * 4;
                 for (long i = 0; i < BlockCount; i++)
                 {
-                    var Data = ReadArray(Start, Pointers[i] - Start);
+                    long End = Pointers[i];
+                    var Data = ReadArray(Start, End - Start);
                     var Uncompressed = Compression.Gzip.Decompress(Data);
 
                     Res.AddRange(Uncompressed);
+                    Start = End;
                 }
 
                 return Res.ToArray();

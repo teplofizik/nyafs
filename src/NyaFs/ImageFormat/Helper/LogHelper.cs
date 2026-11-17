@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -19,7 +19,7 @@ namespace NyaFs.ImageFormat.Helper
 
         public static void RamfsInfo(Elements.Fs.LinuxFilesystem Fs)
         {
-            string FsType = FitHelper.GetFilesystemType(Fs.FilesystemType);
+            string FsType = String.IsNullOrEmpty(Fs.FilesystemFormat) ? FitHelper.GetFilesystemType(Fs.FilesystemType) : Fs.FilesystemFormat;
             Log.Ok(1, "Filesystem:");
             Log.Write(1, $"    Operating System: {FitHelper.GetOperatingSystem(Fs.Info.OperatingSystem)}");
             Log.Write(1, $"        Architecture: {FitHelper.GetCPUArchitecture(Fs.Info.Architecture)}");

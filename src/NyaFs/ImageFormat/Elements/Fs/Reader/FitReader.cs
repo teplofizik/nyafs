@@ -12,9 +12,15 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
         FlattenedDeviceTree.Types.Node RamdiskNode = null;
 
         // https://github.com/siemens/u-boot/blob/master/common/image.c
-        public FitReader(string Filename, string Config)
+        public FitReader(string Filename, string Config) : this(System.IO.File.ReadAllBytes(Filename), Filename, Config)
         {
-            Fit = new NyaFs.FlattenedDeviceTree.Reader.FDTReader(Filename).Read();
+
+
+        }
+
+        public FitReader(byte[] Raw, string Filename, string Config)
+        {
+            Fit = new NyaFs.FlattenedDeviceTree.Reader.FDTReader(Raw).Read();
 
             if(Fit.Root.Nodes.Count == 0)
             {
@@ -28,11 +34,11 @@ namespace NyaFs.ImageFormat.Elements.Fs.Reader
                 Log.Error(0, $"Invalid FIT image {Filename}: no 'configuration' node.");
                 return;
             }
-            var DefaultConfig = (Config != null) ? Config : Configurations.GetStringValue("default");
+            var DefaultConfig = Helper.FitHelper.GetDefaultConfigNode(Configurations, Config);
 
             if (DefaultConfig == null)
             {
-                Log.Error(0, $"Invalid FIT image {Filename}: no 'default' parameter in 'configuration' node.");
+                Log.Error(0, $"Invalid FIT image {Filename}: no configurations found in 'configurations' node.");
                 return;
             }
 

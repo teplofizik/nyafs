@@ -38,7 +38,7 @@ namespace NyaFs.FlattenedDeviceTree.Writer.Types
 
     class FDTNop : FDTToken
     {
-        public FDTNop() : base(4) { WriteUInt32BE(0, 0x03); }
+        public FDTNop() : base(4) { WriteUInt32BE(0, 0x04); }
     }
 
     class FDTEnd : FDTToken

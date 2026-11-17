@@ -9,19 +9,26 @@ namespace NyaFs.Processor.Scripting.Commands
         public Store() : base("store")
         {
             AddConfig(new Configs.ImageScriptArgsConfig(0, "kernel",
-                new string[] { "raw", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "legacy" }));
+                new string[] { "raw", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "legacy", "image" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(1, "ramfs",
-                new string[] { "cpio", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "legacy", "ext2", "squashfs", "cramfs", "romfs" }));
+                new string[] { "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd", "legacy", "ext2", "squashfs", "cramfs", "romfs",
+                    "iso9660", "iso", "exfat", "littlefs", "spiffs", "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma" }));
 
             AddConfig(new Configs.ImageScriptArgsConfig(2, "devtree",
-                new string[] { "dtb" }));
+                new string[] { "dtb", "dts" }));
 
             AddConfig(new ScriptArgsConfig(3, new ScriptArgsParam[] {
                     new Params.FsPathScriptArgsParam()
                 }));
 
-            AddConfig(new Configs.ErrorConfig("Invalid image type: %1%. Must be one of: kernel, ramfs, devtree"));
+            AddConfig(new ScriptArgsConfig(4, new ScriptArgsParam[] {
+                    new Params.FsPathScriptArgsParam(),
+                    new Params.EnumScriptArgsParam("type", new string[] { "all" }),
+                    new Params.StringScriptArgsParam("format")
+                }));
+
+            AddConfig(new Configs.ErrorConfig("Invalid image type: %1%. Must be one of: kernel, ramfs, devtree, all"));
         }
 
         public override ScriptStep Get(ScriptArgs Args)
@@ -29,7 +36,9 @@ namespace NyaFs.Processor.Scripting.Commands
             var A = Args.RawArgs;
 
             if(Args.ArgConfig == 3)
-                return new StoreScriptStep(A[0], "all", "fit");
+                return new StoreScriptStep(A[0], "auto", null);
+            else if (Args.ArgConfig == 4)
+                return new StoreScriptStep(A[0], "all", A[2]);
             else
                 return new StoreScriptStep(A[0], A[1], A[2]);
         }
@@ -55,9 +64,137 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "devtree": return StoreDtb(Processor);
                     case "kernel": return StoreKernel(Processor);
                     case "all": return StoreAll(Processor);
+                    case "auto": return StoreAuto(Processor);
                     default:
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown image type!");
                 }
+            }
+
+            private ScriptStepResult StoreAuto(ImageProcessor Processor)
+            {
+                var Plan = Processor.GetBlob().BuildPlan;
+                var SignProfile = Processor.GetBlob().GetContainerOption("fit", "sign", null);
+                var SignControl = Processor.GetBlob().GetContainerOption("fit", "sign-control", null);
+                if ((Plan != null) && String.IsNullOrEmpty(SignProfile) && Plan.CanPassthrough)
+                {
+                    System.IO.File.WriteAllBytes(Path, Plan.Root.Raw);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Image is stored to file {Path} using the loaded build plan.");
+                }
+
+                if (Plan == null)
+                    return new StoreScriptStep(Path, "all", "fit").Exec(Processor);
+
+                var Hash = Processor.GetBlob().GetContainerOption("fit", "hash", null);
+                if (!String.IsNullOrEmpty(Hash))
+                    Plan.Root.Options["hash"] = Hash;
+
+                var PlanWriter = new ImageFormat.Composite.ImageBuildPlanWriter(Plan);
+                if (!String.IsNullOrEmpty(SignProfile))
+                {
+                    var Profile = String.Equals(SignProfile, "active", StringComparison.OrdinalIgnoreCase)
+                        ? Processor.KeyStore.ActiveProfile
+                        : SignProfile;
+                    if (String.IsNullOrEmpty(Profile))
+                        return new ScriptStepResult(ScriptStepStatus.Error, "No active KeyStore profile for FIT signing");
+
+                    var Record = Processor.KeyStore.Find(Profile);
+                    if (Record == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"KeyStore profile not found: {Profile}");
+
+                    var Material = Processor.KeyStore.GetPrivateMaterial(Record);
+                    if ((Material == null) || (Material.Length == 0))
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"KeyStore profile has no private key: {Profile}");
+
+                    PlanWriter.SigningKey = ImageFormat.Composite.FitSignature.LoadPrivateKey(Material);
+                    PlanWriter.SigningKeyName = Processor.GetBlob().GetContainerOption("fit", "sign-key-name", Record.Name);
+                    var Algo = Processor.GetBlob().GetContainerOption("fit", "sign-algo", null);
+                    if (!String.IsNullOrEmpty(Algo))
+                        PlanWriter.SigningAlgorithm = Algo;
+                }
+
+                var SignImages = Processor.GetBlob().GetContainerOption("fit", "sign-images", null);
+                if (Boolean.TryParse(SignImages, out var SignImagesEnabled) && SignImagesEnabled)
+                {
+                    if (PlanWriter.SigningKey == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "FIT image signing requires fit.sign");
+                    PlanWriter.SigningImages = true;
+                }
+
+                var External = Processor.GetBlob().GetContainerOption("fit", "external", null);
+                if (Boolean.TryParse(External, out var ExternalEnabled) && ExternalEnabled)
+                    PlanWriter.FitExternalData = true;
+
+                var ExternalPosition = Processor.GetBlob().GetContainerOption("fit", "external-position", null);
+                if (!String.IsNullOrEmpty(ExternalPosition))
+                {
+                    if (!TryParseUInt(ExternalPosition, out var Position))
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid FIT external-position: {ExternalPosition}");
+                    PlanWriter.FitExternalData = true;
+                    PlanWriter.FitExternalPosition = Position;
+                }
+
+                var ExternalAlign = Processor.GetBlob().GetContainerOption("fit", "external-align", null);
+                if (!String.IsNullOrEmpty(ExternalAlign) && Int32.TryParse(ExternalAlign, out var Align) && (Align >= 4))
+                    PlanWriter.FitExternalAlign = Align;
+
+                string BuildError;
+                var BuildData = PlanWriter.Build(out BuildError);
+                if (BuildData != null)
+                {
+                    System.IO.File.WriteAllBytes(Path, BuildData);
+
+                    if (!String.IsNullOrEmpty(SignControl))
+                    {
+                        if (PlanWriter.SigningKey == null)
+                            return new ScriptStepResult(ScriptStepStatus.Error, "FIT signing key is not selected");
+
+                        try
+                        {
+                            var ExistingControl = System.IO.File.Exists(SignControl)
+                                ? System.IO.File.ReadAllBytes(SignControl)
+                                : null;
+                            var Control = ImageFormat.Composite.FitPublicKey.BuildControlDtb(
+                                PlanWriter.SigningKey,
+                                PlanWriter.SigningKeyName ?? "key",
+                                PlanWriter.SigningAlgorithm,
+                                "conf",
+                                ExistingControl);
+                            System.IO.File.WriteAllBytes(SignControl, Control);
+                        }
+                        catch (Exception E)
+                        {
+                            return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot write FIT control DTB: {E.Message}");
+                        }
+                    }
+
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Image is stored to file {Path} from the build plan.");
+                }
+
+                if (!String.IsNullOrEmpty(SignProfile))
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"FIT signing failed: {BuildError}");
+
+                switch (Plan.Root.Format)
+                {
+                    case "cimg":
+                        if ((Processor.GetKernel() != null) && Processor.GetKernel().Loaded)
+                            return new StoreScriptStep(Path, "all", "cimg").Exec(Processor);
+                        if ((Processor.GetDevTree() != null) && Processor.GetDevTree().Loaded)
+                            return new StoreScriptStep(Path, "all", "cimg").Exec(Processor);
+                        if ((Processor.GetFs() != null) && Processor.GetFs().Loaded)
+                            return new StoreScriptStep(Path, "ramfs", "cimg").Exec(Processor);
+                        break;
+                    case "fit":
+                        return new StoreScriptStep(Path, "all", "fit").Exec(Processor);
+                    case "android":
+                        return new StoreScriptStep(Path, "all", "android").Exec(Processor);
+                }
+
+                var Plugin = Processor.Plugins.ResolveImage(Plan.Root.Format);
+                if ((Plugin != null) && Plugin.SupportWrite)
+                    return new StoreScriptStep(Path, "all", Plugin.Format).Exec(Processor);
+
+                return new ScriptStepResult(ScriptStepStatus.Error,
+                    $"Image was modified; specify an explicit output format for root container '{Plan.Root.Format}'.");
             }
 
             private ScriptStepResult StoreAll(ImageProcessor Processor)
@@ -66,6 +203,11 @@ namespace NyaFs.Processor.Scripting.Commands
                 {
                     case "fit":
                         {
+                            // A loaded FIT keeps its plan (node names, hashes, script/config links,
+                            // external data and signatures) when it is stored again.
+                            if (Processor.GetBlob().BuildPlan?.Root?.Format == "fit")
+                                return StoreAuto(Processor);
+
                             var Kernel = Processor.GetKernel();
                             var Fs = Processor.GetFs();
                             var Dtb = Processor.GetDevTree();
@@ -89,7 +231,71 @@ namespace NyaFs.Processor.Scripting.Commands
                             else
                                 return new ScriptStepResult(ScriptStepStatus.Ok, $"Cannot compile FIT Image! No enough information...");
                         }
+                    case "cimg":
+                        {
+                            var Fit = new ImageFormat.Composite.FitWriter(Path);
+                            var Payload = Fit.Build(Processor.GetBlob());
+                            if (Payload == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build FIT payload for CIMG!");
+
+                            System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, Payload));
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as CIMG/FIT image!");
+                        }
+                    case "android":
+                        {
+                            var Writer = new ImageFormat.Composite.AndroidImageWriter(Path);
+                            if (Writer.Write(Processor.GetBlob()))
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as Android image!");
+                            return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build Android boot image!");
+                        }
+                    case "multi":
+                        {
+                            var Payloads = new List<byte[]>();
+                            var Kernel = Processor.GetKernel();
+                            var Fs = Processor.GetFs();
+                            var Dtb = Processor.GetDevTree();
+                            if ((Kernel != null) && Kernel.Loaded && (Kernel.Image != null))
+                                Payloads.Add(Kernel.Image);
+                            if ((Fs != null) && Fs.Loaded)
+                            {
+                                var FsWriter = ImageFormat.Elements.Fs.Writer.Writer.GetRawFilesystemWriter(Fs);
+                                FsWriter.WriteFs(Fs);
+                                if (FsWriter.HasRawStreamData)
+                                    Payloads.Add(FsWriter.RawStream);
+                            }
+                            if ((Dtb != null) && Dtb.Loaded)
+                                Payloads.Add(new FlattenedDeviceTree.Writer.FDTWriter(Dtb.DevTree).GetBinary());
+
+                            if (Payloads.Count == 0)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "No images are loaded!");
+
+                            var Image = ImageFormat.Composite.LegacyMultiImageWriter.BuildMulti(
+                                Payloads, Kernel?.Info, Processor.GetBlob().GetContainerOption("multi", "name", "multi"));
+                            if (Image == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build legacy multi image!");
+                            System.IO.File.WriteAllBytes(Path, Image);
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as legacy multi image!");
+                        }
                     default:
+                        foreach (var Plugin in Processor.Plugins.GetImages())
+                        {
+                            if (!Plugin.SupportWrite)
+                                continue;
+
+                            var FormatMatch = String.Equals(Plugin.Format, Format, StringComparison.OrdinalIgnoreCase) ||
+                                String.Equals(Plugin.Name, Format, StringComparison.OrdinalIgnoreCase);
+                            foreach (var Alias in Plugin.Aliases)
+                                if (String.Equals(Alias, Format, StringComparison.OrdinalIgnoreCase))
+                                    FormatMatch = true;
+                            if (!FormatMatch)
+                                continue;
+
+                            var Data = Plugin.Build(Processor.GetBlob(), Processor.Plugins, out var Error);
+                            if (Data == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, Error ?? $"Cannot build {Format} image");
+                            System.IO.File.WriteAllBytes(Path, Data);
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as {Format} image!");
+                        }
                         return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown multiimage format!");
 
                 }
@@ -97,87 +303,188 @@ namespace NyaFs.Processor.Scripting.Commands
 
             private ScriptStepResult StoreKernel(ImageProcessor Processor)
             {
+                var Kernel = Processor.GetKernel();
+                if ((Kernel == null) || !Kernel.Loaded)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Kernel is not loaded!");
+
+                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
+
+                if (Format == "cimg")
+                {
+                    var RawPlugin = Processor.Plugins.GetKernelByFormat("raw");
+                    var CImgWriter = ((RawPlugin != null) && RawPlugin.SupportWrite) ? RawPlugin.GetKernelWriter(Kernel) : null;
+                    if (CImgWriter == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG kernel payload!");
+                    CImgWriter.WriteKernel(Kernel);
+                    if (!CImgWriter.HasRawStreamData)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG kernel payload!");
+                    System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, CImgWriter.RawStream));
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as CIMG image!");
+                }
+
+                if (Format == "legacy")
+                {
+                    var Exporter = new ImageFormat.Elements.Kernel.Writer.LegacyWriter(Path);
+                    Exporter.WriteKernel(Kernel);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as legacy image!");
+                }
+
+                // Raw kernel bytes are provided by the kernel plugins (no hardcoded writer here).
+                var DirectPlugin = Processor.Plugins.ResolveKernel(Format);
+                if ((DirectPlugin != null) && (DirectPlugin.Format != "raw") && (DirectPlugin.Format != "legacy") && DirectPlugin.SupportWrite)
+                {
+                    var DirectWriter = DirectPlugin.GetKernelWriter(Kernel);
+                    if (DirectWriter != null)
+                    {
+                        DirectWriter.WriteKernel(Kernel);
+                        if (DirectWriter.HasRawStreamData)
+                        {
+                            System.IO.File.WriteAllBytes(Path, DirectWriter.RawStream);
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as {Format} image!");
+                        }
+                    }
+                }
+
+                var Plugin = Processor.Plugins.GetKernelByFormat("raw");
+                var Writer = ((Plugin != null) && Plugin.SupportWrite) ? Plugin.GetKernelWriter(Kernel) : null;
+                if (Writer == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown kernel format '{Format}'!");
+
+                Writer.WriteKernel(Kernel);
+                if (!Writer.HasRawStreamData)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build kernel image!");
+
+                if (Format == "raw")
+                {
+                    System.IO.File.WriteAllBytes(Path, Writer.RawStream);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as raw image!");
+                }
+
                 switch (Format)
                 {
-                    case "raw":
-                        {
-                            var Kernel = Processor.GetKernel();
-                            if ((Kernel != null) && Kernel.Loaded)
-                            {
-                                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
-                                var Exporter = new NyaFs.ImageFormat.Elements.Kernel.Writer.ArchiveWriter(Path, ImageFormat.Types.CompressionType.IH_COMP_NONE);
-                                Exporter.WriteKernel(Kernel);
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as raw image!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Kernel is not loaded!");
-                        }
                     case "lz4":
                     case "lzma":
                     case "gz":
                     case "gzip":
                     case "bz2":
                     case "bzip2":
+                    case "xz":
+                    case "zstd":
                         {
-                            var Kernel = Processor.GetKernel();
-                            if ((Kernel != null) && Kernel.Loaded)
-                            {
-                                var CompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format);
-
-                                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
-                                var Exporter = new NyaFs.ImageFormat.Elements.Kernel.Writer.ArchiveWriter(Path, CompressionType);
-                                Exporter.WriteKernel(Kernel);
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as {Format} compressed image!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Kernel is not loaded!");
-                        }
-                    case "legacy":
-                        {
-                            var Kernel = Processor.GetKernel();
-                            if ((Kernel != null) && Kernel.Loaded)
-                            {
-                                ImageFormat.Helper.LogHelper.KernelInfo(Kernel);
-                                var Exporter = new ImageFormat.Elements.Kernel.Writer.LegacyWriter(Path);
-                                Exporter.WriteKernel(Kernel);
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as legacy image!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Kernel is not loaded!");
+                            var CompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format);
+                            System.IO.File.WriteAllBytes(Path, ImageFormat.Helper.FitHelper.GetCompressedData(Writer.RawStream, CompressionType));
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Kernel is stored to file {Path} as {Format} compressed image!");
                         }
                     default:
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown kernel image format!");
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown kernel format '{Format}'!");
                 }
             }
 
             private ScriptStepResult StoreDtb(ImageProcessor Processor)
             {
-                switch (Format)
+                var Dtb = Processor.GetDevTree();
+                if (Dtb == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Device tree is not loaded!");
+
+                if (Format == "cimg")
                 {
-                    case "dtb":
-                        {
-                            var Dtb = Processor.GetDevTree();
-                            if (Dtb != null)
-                            {
-                                ImageFormat.Helper.LogHelper.DevtreeInfo(Dtb);
-
-                                var data = new NyaFs.FlattenedDeviceTree.Writer.FDTWriter(Dtb.DevTree);
-                                System.IO.File.WriteAllBytes(Path, data.GetBinary());
-
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Dtb is stored to file {Path}!");
-                            }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Device tree is not loaded!");
-                        }
-                    case "dts":
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Dts is not supported now!");
-                    default:
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format!");
+                    var DtbPlugin = Processor.Plugins.GetDtbByFormat("dtb");
+                    var CImgWriter = ((DtbPlugin != null) && DtbPlugin.SupportWrite) ? DtbPlugin.GetDevtreeWriter(Dtb) : null;
+                    if (CImgWriter == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG device-tree payload!");
+                    CImgWriter.WriteDevtree(Dtb);
+                    if (!CImgWriter.HasRawStreamData)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG device-tree payload!");
+                    System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, CImgWriter.RawStream));
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Dtb is stored to file {Path} as CIMG image!");
                 }
+
+                var Plugin = Processor.Plugins.GetDtbByFormat(Format);
+                if ((Plugin == null) || !Plugin.SupportWrite)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format '{Format}'!");
+
+                ImageFormat.Helper.LogHelper.DevtreeInfo(Dtb);
+
+                var Writer = Plugin.GetDevtreeWriter(Dtb);
+                if (Writer == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format '{Format}'!");
+
+                Writer.WriteDevtree(Dtb);
+                if (Writer.HasRawStreamData)
+                    System.IO.File.WriteAllBytes(Path, Writer.RawStream);
+
+                return new ScriptStepResult(ScriptStepStatus.Ok, $"Dtb is stored to file {Path}!");
             }
 
 
-            private ImageFormat.Elements.Fs.Writer.Writer GetFsWriter(ImageFormat.Elements.Fs.LinuxFilesystem Fs)
+            /// <summary>
+            /// Formats the built-in writers handle plus the writable filesystem plugins.
+            /// Used only to make the "unknown format" error helpful.
+            /// </summary>
+            private static string AvailableFsFormats(ImageProcessor Processor)
+            {
+                var Res = new List<string> {
+                    "cpio", "tar", "gz", "gzip", "lzma", "lz4", "bz2", "bzip2", "xz", "zstd",
+                    "legacy", "ext2", "squashfs", "cramfs", "romfs", "iso9660", "iso", "exfat", "erofs", "udf",
+                    "tar.gz", "tar.xz", "tar.bz2", "tar.zstd", "tar.lz4", "tar.lzma"
+                };
+
+                foreach (var P in Processor.Plugins.GetFilesystems())
+                    if (P.SupportWrite && !Res.Contains(P.Format))
+                        Res.Add(P.Format);
+
+                return string.Join(", ", Res);
+            }
+
+            private static byte[] BuildCImg(ImageProcessor Processor, byte[] Payload)
+            {
+                var Blob = Processor.GetBlob();
+                var Builder = new ImageFormat.Composite.CImgBuilder
+                {
+                    Label = Blob.GetContainerOption("cimg", "label", "gpt"),
+                    ChunkSize = (int)ParseCImgSize(Blob.GetContainerOption("cimg", "chunk-size", "16M"), 16 * 1024 * 1024),
+                    Offset = (uint)ParseCImgSize(Blob.GetContainerOption("cimg", "offset", "0"), 0),
+                    PartSize = (uint)ParseCImgSize(Blob.GetContainerOption("cimg", "part-size", "0"), 0)
+                };
+                return Builder.Build(Payload);
+            }
+
+            private static long ParseCImgSize(string Value, long Default)
+            {
+                if (string.IsNullOrWhiteSpace(Value))
+                    return Default;
+
+                string Text = Value.Trim();
+                long Multiplier = 1;
+                char Suffix = Char.ToUpperInvariant(Text[Text.Length - 1]);
+                if ((Suffix == (char)75) || (Suffix == (char)77) || (Suffix == (char)71))
+                {
+                    Multiplier = (Suffix == (char)75) ? 1024L : ((Suffix == (char)77) ? 1024L * 1024 : 1024L * 1024 * 1024);
+                    Text = Text.Substring(0, Text.Length - 1);
+                }
+
+                long Result;
+                if (Text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!Int64.TryParse(Text.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out Result))
+                        return Default;
+                }
+                else if (!Int64.TryParse(Text, out Result))
+                    return Default;
+
+                return Result * Multiplier;
+            }
+
+            private static bool TryParseUInt(string Value, out uint Result)
+            {
+                var Text = Value.Trim();
+                if (Text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                    return UInt32.TryParse(Text.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out Result);
+                return UInt32.TryParse(Text, out Result);
+            }
+
+
+            private ImageFormat.Elements.Fs.Writer.Writer GetFsWriter(ImageProcessor Processor, ImageFormat.Elements.Fs.LinuxFilesystem Fs)
             {
                 switch (Format)
                 {
@@ -185,17 +492,39 @@ namespace NyaFs.Processor.Scripting.Commands
                     case "cpio": return new ImageFormat.Elements.Fs.Writer.CpioFsWriter(Path);
                     case "ext2": return new ImageFormat.Elements.Fs.Writer.Ext2FsWriter(ImageFormat.Elements.Fs.Writer.Writer.DetectFixDiskSize(Fs, 0x800000), Path);
                     case "squashfs": return new ImageFormat.Elements.Fs.Writer.SquashFsWriter(Fs.SquashFsCompression, Path);
-                    case "cramfs": return new ImageFormat.Elements.Fs.Writer.CramFsWriter(Path);
+                    case "cramfs": return new ImageFormat.Elements.Fs.Writer.CramFsWriter(Fs.CramFsBigEndian, Path);
                     case "romfs": return new ImageFormat.Elements.Fs.Writer.RomFsWriter(Path);
+                    case "iso9660":
+                    case "iso": return new ImageFormat.Elements.Fs.Writer.BaseFsWriter(new Filesystem.Iso9660.Iso9660Builder(), Path);
+                    case "exfat": return new ImageFormat.Elements.Fs.Writer.ExFatWriter(ImageFormat.Elements.Fs.Writer.ExFatWriter.GetSize(Fs), Path);
+                    case "erofs": return new ImageFormat.Elements.Fs.Writer.EroFsWriter(Fs, Path);
+                    case "udf": return new ImageFormat.Elements.Fs.Writer.UdfWriter(Path);
+                    case "tar": return new ImageFormat.Elements.Fs.Writer.TarFsWriter(Path);
+                    case "tar.gz":
+                    case "tar.xz":
+                    case "tar.bz2":
+                    case "tar.zstd":
+                    case "tar.lz4":
+                    case "tar.lzma":
+                        var TarCompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format.Substring(4));
+                        return new ImageFormat.Elements.Fs.Writer.ArchiveTarWriter(Path, TarCompressionType);
                     case "lz4":
                     case "lzma":
                     case "gz":
                     case "gzip":
                     case "bz2":
                     case "bzip2":
+                    case "xz":
+                    case "zstd":
                         var CompressionType = Helper.ArchiveHelper.GetCompressionFormat(Format);
                         return new ImageFormat.Elements.Fs.Writer.ArchiveCpioWriter(Path, CompressionType);
                     default:
+                        // Formats provided by filesystem plugins (e.g. littlefs, spiffs).
+                        foreach (var Plugin in Processor.Plugins.GetFilesystems())
+                        {
+                            if ((Plugin.Format == Format) && Plugin.SupportWrite)
+                                return Plugin.GetFilesystemWriter(Fs);
+                        }
                         return null;
                 }
             }
@@ -203,22 +532,47 @@ namespace NyaFs.Processor.Scripting.Commands
             private ScriptStepResult StoreFs(ImageProcessor Processor)
             {
                 var Fs = Processor.GetFs();
-                if((Fs == null) || (Fs.Loaded == false))
+                if (Fs == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Filesystem is not loaded!");
 
-                var Writer = GetFsWriter(Fs);
+                if (Format == "cimg")
+                {
+                    var FsPlugin = Processor.Plugins.ResolveFilesystem(Fs.FilesystemFormat);
+                    var PayloadWriter = ((FsPlugin != null) && FsPlugin.SupportWrite) ? FsPlugin.GetFilesystemWriter(Fs) : ImageFormat.Elements.Fs.Writer.Writer.GetRawFilesystemWriter(Fs);
+                    if (PayloadWriter == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG filesystem payload!");
+                    PayloadWriter.WriteFs(Fs);
+                    if (!PayloadWriter.HasRawStreamData)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Cannot build CIMG filesystem payload!");
+                    System.IO.File.WriteAllBytes(Path, BuildCImg(Processor, PayloadWriter.RawStream));
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Filesystem is stored to file {Path} as CIMG image!");
+                }
+
+                var Writer = GetFsWriter(Processor, Fs);
                 if(Writer != null)
                 {
+                    // Filesystem plugins may declare limits of the target format (uid/gid/mode/name);
+                    // honour them before writing when the format is backed by a plugin.
+                    var FsPlugin = Processor.Plugins.ResolveFilesystem(Format);
+                    if ((FsPlugin != null) && FsPlugin.SupportWrite && !FsPlugin.CheckFilesystem(Fs))
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot store as {Format} image: filesystem contains data the format cannot represent!");
+
                     if (Writer.CheckFilesystem(Fs))
                     {
                         Writer.WriteFs(Fs);
+
+                        // Built-in writers take the file name and write it themselves; plugin
+                        // writers (e.g. littlefs/spiffs) only expose the built bytes as RawStream.
+                        if (Writer.HasRawStreamData)
+                            System.IO.File.WriteAllBytes(Path, Writer.RawStream);
+
                         return new ScriptStepResult(ScriptStepStatus.Ok, $"Filesystem is stored to file {Path} as {Format} image!");
                     }
                     else
                         return new ScriptStepResult(ScriptStepStatus.Ok, $"Cannot store as {Format} image: no enough info about target system!");
                 }
                 else
-                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown fs format!");
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown fs format '{Format}'. Available: {AvailableFsFormats(Processor)}");
             }
         }
     }

@@ -7,11 +7,18 @@ namespace NyaFs.Filesystem.SquashFs.Types.Nodes
 {
     class BasicSymLink : SqInode
     {
-        private static int CalcNodeLength(string Target) => 0x18 + Target.Length;
+        /// <summary>
+        /// True for the extended (LSYMLINK) inode layout.
+        /// </summary>
+        internal readonly bool IsExtended;
 
-        public BasicSymLink(uint Mode, uint User, uint Group, uint HardLinkCount, string Target) : base(CalcNodeLength(Target))
+        private static int CalcNodeLength(string Target, bool IsExtended = false) => 0x18 + Target.Length + (IsExtended ? 4 : 0);
+
+        public BasicSymLink(uint Mode, uint User, uint Group, uint HardLinkCount, string Target, uint XAttrId = InvalidXAttr) : base(CalcNodeLength(Target, XAttrId != InvalidXAttr))
         {
-            InodeType = SqInodeType.BasicSymlink;
+            IsExtended = XAttrId != InvalidXAttr;
+
+            InodeType = IsExtended ? SqInodeType.ExtendedSymlink : SqInodeType.BasicSymlink;
             Permissions = Mode;
             GidIndex = Group;
             UidIndex = User;
@@ -19,17 +26,30 @@ namespace NyaFs.Filesystem.SquashFs.Types.Nodes
 
             TargetSize = Convert.ToUInt32(Target.Length);
             WriteString(0x18, Target, Target.Length);
+
+            if (IsExtended)
+                XAttrIndex = XAttrId;
         }
 
-        public BasicSymLink(byte[] Data) : base(Data, 0x18 + Data.ReadUInt32(0x14))
+        public BasicSymLink(byte[] Data, bool IsExtended = false) : base(Data, 0x18 + Data.ReadUInt32(0x14) + (IsExtended ? 4 : 0))
         {
-
+            this.IsExtended = IsExtended;
         }
 
         /// <summary>
         /// INode size
         /// </summary>
-        internal override long INodeSize => 0x18 + TargetSize; // TODO: add blocks_sizes calculation...
+        internal override long INodeSize => 0x18 + TargetSize + (IsExtended ? 4 : 0);
+
+        /// <summary>
+        /// Index in the xattr id lookup table (extended inodes only).
+        /// u32 xattr (0x18 + target_size)
+        /// </summary>
+        internal override uint XAttrIndex
+        {
+            get { return IsExtended ? ReadUInt32(0x18 + TargetSize) : InvalidXAttr; }
+            set { if (IsExtended) WriteUInt32(0x18 + TargetSize, value); }
+        }
 
         /// <summary>
         /// The number of hard links to this symlink

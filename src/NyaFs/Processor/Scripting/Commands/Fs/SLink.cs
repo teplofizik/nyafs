@@ -25,7 +25,10 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
         {
             var A = Args.RawArgs;
 
-            return new SLinkScriptStep(A[0], A[1], Utils.ConvertMode(A[2]), Convert.ToUInt32(A[3]), Convert.ToUInt32(A[4]));
+            if (Args.ArgConfig == 1)
+                return new SLinkScriptStep(A[0], A[1]);
+            else
+                return new SLinkScriptStep(A[0], A[1], Utils.ConvertMode(A[2]), Convert.ToUInt32(A[3]), Convert.ToUInt32(A[4]));
 
         }
 

@@ -24,9 +24,23 @@ namespace NyaFs.Filesystem.SquashFs.Types
         }
 
         /// <summary>
+        /// Value of xattr_idx when the inode has no extended attributes.
+        /// </summary>
+        internal const uint InvalidXAttr = 0xFFFFFFFFu;
+
+        /// <summary>
         /// INode size
         /// </summary>
         internal virtual long INodeSize => 0x10;
+
+        /// <summary>
+        /// Index in the xattr id lookup table. Basic inode types have no such field.
+        /// </summary>
+        internal virtual uint XAttrIndex
+        {
+            get { return InvalidXAttr; }
+            set { }
+        }
 
         /// <summary>
         /// The type of item described by the inode which follows this header.

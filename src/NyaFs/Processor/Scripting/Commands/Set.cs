@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -16,8 +16,8 @@ namespace NyaFs.Processor.Scripting.Commands
         class SetScriptArgsConfig : ScriptArgsConfig
         {
             public SetScriptArgsConfig() : base(0, new ScriptArgsParam[] {
-                    new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all" }),
-                    new Params.EnumScriptArgsParam("param", new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem" }),
+                    new Params.EnumScriptArgsParam("type", new string[] { "kernel", "devtree", "ramfs", "all", "container" }),
+                    new Params.StringScriptArgsParam("param"),
                     new Params.StringScriptArgsParam("value")
                 })
             {
@@ -35,17 +35,17 @@ namespace NyaFs.Processor.Scripting.Commands
                 }
                 else
                 {
-                    var AllowedTypes = new string[] { "kernel", "devtree", "ramfs", "all" };
+                    var AllowedTypes = new string[] { "kernel", "devtree", "ramfs", "all", "container" };
                     if (!AllowedTypes.Contains(Args[0]))
                     {
-                        Log.Error(0, "Invalid image type. Must be one of: kernel, devtree, ramfs, all");
+                        Log.Error(0, "Invalid image type. Must be one of: kernel, devtree, ramfs, all, container");
                         return false;
                     }
 
-                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "squashfs.compression" };
-                    if (!AllowedParams.Contains(Args[1]))
+                    var AllowedParams = new string[] { "os", "arch", "type", "name", "load", "entry", "compression", "filesystem", "cramfs.endian", "squashfs.compression", "ubifs.compression", "f2fs.compression", "f2fs.compression.cluster", "fat.type", "size", "erofs.fragments", "erofs.tail-fragments", "erofs.shared-xattrs", "erofs.compression-level", "erofs.xattr-prefix", "udf.vat", "udf.sparable", "jffs2.compression", "jffs2.pagesize", "jffs2.eraseblock" };
+                    if (!AllowedParams.Contains(Args[1]) && !Args[1].Contains("."))
                     {
-                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, squashfs.compression");
+                        Log.Error(0, "Invalid parameter name. Must be one of: os, arch, type, name, load, entry, compression, filesystem, cramfs.endian, squashfs.compression, ubifs.compression, f2fs.compression, f2fs.compression.cluster, size, udf.vat, udf.sparable, jffs2.compression, jffs2.pagesize, jffs2.eraseblock");
                         return false;
                     }
                 }
@@ -107,6 +107,8 @@ namespace NyaFs.Processor.Scripting.Commands
                                 return new ScriptStepResult(ScriptStepStatus.Error, "Kernel is not loaded");
                         }
                         break;
+                    case "container":
+                        break;
                     case "all":
                         {
                             var Kernel = Processor.GetKernel();
@@ -133,37 +135,196 @@ namespace NyaFs.Processor.Scripting.Commands
                 {
                     case "filesystem":
                         {
-                            if(Type != "ramfs")
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set filesystem type to non-ramfs image!");
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set filesystem type to non-ramfs image!");
 
                             var Fs = Processor.GetFs();
-                            if (Value == "cpio")
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            var Plugin = Processor.Plugins.ResolveFilesystem(Value);
+                            if (Plugin == null)
                             {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.Cpio;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: cpio!");
+                                var Formats = Processor.Plugins.GetFilesystems().Select(P => P.Format).Distinct();
+                                return new ScriptStepResult(ScriptStepStatus.Error,
+                                    $"Unsupported filesystem type: {Value}. Available: {String.Join(", ", Formats)}");
                             }
-                            else if (Value == "ext2")
+
+                            Fs.FilesystemType = Plugin.FsType;
+                            Fs.FilesystemFormat = Plugin.Format;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: {Plugin.Format}!");
+                        }
+                    case "udf.vat":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set UDF VAT to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.UdfVat = Enabled;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set UDF VAT: {Enabled}!");
+                        }
+                    case "udf.sparable":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set UDF sparable to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.UdfSparable = Enabled;
+                            if (Enabled) Fs.UdfVat = false;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set UDF sparable: {Enabled}!");
+                        }
+                    case "erofs.fragments":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS fragments to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.EroFsFragments = Enabled;
+                            if (Enabled) Fs.EroFsTailFragments = false;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set EROFS whole-file fragments: {Enabled}!");
+                        }
+                    case "erofs.tail-fragments":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS tail fragments to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.EroFsTailFragments = Enabled;
+                            if (Enabled) Fs.EroFsFragments = false;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set EROFS tail fragments: {Enabled}!");
+                        }
+                    case "erofs.shared-xattrs":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS shared xattrs to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!ParseBool(Value, out bool Enabled))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid boolean: {Value}!");
+
+                            Fs.EroFsSharedXattrs = Enabled;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set EROFS shared xattrs: {Enabled}!");
+                        }
+                    case "erofs.xattr-prefix":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS xattr prefix to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            string Prefix = (Value ?? "").Trim();
+                            if ((Prefix.Length == 0) || (!Prefix.StartsWith("user.") && !Prefix.StartsWith("trusted.") &&
+                                !Prefix.StartsWith("lustre.") && !Prefix.StartsWith("security.") &&
+                                !Prefix.StartsWith("system.posix_acl_access") && !Prefix.StartsWith("system.posix_acl_default")))
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid EROFS xattr prefix: {Value}!");
+
+                            if (!Fs.EroFsXattrPrefixes.Contains(Prefix))
+                                Fs.EroFsXattrPrefixes.Add(Prefix);
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Added EROFS xattr prefix: {Prefix}!");
+                        }
+                    case "erofs.compression-level":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set EROFS compression level to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            if (!Int32.TryParse(Value, out int Level) || !((Level == 0) || ((Level >= 3) && (Level <= 12))))
+                                return new ScriptStepResult(ScriptStepStatus.Error, "EROFS LZ4 level must be 0 or 3..12!");
+
+                            Fs.EroFsCompressionLevel = Level;
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set EROFS compression level: {Level}!");
+                        }
+                    case "cramfs.endian":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set cramfs endian to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            var Endian = (Value ?? "").ToLowerInvariant();
+                            if ((Endian == "big") || (Endian == "be"))
                             {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.Ext2;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: ext2!");
+                                Fs.CramFsBigEndian = true;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, "Set cramfs endian ok: big!");
                             }
-                            else if (Value == "squashfs")
+
+                            if ((Endian == "little") || (Endian == "le"))
                             {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.SquashFs;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: squashfs!");
+                                Fs.CramFsBigEndian = false;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, "Set cramfs endian ok: little!");
                             }
-                            else if (Value == "cramfs")
+
+                            return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown cramfs endian: {Value}!");
+                        }
+                    case "size":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set filesystem size to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            try
                             {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.CramFs;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: cramfs!");
+                                Fs.FsSize = ParseSize(Value);
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem size ok: {Fs.FsSize} bytes!");
                             }
-                            else if (Value == "romfs")
+                            catch (Exception)
                             {
-                                Fs.FilesystemType = ImageFormat.Types.FsType.RomFs;
-                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set filesystem type ok: romfs!");
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid size: {Value}!");
                             }
-                            else
-                                return new ScriptStepResult(ScriptStepStatus.Error, $"Unsupported filesystem type: {Value}");
+                        }
+                    case "fat.type":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set fat type to non-ramfs image!");
+
+                            try
+                            {
+                                var Fs = Processor.GetFs();
+                                Fs.FatType = ParseFatType(Value);
+
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set fat type ok: {Value}!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown fat type: {Value}!");
+                            }
                         }
                     case "squashfs.compression":
                         {
@@ -180,6 +341,107 @@ namespace NyaFs.Processor.Scripting.Commands
                             catch (Exception)
                             {
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown compression: {Value}!");
+                            }
+                        }
+                    case "ubifs.compression":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set ubifs compression type to non-ramfs image!");
+
+                            try
+                            {
+                                var Fs = Processor.GetFs();
+                                Fs.UbiFsCompression = ParseUbifsCompression(Value);
+
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set compression ok: {Value}!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown compression: {Value}!");
+                            }
+                        }
+                    case "f2fs.compression":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set f2fs compression type to non-ramfs image!");
+
+                            try
+                            {
+                                var Fs = Processor.GetFs();
+                                Fs.F2fsCompression = ParseF2fsCompression(Value);
+
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set compression ok: {Value}!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown compression: {Value}!");
+                            }
+                        }
+                    case "f2fs.compression.cluster":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot set f2fs compression cluster to non-ramfs image!");
+
+                            try
+                            {
+                                long Size = ParseSize(Value);
+                                if ((Size < 16 * 1024) || (Size > 1024 * 1024) || ((Size & (Size - 1)) != 0))
+                                    return new ScriptStepResult(ScriptStepStatus.Error, "Cluster size must be a power of two between 16K and 1M");
+
+                                int Blocks = (int)(Size / 4096);
+                                int Log = 0;
+                                while ((1 << Log) < Blocks) Log++;
+
+                                var Fs = Processor.GetFs();
+                                Fs.F2fsCompressionClusterLog = Log;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set f2fs compression cluster ok: {Value} ({Blocks} blocks)!");
+                            }
+                            catch (Exception)
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid cluster size: {Value}!");
+                            }
+                        }
+                    case "jffs2.compression":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set JFFS2 compression to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            switch ((Value ?? "").ToLower())
+                            {
+                                case "none": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.None; break;
+                                case "zlib": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.Zlib; break;
+                                case "rtime": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.Rtime; break;
+                                case "lzo": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.Lzo; break;
+                                case "priority": Fs.Jffs2Compression = Filesystem.Jffs2.Jffs2Compression.Priority; break;
+                                default: return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown JFFS2 compression: {Value}!");
+                            }
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Set JFFS2 compression: {Value}!");
+                        }
+                    case "jffs2.pagesize":
+                    case "jffs2.eraseblock":
+                        {
+                            if (Type != "ramfs")
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Cannot set JFFS2 geometry to non-ramfs image!");
+
+                            var Fs = Processor.GetFs();
+                            if (Fs == null)
+                                return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+
+                            try
+                            {
+                                int Size = (int)ParseSize(Value);
+                                if (Size <= 0) throw new ArgumentException();
+                                if (Param == "jffs2.pagesize") Fs.Jffs2PageSize = Size;
+                                else Fs.Jffs2EraseBlockSize = Size;
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set JFFS2 {Param}: {Size}!");
+                            }
+                            catch
+                            {
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid JFFS2 geometry: {Value}!");
                             }
                         }
                     case "compression":
@@ -279,8 +541,77 @@ namespace NyaFs.Processor.Scripting.Commands
                                 return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid log level: {Value}!");
                         }
                     default:
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown parameter {Param}!");
+                        return ApplyPluginOption(Processor, Type, Param, Value);
                 }
+            }
+
+            private ScriptStepResult ApplyPluginOption(ImageProcessor Processor, string Type, string Param, string Value)
+            {
+                int Dot = Param.IndexOf('.');
+                if (Dot <= 0)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown parameter {Param}!");
+
+                string Format = Param.Substring(0, Dot);
+                string Name = Param.Substring(Dot + 1);
+                string Error;
+
+                if ((Type == "all") || (Type == "container"))
+                {
+                    var Plugin = Processor.Plugins.ResolveImage(Format);
+                    if (Plugin == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown container format '{Format}'!");
+                    if (!Plugin.TryApplyOption(Processor.GetBlob(), Name, Value, out Error))
+                        return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
+                }
+
+                if (Type == "kernel")
+                {
+                    var Plugin = Processor.Plugins.ResolveKernel(Format);
+                    var Kernel = Processor.GetKernel();
+                    if (Plugin == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown kernel format '{Format}'!");
+                    if (Kernel == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Kernel is not loaded");
+                    if (!Plugin.TryApplyOption(Kernel, Name, Value, out Error))
+                        return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
+                }
+
+                if (Type == "devtree")
+                {
+                    var Plugin = Processor.Plugins.ResolveDtb(Format);
+                    var Dtb = Processor.GetDevTree();
+                    if (Plugin == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown devtree format '{Format}'!");
+                    if (Dtb == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, "Device tree is not loaded");
+                    if (!Plugin.TryApplyOption(Dtb, Name, Value, out Error))
+                        return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                    return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
+                }
+
+                var FsPlugin = Processor.Plugins.ResolveFilesystem(Format);
+                var Fs = Processor.GetFs();
+                if (FsPlugin == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown filesystem format '{Format}'!");
+                if (Fs == null)
+                    return new ScriptStepResult(ScriptStepStatus.Error, "Filesystem is not loaded");
+                if (!FsPlugin.TryApplyOption(Fs, Name, Value, out Error))
+                    return new ScriptStepResult(ScriptStepStatus.Error, Error);
+                return new ScriptStepResult(ScriptStepStatus.Ok, $"Set {Format}.{Name}: {Value}!");
+            }
+
+            long ParseSize(string Value)
+            {
+                var V = Value.Trim();
+                if (V.StartsWith("0x") || V.StartsWith("0X"))
+                    return Convert.ToInt64(V.Substring(2), 16);
+                if (V.EndsWith("K") || V.EndsWith("k"))
+                    return Convert.ToInt64(V.Substring(0, V.Length - 1)) * 1024;
+                if (V.EndsWith("M") || V.EndsWith("m"))
+                    return Convert.ToInt64(V.Substring(0, V.Length - 1)) * 1024 * 1024;
+                return Convert.ToInt64(V);
             }
 
             ImageFormat.Types.CPU ParseArch(string Arch)
@@ -337,6 +668,46 @@ namespace NyaFs.Processor.Scripting.Commands
                 }
             }
 
+            int ParseFatType(string FatType)
+            {
+                switch (FatType.ToLower())
+                {
+                    case "auto": return 0;
+                    case "fat12": return 12;
+                    case "fat16": return 16;
+                    case "fat32": return 32;
+                    default:
+                        throw new ArgumentException("Unsupported fat type");
+                }
+            }
+
+            Filesystem.F2fs.F2fsCompression ParseF2fsCompression(string Compression)
+            {
+                switch (Compression.ToLower())
+                {
+                    case "none": return Filesystem.F2fs.F2fsCompression.None;
+                    case "lzo": return Filesystem.F2fs.F2fsCompression.Lzo;
+                    case "lz4": return Filesystem.F2fs.F2fsCompression.Lz4;
+                    case "zstd": return Filesystem.F2fs.F2fsCompression.Zstd;
+                    case "lzorle": return Filesystem.F2fs.F2fsCompression.LzoRle;
+                    default:
+                        throw new ArgumentException("Unsupported compression type");
+                }
+            }
+
+            Filesystem.UbiFs.Ubifs.UbifsCompression ParseUbifsCompression(string Compression)
+            {
+                switch (Compression.ToLower())
+                {
+                    case "none": return Filesystem.UbiFs.Ubifs.UbifsCompression.None;
+                    case "lzo": return Filesystem.UbiFs.Ubifs.UbifsCompression.Lzo;
+                    case "zlib": return Filesystem.UbiFs.Ubifs.UbifsCompression.Zlib;
+                    case "zstd": return Filesystem.UbiFs.Ubifs.UbifsCompression.Zstd;
+                    default:
+                        throw new ArgumentException("Unsupported compression type");
+                }
+            }
+
             ImageFormat.Types.CompressionType ParseCompression(string Compression)
             {
                 switch (Compression.ToLower())
@@ -353,6 +724,27 @@ namespace NyaFs.Processor.Scripting.Commands
                 }
             }
 
+            static bool ParseBool(string Value, out bool Result)
+            {
+                switch ((Value ?? "").ToLowerInvariant())
+                {
+                    case "on":
+                    case "true":
+                    case "yes":
+                    case "1":
+                        Result = true;
+                        return true;
+                    case "off":
+                    case "false":
+                    case "no":
+                    case "0":
+                        Result = false;
+                        return true;
+                    default:
+                        Result = false;
+                        return false;
+                }
+            }
             ImageFormat.Types.OS ParseOS(string OS)
             {
                 switch (OS.ToLower())

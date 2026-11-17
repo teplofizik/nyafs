@@ -37,6 +37,12 @@ namespace NyaFs.Filesystem.SquashFs.Builder.Nodes
 
         public byte[] GetEntries()
         {
+            if (Entries.Count == 0)
+            {
+                Size = 0;
+                return new byte[0];
+            }
+
             var Res = new List<byte>();
 
             var Temp = new List<byte[]>();
@@ -96,6 +102,7 @@ namespace NyaFs.Filesystem.SquashFs.Builder.Nodes
             Convert.ToUInt32(EntriesRef?.UnpackedOffset ?? 0),
             Convert.ToUInt32(Entries.Count + 2),
             Convert.ToUInt32(0),
-            Parent);
+            Parent,
+            XAttrIndex);
     }
 }

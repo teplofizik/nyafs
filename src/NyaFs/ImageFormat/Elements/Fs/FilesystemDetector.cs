@@ -1,46 +1,84 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Text;
-using NyaIO.Data;
+using System.Linq;
+using NyaFs.ImageFormat.Plugins;
+using NyaFs.ImageFormat.Plugins.Base;
 
 namespace NyaFs.ImageFormat.Elements.Fs
 {
+    /// <summary>
+    /// Compatibility entry point for filesystem detection.
+    /// Detection itself lives in <see cref="FilesystemPlugin.DetectFilesystem"/>:
+    /// this class only asks the registered plugins in priority/registration order.
+    /// </summary>
     public static class FilesystemDetector
     {
-        private static bool IsExt4(byte[] Raw)
+        /// <summary>
+        /// Detect a filesystem using the built-in plugin registry.
+        /// </summary>
+        public static Types.FsType DetectFs(byte[] Raw) =>
+            DetectFs(new ImageData(Raw), CurrentPlugins());
+
+        /// <summary>
+        /// Detect a filesystem using an explicit plugin list (for external/custom plugins).
+        /// </summary>
+        public static Types.FsType DetectFs(byte[] Raw, IEnumerable<FilesystemPlugin> Plugins) =>
+            DetectFs(new ImageData(Raw), Plugins);
+
+        /// <summary>
+        /// Detect a filesystem in an image range using an explicit plugin list.
+        /// </summary>
+        public static Types.FsType DetectFs(ImageData Data, IEnumerable<FilesystemPlugin> Plugins)
         {
-            for(int i = 0; i < 0x400; i++)
-            {
-                if (Raw[i] != 0)
-                    return false;
-            }
-
-            // Check magic
-            if (Raw.ReadUInt16(0x438) != 0xEF53)
-                return false;
-
-            return true;
+            var Plugin = DetectFilesystemPlugin(Data, Plugins);
+            return Plugin?.FsType ?? Types.FsType.Unknown;
         }
 
-        public static Types.FsType DetectFs(byte[] Raw)
+        /// <summary>
+        /// Find the first plugin that recognizes the data. Higher-priority plugins are probed first.
+        /// </summary>
+        public static FilesystemPlugin DetectFilesystemPlugin(byte[] Raw) =>
+            DetectFilesystemPlugin(new ImageData(Raw), CurrentPlugins());
+
+
+        public static FilesystemPlugin DetectFilesystemPlugin(ImageData Data) =>
+            DetectFilesystemPlugin(Data, CurrentPlugins());
+
+        /// <summary>
+        /// Find the first plugin that recognizes the data using an explicit list.
+        /// </summary>
+        public static FilesystemPlugin DetectFilesystemPlugin(byte[] Raw, IEnumerable<FilesystemPlugin> Plugins) =>
+            DetectFilesystemPlugin(new ImageData(Raw), Plugins);
+
+        /// <summary>
+        /// Find the first plugin that recognizes the image range.
+        /// </summary>
+        public static FilesystemPlugin DetectFilesystemPlugin(ImageData Data, IEnumerable<FilesystemPlugin> Plugins)
         {
-            var Magic = Raw.ReadUInt32BE(0);
-            if (Magic == 0x30373037u) // CPIO start of block
-                return Types.FsType.Cpio;
+            if ((Data == null) || (Plugins == null))
+                return null;
 
-            if (Magic == 0x68737173) // hsqs magic
-                return Types.FsType.SquashFs;
+            // Keep registration order for equal priorities; OrderByDescending is stable.
+            foreach (var Plugin in Plugins.OrderByDescending(P => P.Priority))
+            {
+                try
+                {
+                    if (Plugin.DetectFilesystem(Data))
+                        return Plugin;
+                }
+                catch
+                {
+                    // A malformed image must not make auto-detection throw; try the next plugin.
+                }
+            }
 
-            if (Magic == 0x453dcd28u) // cramfs magic
-                return Types.FsType.CramFs;
+            return null;
+        }
 
-            if (Magic == 0x2d726f6du) // romfs magic
-                return Types.FsType.RomFs;
-
-            if (IsExt4(Raw))
-                return Types.FsType.Ext2;
-
-            return Types.FsType.Unknown;
+        private static IEnumerable<FilesystemPlugin> CurrentPlugins()
+        {
+            var Plugins = PluginHost.Current.GetFilesystems();
+            return (Plugins.Length > 0) ? Plugins : BuiltinPlugins.Filesystems;
         }
 
         public static string GetFilesystemType(Types.FsType Type)
@@ -49,12 +87,22 @@ namespace NyaFs.ImageFormat.Elements.Fs
             {
                 case Types.FsType.Cpio: return "CPIO (ASCII)";
                 case Types.FsType.Ext2: return "Ext2";
+                case Types.FsType.Ext3: return "Ext3";
+                case Types.FsType.Ext4: return "Ext4";
                 case Types.FsType.SquashFs: return "SquashFs";
                 case Types.FsType.CramFs: return "CramFs";
                 case Types.FsType.RomFs: return "RomFs";
+                case Types.FsType.Tar: return "Tar";
+                case Types.FsType.Fat: return "Fat";
+                case Types.FsType.F2fs: return "F2FS";
+                case Types.FsType.Iso9660: return "ISO9660";
+                case Types.FsType.ExFat: return "exFAT";
+                case Types.FsType.EroFs: return "EROFS";
+                case Types.FsType.Udf: return "UDF";
+                case Types.FsType.Yaffs2: return "YAFFS2";
+                case Types.FsType.Jffs2: return "JFFS2";
                 default: return "Unknown";
             }
         }
     }
-
 }

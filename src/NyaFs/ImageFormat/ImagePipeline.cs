@@ -1,0 +1,431 @@
+using System;
+using System.Collections.Generic;
+using NyaFs.ImageFormat.Plugins;
+using NyaFs.ImageFormat.Plugins.Base;
+using NyaFs.ImageFormat.Types;
+
+namespace NyaFs.ImageFormat
+{
+    /// <summary>
+    /// Plugin-driven recursive loading pipeline.
+    ///
+    /// For a given byte range it: detects compression (and recurses on the unpacked data),
+    /// then composite containers, then kernel / filesystem / devicetree plugins.
+    /// Anything unrecognized is preserved as <see cref="UnknownImage"/> for round-trip.
+    ///
+    /// A caller may pass a declared kind/format (from container metadata) as a hint: if content
+    /// detection fails, the hint is used to force-load (e.g. a bare kernel image without magic).
+    /// </summary>
+    public class ImagePipeline
+    {
+        private readonly PluginRegistry Plugins;
+        private readonly BaseImageBlob Blob;
+
+        private bool PlanFsBound;
+        private bool PlanKernelBound;
+        private bool PlanDtbBound;
+
+        private const int MaxDepth = 32;
+
+        public ImagePipeline(Processor.Scripting.ScriptPlugins Plugins, BaseImageBlob Blob)
+            : this((PluginRegistry)Plugins, Blob)
+        {
+        }
+
+        public ImagePipeline(PluginRegistry Plugins, BaseImageBlob Blob)
+        {
+            this.Plugins = Plugins;
+            this.Blob = Blob;
+        }
+
+        public bool Load(byte[] Raw) =>
+            Load(Raw, null, null);
+
+        public bool Load(byte[] Raw, string SourceName, string ForceFormat = null)
+        {
+            var Ok = LoadElement(new ImageData(Raw, SourceName), "image", ImageKind.Unknown,
+                null, null, 0, ForceFormat);
+            if (Ok)
+                CapturePlan(Raw, SourceName, ForceFormat);
+            return Ok;
+        }
+
+        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat,
+            string SourceName = null, bool ForceFormat = false)
+        {
+            var Ok = LoadElement(new ImageData(Raw, SourceName), "sub", HintKind, HintFormat,
+                null, 0, ForceFormat ? HintFormat : null);
+            if (Ok)
+                CapturePlan(Raw, SourceName, ForceFormat ? HintFormat : null);
+            return Ok;
+        }
+
+        public bool Load(byte[] Raw, ImageKind HintKind, string HintFormat, ImageInfo Info)
+        {
+            var Ok = LoadElement(new ImageData(Raw), "sub", HintKind, HintFormat, Info, 0);
+            if (Ok)
+                CapturePlan(Raw, null, null);
+            return Ok;
+        }
+
+        public bool LoadInto(byte[] Raw, ImageKind HintKind, string HintFormat, ImageInfo Info) =>
+            LoadElement(new ImageData(Raw), "plan", HintKind, HintFormat, Info, 0);
+
+        private void CapturePlan(byte[] Raw, string SourceName, string ForceFormat)
+        {
+            try
+            {
+                var Tree = new ImageInspector(Plugins).Inspect("image", Raw, SourceName, ForceFormat);
+                var Plan = ImageBuildPlan.From(Tree);
+                PlanFsBound = false;
+                PlanKernelBound = false;
+                PlanDtbBound = false;
+                LoadPlanObjects(Plan.Root);
+                Blob.BuildPlan = Plan;
+            }
+            catch
+            {
+                Blob.BuildPlan = null;
+            }
+        }
+
+        private void LoadPlanObjects(ImageBuildNode Node)
+        {
+            if (Node == null)
+                return;
+
+            foreach (var Child in Node.Children)
+                LoadPlanObjects(Child);
+
+            if ((Node.Raw == null) || (Node.Kind == ImageKind.Unknown))
+                return;
+
+            if ((Node.Kind == ImageKind.Filesystem) && !PlanFsBound && (Blob.GetFilesystem(0) != null))
+            {
+                Node.Fs = Blob.GetFilesystem(0);
+                PlanFsBound = true;
+                return;
+            }
+            if ((Node.Kind == ImageKind.Kernel) && !PlanKernelBound && (Blob.GetKernel(0) != null))
+            {
+                Node.Kernel = Blob.GetKernel(0);
+                PlanKernelBound = true;
+                return;
+            }
+            if ((Node.Kind == ImageKind.Devtree) && !PlanDtbBound && (Blob.GetDevTree(0) != null))
+            {
+                Node.Dtb = Blob.GetDevTree(0);
+                PlanDtbBound = true;
+                return;
+            }
+
+            var Temp = new BaseImageBlob();
+            var Pipeline = new ImagePipeline(Plugins, Temp);
+            if (!Pipeline.LoadInto(Node.Raw, Node.Kind, Node.Format, Node.Info))
+                return;
+
+            Node.Fs = Temp.GetFilesystem(0);
+            Node.Kernel = Temp.GetKernel(0);
+            Node.Dtb = Temp.GetDevTree(0);
+
+
+        }
+
+        internal static bool ShouldTry(CompositeImagePlugin Image, ImageData Data, string ForceFormat)
+        {
+            if (!String.IsNullOrEmpty(ForceFormat))
+                return MatchesFormat(Image, ForceFormat);
+
+            if ((Image.DetectCapabilities & DetectionCapabilities.Extension) != 0)
+            {
+                var Extension = String.IsNullOrEmpty(Data.SourceName)
+                    ? null : System.IO.Path.GetExtension(Data.SourceName);
+                if (!String.IsNullOrEmpty(Extension))
+                {
+                    foreach (var Candidate in Image.Extensions)
+                        if (String.Equals(Candidate, Extension, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                }
+            }
+
+            return ((Image.DetectCapabilities & DetectionCapabilities.Magic) != 0) &&
+                Image.DetectImage(Data);
+        }
+
+        internal static bool MatchesFormat(CompositeImagePlugin Image, string Format)
+        {
+            if (String.Equals(Image.Format, Format, StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(Image.Name, Format, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            foreach (var Alias in Image.Aliases)
+                if (String.Equals(Alias, Format, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+            return false;
+        }
+
+        private bool LoadElement(ImageData Data, string Container, ImageKind HintKind, string HintFormat,
+            ImageInfo HintInfo, int Depth, string ForceFormat = null)
+        {
+            if (Depth > MaxDepth)
+                return false;
+
+            // 1) Compression: unpack and re-run detection on the payload.
+            var Compressor = Plugins.DetectCompressor(Data);
+            if (Compressor != null)
+            {
+                byte[] Unpacked = null;
+                try { Unpacked = Compressor.Decompress(Data.ReadArray(0, Data.Length)); } catch { }
+
+                if (Unpacked != null)
+                {
+                    Blob.Elements.Add(new LoadedElement(ImageKind.Unknown, Compressor.CompressorName, Compressor.Compression, Container, Compressor.CompressorName));
+                    return LoadElement(new ImageData(Unpacked, Data.SourceName), Container + ":" + Compressor.CompressorName, HintKind, HintFormat, HintInfo, Depth + 1);
+                }
+            }
+
+            var Raw = Data.ReadArray(0, Data.Length);
+
+            // 2) Composite containers.
+            foreach (var Image in Plugins.GetImages())
+            {
+                if (!ShouldTry(Image, Data, ForceFormat))
+                    continue;
+
+                bool Any = false;
+
+                foreach (var Option in Image.ReadOptions(Data))
+                    Blob.SetContainerOption(Image.Format, Option.Key, Option.Value);
+
+                // Re-run the pipeline on elements whose type is not declared in the container.
+                foreach (var Contained in Image.GetImages(Data))
+                {
+                    if (((Contained.Kind == ImageKind.Unknown) || Contained.External) && (Contained.Content != null))
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Unknown, Contained.Format, Contained.Compression, Container, Image.Name + "/" + Contained.Name));
+                        if (LoadElement(new ImageData(Contained.Content, Contained.Name), Container + "/" + Image.Name + "/" + Contained.Name, Contained.Kind, Contained.Format, Contained.Info, Depth + 1))
+                            Any = true;
+                    }
+                }
+
+                var KernelReader = Image.GetKernelReader(Raw);
+                if (KernelReader != null)
+                {
+                    var Dst = GetKernel();
+                    try { KernelReader.ReadToKernel(Dst); } catch { }
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, Image.Format, CompressionType.IH_COMP_NONE, Container, Image.Name));
+                        Any = true;
+                    }
+                }
+
+                var FsReader = Image.GetFilesystemReader(Raw);
+                if (FsReader != null)
+                {
+                    var Dst = GetFs();
+                    try { FsReader.ReadToFs(Dst); } catch { }
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Filesystem, Image.Format, CompressionType.IH_COMP_NONE, Container, Image.Name));
+                        Any = true;
+                    }
+                }
+
+                var DtbReader = Image.GetDtbReader(Raw);
+                if (DtbReader != null)
+                {
+                    var Dst = GetDtb();
+                    try { DtbReader.ReadToDevTree(Dst); } catch { }
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, Image.Format, CompressionType.IH_COMP_NONE, Container, Image.Name));
+                        Any = true;
+                    }
+                }
+
+                if (!Any && Image.PreserveUnknownChildren && (Image.GetImages(Data).Length > 0))
+                    Any = true;
+
+                if (Any)
+                    return true;
+            }
+
+            // 3) Kernel.
+            foreach (var KernelPlugin in Plugins.GetKernels())
+            {
+                if (!KernelPlugin.DetectKernel(Data))
+                    continue;
+
+                var Reader = KernelPlugin.GetKernelReader(Raw);
+                if (Reader != null)
+                {
+                    var Dst = GetKernel();
+                    try { Reader.ReadToKernel(Dst); } catch { }
+                    Dst.KernelFormat = KernelPlugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, KernelPlugin.Format, Dst.Info.Compression, Container, KernelPlugin.Format));
+                        return true;
+                    }
+                }
+            }
+
+            // 4) Filesystem.
+            foreach (var FsPlugin in Plugins.GetFilesystems())
+            {
+                if (!FsPlugin.DetectFilesystem(Data))
+                    continue;
+
+                var Reader = FsPlugin.GetFilesystemReader(Raw);
+                if (Reader != null)
+                {
+                    var Dst = GetFs();
+                    try { Reader.ReadToFs(Dst); } catch { }
+                    Dst.FilesystemFormat = FsPlugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Filesystem, FsPlugin.Format, Dst.Info.Compression, Container, FsPlugin.Format));
+                        return true;
+                    }
+                }
+            }
+
+            // 5) Device tree.
+            foreach (var DtbPlugin in Plugins.GetDtbs())
+            {
+                if (!DtbPlugin.DetectDevtree(Data))
+                    continue;
+
+                var Reader = DtbPlugin.GetDevtreeReader(Raw);
+                if (Reader != null)
+                {
+                    var Dst = GetDtb();
+                    try { Reader.ReadToDevTree(Dst); } catch { }
+                    Dst.DevtreeFormat = DtbPlugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, DtbPlugin.Format, Dst.Info.Compression, Container, DtbPlugin.Format));
+                        return true;
+                    }
+                }
+            }
+
+            // 6) Forced load by declared kind (content detection failed but the type is known).
+            // The reader is provided by the plugins (no hardcoded format switches here).
+            if (HintKind == ImageKind.Kernel)
+            {
+                var Plugin = ((HintFormat != null) ? Plugins.GetKernelByFormat(HintFormat) : null)
+                          ?? Plugins.GetKernelByFormat("raw");
+
+                var Reader = Plugin?.GetKernelReader(Raw);
+                if (Reader != null)
+                {
+                    var Dst = GetKernel();
+                    try { Reader.ReadToKernel(Dst); } catch { }
+                    Dst.KernelFormat = Plugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Kernel, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
+                        return true;
+                    }
+                }
+            }
+
+            if (HintKind == ImageKind.Filesystem)
+            {
+                var Plugin = (HintFormat != null) ? Plugins.ResolveFilesystem(HintFormat) : null;
+
+                var Reader = Plugin?.GetFilesystemReader(Raw);
+                if (Reader != null)
+                {
+                    var Dst = GetFs();
+                    try { Reader.ReadToFs(Dst); } catch { }
+                    Dst.FilesystemFormat = Plugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Filesystem, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
+                        return true;
+                    }
+                }
+            }
+
+            if (HintKind == ImageKind.Devtree)
+            {
+                var Plugin = ((HintFormat != null) ? Plugins.GetDtbByFormat(HintFormat) : null)
+                          ?? Plugins.GetDtbByFormat("dtb");
+
+                var Reader = Plugin?.GetDevtreeReader(Raw);
+                if (Reader != null)
+                {
+                    var Dst = GetDtb();
+                    try { Reader.ReadToDevTree(Dst); } catch { }
+                    Dst.DevtreeFormat = Plugin.Format;
+                    ApplyInfo(Dst.Info, HintInfo);
+                    if (Dst.Loaded)
+                    {
+                        Blob.Elements.Add(new LoadedElement(ImageKind.Devtree, Plugin.Format, Dst.Info.Compression, Container, Plugin.Format));
+                        return true;
+                    }
+                }
+            }
+
+            // 7) Unknown: preserve for round-trip.
+            Blob.Unknown.Add(new UnknownImage(Container, Data.Offset, Data.Length));
+            return false;
+        }
+
+        private static void ApplyInfo(ImageInfo Dst, ImageInfo Source)
+        {
+            if (Source == null)
+                return;
+
+            Dst.Architecture = Source.Architecture;
+            Dst.OperatingSystem = Source.OperatingSystem;
+            Dst.Type = Source.Type;
+            Dst.Compression = Source.Compression;
+            Dst.Name = Source.Name;
+            Dst.DataLoadAddress = Source.DataLoadAddress;
+            Dst.EntryPointAddress = Source.EntryPointAddress;
+        }
+
+        private Elements.Kernel.LinuxKernel GetKernel()
+        {
+            var Dst = Blob.GetKernel(0);
+            if (Dst == null)
+            {
+                Dst = new Elements.Kernel.LinuxKernel();
+                Blob.SetKernel(0, Dst);
+            }
+            return Dst;
+        }
+
+        private Elements.Fs.LinuxFilesystem GetFs()
+        {
+            var Dst = Blob.GetFilesystem(0);
+            if (Dst == null)
+            {
+                Dst = new Elements.Fs.LinuxFilesystem();
+                Blob.SetFilesystem(0, Dst);
+            }
+            return Dst;
+        }
+
+        private Elements.Dtb.DeviceTree GetDtb()
+        {
+            var Dst = Blob.GetDevTree(0);
+            if (Dst == null)
+            {
+                Dst = new Elements.Dtb.DeviceTree();
+                Blob.SetDevTree(0, Dst);
+            }
+            return Dst;
+        }
+    }
+}

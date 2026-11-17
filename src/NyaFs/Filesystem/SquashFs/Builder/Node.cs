@@ -17,6 +17,11 @@ namespace NyaFs.Filesystem.SquashFs.Builder
         public uint Index = 0;
 
         /// <summary>
+        /// Index in the xattr id lookup table, or <see cref="Types.SqInode.InvalidXAttr"/>.
+        /// </summary>
+        public uint XAttrIndex = Types.SqInode.InvalidXAttr;
+
+        /// <summary>
         /// User index in id table
         /// </summary>
         public uint UId;

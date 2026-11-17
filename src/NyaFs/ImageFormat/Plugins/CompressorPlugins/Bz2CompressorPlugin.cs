@@ -1,31 +1,17 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using NyaFs.ImageFormat.Types;
 
 namespace NyaFs.ImageFormat.Plugins.CompressorPlugins
 {
     class Bz2CompressorPlugin : Base.CompressorPlugin
     {
+        public Bz2CompressorPlugin() : base("compr.bz2", "bz2", CompressionType.IH_COMP_BZIP2, true, true) { }
 
-        public Bz2CompressorPlugin() : base("compr.bz2", "bz2", true, true) { }
+        public override bool DetectCompressor(ImageData Data) =>
+            (Data.Length >= 4) &&
+            (Data.ReadByte(0) == 0x42) && (Data.ReadByte(1) == 0x5A) && (Data.ReadByte(2) == 0x68);
 
-        /// <summary>
-        /// Is image contain this filesystem
-        /// </summary>
-        /// <param name="Image"></param>
-        /// <returns></returns>
-        public override bool DetectCompressor(byte[] Image) => false;
-
-        /// <summary>
-        /// Decompress
-        /// </summary>
-        /// <returns></returns>
         public override byte[] Decompress(byte[] Data) => Compressors.Bzip2.Decompress(Data);
 
-        /// <summary>
-        /// Compress
-        /// </summary>
-        /// <returns></returns>
         public override byte[] Compress(byte[] Data) => Compressors.Bzip2.CompressWithHeader(Data);
     }
 }

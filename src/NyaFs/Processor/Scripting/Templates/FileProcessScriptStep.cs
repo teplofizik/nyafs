@@ -109,7 +109,8 @@ namespace NyaFs.Processor.Scripting.Templates
                 try
                 {
                     var Processed = ProcessData(Path, Original);
-                    SetFileContent(Fs, Path, Processed);
+                    if(Processed != null)
+                        SetFileContent(Fs, Path, Processed);
                 }
                 catch(Exception E)
                 {

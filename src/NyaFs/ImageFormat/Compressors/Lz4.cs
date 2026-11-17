@@ -18,7 +18,7 @@ namespace NyaFs.ImageFormat.Compressors
             {
                 using (var encoded = new FT.LZ4.LZ4EncoderStream(output, descriptor, sett => FT.LZ4.LZ4Encoder.Create(sett.Chaining, FT.LZ4.LZ4Level.L10_OPT, sett.BlockSize)))
                 {
-                    encoded.Write(Data);
+                    encoded.Write(Data, 0, Data.Length);
                     encoded.Close();
 
                     return output.ToArray();

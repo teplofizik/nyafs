@@ -27,6 +27,11 @@ namespace NyaFs.ImageFormat.Compressors
                 zipStream.Write(data, 0, data.Length);
                 zipStream.Close();
                 var Compressed = compressedStream.ToArray();
+
+                // DeflateStream emits nothing for a zero-length input, which yields a gzip
+                // stream without a deflate block. Substitute the canonical empty raw-deflate.
+                if (Compressed.Length == 0)
+                    Compressed = new byte[] { 0x03, 0x00 };
                 var Res = new byte[Compressed.Length + 8];
                 Res.WriteArray(0, Compressed, Compressed.Length);
                 Res.WriteUInt32(Compressed.Length, CalcCrc(data));

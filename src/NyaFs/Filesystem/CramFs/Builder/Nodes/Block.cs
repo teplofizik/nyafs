@@ -15,5 +15,7 @@ namespace NyaFs.Filesystem.CramFs.Builder.Nodes
             this.Minor = Minor;
         }
 
+        protected override uint StoredSize => (Minor & 0xFF) | ((Major & 0xFFF) << 8) | ((Minor & ~0xFFu) << 12);
+
     }
 }

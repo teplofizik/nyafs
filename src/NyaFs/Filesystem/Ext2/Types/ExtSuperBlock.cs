@@ -162,8 +162,8 @@ namespace NyaFs.Filesystem.Ext2.Types
         /// </summary>
         public uint WTime
         {
-            get { return ReadUInt32(0x2C); }
-            set { WriteUInt32(0x2C, value); }
+            get { return ReadUInt32(0x30); }
+            set { WriteUInt32(0x30, value); }
         }
 
         /// <summary>
@@ -485,6 +485,37 @@ namespace NyaFs.Filesystem.Ext2.Types
         {
             get { return ReadUInt32(0xC8); }
             set { WriteUInt32(0xC8, value); }
+        }
+
+        /// <summary>
+        /// Size of each group descriptor, in bytes. Only present if INCOMPAT_64BIT is set; otherwise
+        /// the descriptors are 32 bytes (0x20).
+        /// u16 s_desc_size (0xFE)
+        /// </summary>
+        public uint GroupDescSize
+        {
+            get { return ReadUInt16(0xFE); }
+            set { WriteUInt16(0xFE, value); }
+        }
+
+        /// <summary>
+        /// Inode number of the journal file. If the filesystem has an external journal, this is 0.
+        /// u32 s_journal_inum (0xE0)
+        /// </summary>
+        public uint JournalINode
+        {
+            get { return ReadUInt32(0xE0); }
+            set { WriteUInt32(0xE0, value); }
+        }
+
+        /// <summary>
+        /// Device number of the external journal (0 if the journal is internal).
+        /// u32 s_journal_dev (0xE4)
+        /// </summary>
+        public uint JournalDevice
+        {
+            get { return ReadUInt32(0xE4); }
+            set { WriteUInt32(0xE4, value); }
         }
     }
 }

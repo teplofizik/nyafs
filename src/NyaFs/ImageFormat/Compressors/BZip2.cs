@@ -10,7 +10,7 @@ namespace NyaFs.ImageFormat.Compressors
             {
                 using (var encoded = new ICSharpCode.SharpZipLib.BZip2.BZip2OutputStream(output))
                 {
-                    encoded.Write(Data);
+                    encoded.Write(Data, 0, Data.Length);
                     encoded.Close();
 
                     return output.ToArray();

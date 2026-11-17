@@ -38,6 +38,9 @@ namespace NyaFs.Filesystem.Universal
 
         public uint Mode; // Access rights 12 bit 4 4 4
 
+        /// <summary>Extended attributes (full name -> raw value). Empty when the item has none.</summary>
+        public readonly Dictionary<string, byte[]> Xattrs = new Dictionary<string, byte[]>();
+
         public string Filename
         {
             get { return IntFilename; }
@@ -55,8 +58,10 @@ namespace NyaFs.Filesystem.Universal
 
         public virtual long Size => 0;
 
-        public DateTime Created = DateTime.UnixEpoch;
-        public DateTime Modified = DateTime.UnixEpoch;
+        private static readonly DateTime UnixEpoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        public DateTime Created = UnixEpoch;
+        public DateTime Modified = UnixEpoch;
 
         public uint FullMode
         {

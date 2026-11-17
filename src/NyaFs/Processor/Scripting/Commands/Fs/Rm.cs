@@ -51,13 +51,15 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
                 }
             }
 
-            private bool IsExcluded(string path) => Excluded.Contains(path);
+            private static string NormalizePath(string path) => ((path.Length > 0) && (path[0] == '/')) ? path.Substring(1) : path;
+
+            private bool IsExcluded(string path) => Excluded.Contains(NormalizePath(path));
 
             private void GenerateExcludedFileList(ImageProcessor processor, ImageFormat.Elements.Fs.LinuxFilesystem fs)
             {
                 foreach (var path in ExcludeMask)
                 {
-                    if (path.Contains('*'))
+                    if (path.Contains("*"))
                     {
                         if (path.StartsWith("/"))
                         {
@@ -114,7 +116,7 @@ namespace NyaFs.Processor.Scripting.Commands.Fs
 
             private void ProcessPath(ImageProcessor processor, ImageFormat.Elements.Fs.LinuxFilesystem fs, string path)
             {
-                if (path.Contains('*'))
+                if (path.Contains("*"))
                 {
                     if (path.StartsWith("/"))
                     {

@@ -1,0 +1,1255 @@
+using NyaFs.Filesystem.Universal;
+using NyaFs.Filesystem.Universal.Types;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+
+namespace NyaFs.Filesystem.EroFs
+{
+    public class EroFsBuilder : IFilesystemBuilder, IXattrBuilder
+    {
+        private const int BlockSize = 4096;
+        private const int InodeUnit = 32;
+        private const int InodeSize = 64;
+        private int RootNid = 36;
+        private int MetadataStart = 36 * InodeUnit;
+
+        private sealed class Node
+        {
+            public string Path;
+            public string Name;
+            public FilesystemItemType Type;
+            public uint User;
+            public uint Group;
+            public uint Mode;
+            public byte[] Content;
+            public string Target;
+            public uint Major;
+            public uint Minor;
+            public Node Parent;
+            public readonly List<Node> Children = new List<Node>();
+            public ulong Nid;
+            public uint Ino;
+            public uint Nlink;
+            public uint StartBlock;
+            public byte[] Data;
+            public bool Compressed;
+            public bool BigPclusters;
+            public bool Inline;
+            public bool Hidden;
+            public bool WholeFragment;
+            public bool PartialFragment;
+            public ulong FragmentOffset;
+            public int InlineOffset;
+            public int InlineLength;
+            public int InlineLcn;
+            public int MetaSize = 64;
+            public int HeaderRel = 64;
+            public int XattrSize;
+            public int XattrCount;
+            public byte[] XattrData;
+            public readonly List<XattrEntry> Xattrs = new List<XattrEntry>();
+            public readonly List<string> SharedXattrKeys = new List<string>();
+            public int TotalLclusters;
+            public readonly List<CompressedGroup> Groups = new List<CompressedGroup>();
+        }
+
+        private sealed class DirEntry
+        {
+            public byte[] Name;
+            public ulong Nid;
+            public byte FileType;
+        }
+
+        private sealed class XattrEntry
+        {
+            public string Name;
+            public byte[] Value;
+            public int Index;
+            public byte[] ShortName;
+        }
+
+        private sealed class CompressedGroup
+        {
+            public int Lcn;
+            public int Count;
+            public bool Compressed;
+            public int PhysicalBlocks;
+            public int EncodedLength;
+            public byte[] Data;
+        }
+
+        private readonly List<Node> Nodes = new List<Node>();
+        private Node Root;
+
+        public bool Fragments { get; set; } = false;
+        public bool TailFragments { get; set; } = false;
+        public bool SharedXattrs { get; set; } = false;
+
+        public void AddXattrPrefix(string Prefix)
+        {
+            if (String.IsNullOrEmpty(Prefix) || !HasStandardXattrBase(Prefix))
+                throw new ArgumentException("EROFS long xattr prefix must start with a standard xattr prefix", nameof(Prefix));
+
+            if (XattrPrefixes.Count >= 127)
+                throw new InvalidOperationException("EROFS supports at most 127 long xattr prefixes");
+
+            if (!XattrPrefixes.Contains(Prefix))
+                XattrPrefixes.Add(Prefix);
+        }
+        public int CompressionLevel { get; set; } = 10;
+
+        private byte[] SharedXattrData;
+        private int SharedXattrBlock;
+        private byte[] XattrPrefixData;
+        private int XattrPrefixBlock;
+        private readonly List<string> XattrPrefixes = new List<string>();
+
+        public EroFsBuilder()
+        {
+            Root = new Node
+            {
+                Path = "/",
+                Name = "",
+                Type = FilesystemItemType.Directory,
+                Mode = 0x1ED
+            };
+            Nodes.Add(Root);
+        }
+
+        public void Block(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode) =>
+            Add(Path, FilesystemItemType.Block, User, Group, Mode, null, null, Major, Minor);
+
+        public void Char(string Path, uint Major, uint Minor, uint User, uint Group, uint Mode) =>
+            Add(Path, FilesystemItemType.Character, User, Group, Mode, null, null, Major, Minor);
+
+        public void Directory(string Path, uint User, uint Group, uint Mode) =>
+            Add(Path, FilesystemItemType.Directory, User, Group, Mode, null, null, 0, 0);
+
+        public void File(string Path, byte[] Content, uint User, uint Group, uint Mode) =>
+            Add(Path, FilesystemItemType.File, User, Group, Mode, Content ?? Array.Empty<byte>(), null, 0, 0);
+
+        public void Fifo(string Path, uint User, uint Group, uint Mode) =>
+            Add(Path, FilesystemItemType.Fifo, User, Group, Mode, null, null, 0, 0);
+
+        public void Socket(string Path, uint User, uint Group, uint Mode) =>
+            Add(Path, FilesystemItemType.Socket, User, Group, Mode, null, null, 0, 0);
+
+        public void SymLink(string Path, string Target, uint User, uint Group, uint Mode) =>
+            Add(Path, FilesystemItemType.SymLink, User, Group, Mode, null, Target ?? "", 0, 0);
+
+        public void Xattr(string Path, string Name, byte[] Value)
+        {
+            var Node = Find(Path);
+            if (Node == null)
+                throw new InvalidOperationException($"EROFS: xattr target {Path} is not found");
+
+            var Existing = Node.Xattrs.Find(E => E.Name == Name);
+            if (Existing != null)
+                Existing.Value = Value ?? Array.Empty<byte>();
+            else
+                Node.Xattrs.Add(new XattrEntry
+                {
+                    Name = Name,
+                    Value = Value ?? Array.Empty<byte>()
+                });
+        }
+        private void Add(string Path, FilesystemItemType Type, uint User, uint Group, uint Mode,
+            byte[] Content, string Target, uint Major, uint Minor)
+        {
+            string Normalized = Normalize(Path);
+            if (Normalized == "/")
+            {
+                Root.User = User;
+                Root.Group = Group;
+                Root.Mode = Mode;
+                return;
+            }
+
+            string ParentPath = ParentOf(Normalized);
+            string Name = NameOf(Normalized);
+            var Parent = Find(ParentPath);
+            if ((Parent == null) || (Parent.Type != FilesystemItemType.Directory))
+                throw new InvalidOperationException($"EROFS: parent directory for {Normalized} is not found");
+
+            if (Parent.Children.Exists(N => N.Name == Name))
+                throw new InvalidOperationException($"EROFS: entry {Normalized} already exists");
+
+            var Node = new Node
+            {
+                Path = Normalized,
+                Name = Name,
+                Type = Type,
+                User = User,
+                Group = Group,
+                Mode = Mode & 0xFFF,
+                Content = Content,
+                Target = Target,
+                Major = Major,
+                Minor = Minor,
+                Parent = Parent
+            };
+
+            Parent.Children.Add(Node);
+            Nodes.Add(Node);
+        }
+
+        private Node Find(string Path)
+        {
+            string Normalized = Normalize(Path);
+            foreach (var N in Nodes)
+            {
+                if (N.Path == Normalized)
+                    return N;
+            }
+            return null;
+        }
+
+        public byte[] GetFilesystemImage()
+        {
+            PrepareCompression();
+            PrepareFragments();
+            PrepareXattrs();
+            ConfigureMetadata();
+            AssignNids();
+
+            int MetaBytes = MetadataStart;
+            foreach (var N in Nodes)
+                MetaBytes += N.MetaSize;
+            int MetaBlocks = (MetaBytes + BlockSize - 1) / BlockSize;
+            int NextBlock = Math.Max(1, MetaBlocks);
+
+            SharedXattrBlock = 0;
+            if (SharedXattrData != null)
+            {
+                SharedXattrBlock = NextBlock;
+                NextBlock += (SharedXattrData.Length + BlockSize - 1) / BlockSize;
+            }
+
+            XattrPrefixBlock = 0;
+            if (XattrPrefixData != null)
+            {
+                XattrPrefixBlock = NextBlock;
+                NextBlock += (XattrPrefixData.Length + BlockSize - 1) / BlockSize;
+            }
+
+            foreach (var N in Nodes)
+            {
+                if (N.Type == FilesystemItemType.Directory)
+                {
+                    N.Data = BuildDirectoryData(N);
+                    N.Nlink = (uint)(2 + CountSubdirectories(N));
+                }
+                else if (N.Type == FilesystemItemType.File)
+                {
+                    N.Data = N.Content ?? Array.Empty<byte>();
+                    N.Nlink = 1;
+                }
+                else if (N.Type == FilesystemItemType.SymLink)
+                {
+                    N.Data = Encoding.UTF8.GetBytes(N.Target ?? "");
+                    N.Nlink = 1;
+                }
+                else
+                {
+                    N.Data = Array.Empty<byte>();
+                    N.Nlink = 1;
+                }
+
+                if (N.Compressed)
+                {
+                    N.StartBlock = (uint)NextBlock;
+                    foreach (var Group in N.Groups)
+                        NextBlock += Group.PhysicalBlocks;
+                }
+                else if (N.Data.Length > 0)
+                {
+                    N.StartBlock = (uint)NextBlock;
+                    NextBlock += (N.Data.Length + BlockSize - 1) / BlockSize;
+                }
+            }
+
+            var Result = new byte[NextBlock * BlockSize];
+            WriteSuperblock(Result, NextBlock);
+
+            for (int i = 0; i < Nodes.Count; i++)
+                WriteInode(Result, Nodes[i], i);
+
+            if (SharedXattrData != null)
+                Array.Copy(SharedXattrData, 0, Result, (long)SharedXattrBlock * BlockSize, SharedXattrData.Length);
+            if (XattrPrefixData != null)
+                Array.Copy(XattrPrefixData, 0, Result, (long)XattrPrefixBlock * BlockSize, XattrPrefixData.Length);
+
+            foreach (var N in Nodes)
+            {
+                if (N.Compressed)
+                {
+                    int Block = (int)N.StartBlock;
+                    foreach (var Group in N.Groups)
+                    {
+                        if (Group.PhysicalBlocks == 0)
+                            continue;
+
+                        Array.Copy(Group.Data, 0, Result, (long)Block * BlockSize, Group.Data.Length);
+                        Block += Group.PhysicalBlocks;
+                    }
+                }
+                else if (N.Data.Length > 0)
+                {
+                    long Offset = (long)N.StartBlock * BlockSize;
+                    Array.Copy(N.Data, 0, Result, Offset, N.Data.Length);
+                }
+            }
+
+            return Result;
+        }
+
+        private void PrepareFragments()
+        {
+            if (!Fragments && !TailFragments)
+                return;
+            if (Fragments && TailFragments)
+                throw new InvalidOperationException("EROFS: Fragments and TailFragments are mutually exclusive");
+
+            var Files = Nodes.Where(N => (N.Type == FilesystemItemType.File) &&
+                !N.Hidden && (N.Content != null) && (N.Content.Length > 0)).ToList();
+            if (Files.Count == 0)
+                return;
+
+            var PackedData = new MemoryStream();
+            foreach (var File in Files)
+            {
+                if (Fragments)
+                {
+                    File.WholeFragment = true;
+                    File.Compressed = true;
+                    File.BigPclusters = false;
+                    File.Inline = false;
+                    File.Groups.Clear();
+                    File.FragmentOffset = (ulong)PackedData.Length;
+                    PackedData.Write(File.Content, 0, File.Content.Length);
+                }
+                else if (File.Compressed && (File.Groups.Count > 0))
+                {
+                    var Last = File.Groups[File.Groups.Count - 1];
+                    int Offset = Last.Lcn * BlockSize;
+                    int Length = Math.Min(Last.Count * BlockSize, File.Content.Length - Offset);
+
+                    File.PartialFragment = true;
+                    File.Inline = false;
+                    File.FragmentOffset = (ulong)PackedData.Length;
+                    PackedData.Write(File.Content, Offset, Length);
+                    Last.PhysicalBlocks = 0;
+                }
+            }
+
+            if (PackedData.Length == 0)
+                return;
+
+            var Packed = new Node
+            {
+                Path = "/$packed",
+                Name = "$packed",
+                Type = FilesystemItemType.File,
+                Mode = 0x1A4,
+                Content = PackedData.ToArray(),
+                Hidden = true,
+                Nlink = 1
+            };
+
+            Nodes.Add(Packed);
+        }
+        private void PrepareXattrs()
+        {
+            foreach (var Node in Nodes)
+            {
+                Node.XattrData = null;
+                Node.XattrSize = 0;
+                Node.XattrCount = 0;
+                Node.SharedXattrKeys.Clear();
+                Node.HeaderRel = InodeSize;
+            }
+
+            SharedXattrData = null;
+            SharedXattrBlock = 0;
+            BuildXattrPrefixData();
+
+            var SharedEntries = new List<XattrEntry>();
+            var SharedKeys = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            foreach (var Node in Nodes)
+            {
+                if (Node.Xattrs.Count == 0)
+                    continue;
+
+                var Entries = new List<XattrEntry>();
+                foreach (var Entry in Node.Xattrs)
+                {
+                    if (!ParseXattrName(Entry.Name, out Entry.Index, out string ShortName))
+                    {
+                        NyaFs.Log.Warning(0, $"EROFS: unsupported xattr name {Entry.Name}");
+                        continue;
+                    }
+
+                    Entry.ShortName = Encoding.UTF8.GetBytes(ShortName);
+                    if ((Entry.ShortName.Length > 255) || (Entry.Value.Length > 65535))
+                    {
+                        NyaFs.Log.Warning(0, $"EROFS: xattr {Entry.Name} is too large");
+                        continue;
+                    }
+
+                    Entries.Add(Entry);
+                }
+
+                if (Entries.Count == 0)
+                    continue;
+
+                Entries.Sort((A, B) =>
+                {
+                    int IndexDiff = A.Index - B.Index;
+                    return (IndexDiff != 0) ? IndexDiff : CompareBytes(A.ShortName, B.ShortName);
+                });
+
+                if (SharedXattrs)
+                {
+                    foreach (var Entry in Entries)
+                    {
+                        string Key = XattrKey(Entry);
+                        if (!SharedKeys.ContainsKey(Key))
+                        {
+                            SharedKeys[Key] = SharedEntries.Count;
+                            SharedEntries.Add(Entry);
+                        }
+                        Node.SharedXattrKeys.Add(Key);
+                    }
+                    continue;
+                }
+
+                Node.XattrData = BuildInlineXattrBody(Entries);
+                Node.XattrSize = Node.XattrData.Length;
+                Node.XattrCount = 1 + (Node.XattrSize - 12) / 4;
+                Node.HeaderRel = Align(InodeSize + Node.XattrSize, 8);
+            }
+
+            if (!SharedXattrs || (SharedEntries.Count == 0))
+                return;
+
+            var SharedOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
+            var SharedData = new MemoryStream();
+            foreach (var Entry in SharedEntries)
+            {
+                SharedOffsets[XattrKey(Entry)] = (int)SharedData.Length / 4;
+                WriteXattrEntry(SharedData, Entry);
+            }
+
+            SharedXattrData = SharedData.ToArray();
+
+            foreach (var Node in Nodes)
+            {
+                if (Node.SharedXattrKeys.Count == 0)
+                    continue;
+
+                int Size = 12 + Node.SharedXattrKeys.Count * 4;
+                var Body = new byte[Size];
+                Body[4] = (byte)Node.SharedXattrKeys.Count;
+                for (int i = 0; i < Node.SharedXattrKeys.Count; i++)
+                    WriteU32(Body, 12 + i * 4, (uint)SharedOffsets[Node.SharedXattrKeys[i]]);
+
+                Node.XattrData = Body;
+                Node.XattrSize = Size;
+                Node.XattrCount = 1 + Node.SharedXattrKeys.Count;
+                Node.HeaderRel = Align(InodeSize + Size, 8);
+            }
+        }
+
+        private void BuildXattrPrefixData()
+        {
+            XattrPrefixData = null;
+            XattrPrefixBlock = 0;
+            if (XattrPrefixes.Count == 0)
+                return;
+
+            var Data = new MemoryStream();
+            foreach (var Prefix in XattrPrefixes)
+            {
+                int Base = StandardXattrBase(Prefix);
+                string BaseString = StandardBaseString(Base);
+                string Infix = Prefix.Substring(BaseString.Length);
+                byte[] InfixData = Encoding.UTF8.GetBytes(Infix);
+
+                Data.WriteByte((byte)((1 + InfixData.Length) & 0xFF));
+                Data.WriteByte((byte)((1 + InfixData.Length) >> 8));
+                Data.WriteByte((byte)Base);
+                Data.Write(InfixData, 0, InfixData.Length);
+                while ((Data.Length & 3) != 0)
+                    Data.WriteByte(0);
+            }
+
+            XattrPrefixData = Data.ToArray();
+        }
+
+        private static string StandardBaseString(int Index)
+        {
+            switch (Index)
+            {
+                case 1: return "user.";
+                case 2: return "system.posix_acl_access";
+                case 3: return "system.posix_acl_default";
+                case 4: return "trusted.";
+                case 5: return "lustre.";
+                case 6: return "security.";
+                default: return "";
+            }
+        }
+        private static string XattrKey(XattrEntry Entry) =>
+            Entry.Index + ":" + Convert.ToBase64String(Entry.ShortName) + ":" + Convert.ToBase64String(Entry.Value);
+
+        private static byte[] BuildInlineXattrBody(List<XattrEntry> Entries)
+        {
+            int Size = 12;
+            foreach (var Entry in Entries)
+                Size += Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
+
+            var Body = new byte[Size];
+            int Offset = 12;
+            foreach (var Entry in Entries)
+            {
+                int EntrySize = WriteXattrEntry(Body, Offset, Entry);
+                Offset += EntrySize;
+            }
+            return Body;
+        }
+
+        private static void WriteXattrEntry(MemoryStream Stream, XattrEntry Entry)
+        {
+            var Data = new byte[Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4)];
+            WriteXattrEntry(Data, 0, Entry);
+            Stream.Write(Data, 0, Data.Length);
+        }
+
+        private static int WriteXattrEntry(byte[] Data, int Offset, XattrEntry Entry)
+        {
+            Data[Offset] = (byte)Entry.ShortName.Length;
+            Data[Offset + 1] = (byte)Entry.Index;
+            WriteU16(Data, Offset + 2, (uint)Entry.Value.Length);
+            Array.Copy(Entry.ShortName, 0, Data, Offset + 4, Entry.ShortName.Length);
+            Array.Copy(Entry.Value, 0, Data, Offset + 4 + Entry.ShortName.Length, Entry.Value.Length);
+            return Align(4 + Entry.ShortName.Length + Entry.Value.Length, 4);
+        }
+        private bool ParseXattrName(string Name, out int Index, out string ShortName)
+        {
+            for (int i = 0; i < XattrPrefixes.Count; i++)
+            {
+                if (Name.StartsWith(XattrPrefixes[i], StringComparison.Ordinal))
+                {
+                    Index = 0x80 | i;
+                    ShortName = Name.Substring(XattrPrefixes[i].Length);
+                    return true;
+                }
+            }
+
+            if (Name.StartsWith("user.", StringComparison.Ordinal))
+            {
+                Index = 1;
+                ShortName = Name.Substring(5);
+                return true;
+            }
+            if (Name.StartsWith("trusted.", StringComparison.Ordinal))
+            {
+                Index = 4;
+                ShortName = Name.Substring(8);
+                return true;
+            }
+            if (Name.StartsWith("lustre.", StringComparison.Ordinal))
+            {
+                Index = 5;
+                ShortName = Name.Substring(7);
+                return true;
+            }
+            if (Name.StartsWith("security.", StringComparison.Ordinal))
+            {
+                Index = 6;
+                ShortName = Name.Substring(9);
+                return true;
+            }
+            if (Name == "system.posix_acl_access")
+            {
+                Index = 2;
+                ShortName = "";
+                return true;
+            }
+            if (Name == "system.posix_acl_default")
+            {
+                Index = 3;
+                ShortName = "";
+                return true;
+            }
+
+            Index = 0;
+            ShortName = null;
+            return false;
+        }
+        private void ConfigureMetadata()
+        {
+            RootNid = Nodes.Exists(N => N.Compressed && N.BigPclusters) ? 37 : 36;
+            MetadataStart = RootNid * InodeUnit;
+        }
+
+        private void PrepareCompression()
+        {
+            foreach (var N in Nodes)
+            {
+                N.Compressed = false;
+                N.BigPclusters = false;
+                N.Inline = false;
+                N.Groups.Clear();
+                N.TotalLclusters = 0;
+                N.MetaSize = InodeSize;
+
+                if ((N.Type != FilesystemItemType.File) || (N.Content == null) || (N.Content.Length < BlockSize))
+                    continue;
+
+                int Total = (N.Content.Length + BlockSize - 1) / BlockSize;
+                N.TotalLclusters = Total;
+                bool AnyCompressed = false;
+                bool AnyBig = false;
+                int Lcn = 0;
+
+                while (Lcn < Total)
+                {
+                    int Max = Math.Min(Total - Lcn, 256);
+                    int Chosen = 0;
+                    byte[] ChosenData = null;
+                    int ChosenLength = 0;
+
+                    for (int Count = Max; Count >= 1; Count /= 2)
+                    {
+                        int Offset = Lcn * BlockSize;
+                        int Length = Math.Min(Count * BlockSize, N.Content.Length - Offset);
+                        var Compressed = new byte[64 * 1024];
+
+                        try
+                        {
+                            int Written = FT.LZ4.LZ4Codec.Encode(N.Content, Offset, Length,
+                                Compressed, 0, Compressed.Length, (FT.LZ4.LZ4Level)CompressionLevel);
+                            if ((Written > 0) && (Written < Length))
+                            {
+                                Chosen = Count;
+                                ChosenData = Compressed;
+                                ChosenLength = Written;
+                                break;
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    if (Chosen > 0)
+                    {
+                        int PhysicalBlocks = (ChosenLength + BlockSize - 1) / BlockSize;
+                        var Block = new byte[PhysicalBlocks * BlockSize];
+                        Array.Copy(ChosenData, 0, Block, Block.Length - ChosenLength, ChosenLength);
+                        N.Groups.Add(new CompressedGroup
+                        {
+                            Lcn = Lcn,
+                            Count = Chosen,
+                            Compressed = true,
+                            PhysicalBlocks = PhysicalBlocks,
+                            EncodedLength = ChosenLength,
+                            Data = Block
+                        });
+                        AnyCompressed = true;
+                        AnyBig |= PhysicalBlocks > 1;
+                        Lcn += Chosen;
+                    }
+                    else
+                    {
+                        var Block = new byte[BlockSize];
+                        int Offset = Lcn * BlockSize;
+                        int Length = Math.Min(BlockSize, N.Content.Length - Offset);
+                        Array.Copy(N.Content, Offset, Block, 0, Length);
+                        N.Groups.Add(new CompressedGroup
+                        {
+                            Lcn = Lcn,
+                            Count = 1,
+                            Compressed = false,
+                            PhysicalBlocks = 1,
+                            Data = Block
+                        });
+                        Lcn++;
+                    }
+                }
+                if (AnyCompressed)
+                {
+                    N.Compressed = true;
+                    N.BigPclusters = AnyBig;
+                    N.MetaSize = AnyBig
+                        ? Align(80 + Total * 8, 32)
+                        : Align(72 + CompactIndexBytes(Total), 32);
+                }
+                else
+                {
+                    N.Groups.Clear();
+                }
+            }
+        }
+        private void AssignNids()
+        {
+            int Slot = RootNid;
+            for (int i = 0; i < Nodes.Count; i++)
+            {
+                Nodes[i].Nid = (ulong)Slot;
+                Nodes[i].Ino = (uint)(i + 1);
+                Nodes[i].MetaSize = CalculateMetaSize(Nodes[i], Slot * InodeUnit);
+                Slot += Nodes[i].MetaSize / InodeUnit;
+            }
+        }
+
+        private static bool HasStandardXattrBase(string Prefix)
+        {
+            return Prefix.StartsWith("user.", StringComparison.Ordinal) ||
+                Prefix.StartsWith("trusted.", StringComparison.Ordinal) ||
+                Prefix.StartsWith("lustre.", StringComparison.Ordinal) ||
+                Prefix.StartsWith("security.", StringComparison.Ordinal) ||
+                Prefix.StartsWith("system.posix_acl_access", StringComparison.Ordinal) ||
+                Prefix.StartsWith("system.posix_acl_default", StringComparison.Ordinal);
+        }
+
+        private static int StandardXattrBase(string Prefix)
+        {
+            if (Prefix.StartsWith("user.", StringComparison.Ordinal)) return 1;
+            if (Prefix.StartsWith("trusted.", StringComparison.Ordinal)) return 4;
+            if (Prefix.StartsWith("lustre.", StringComparison.Ordinal)) return 5;
+            if (Prefix.StartsWith("security.", StringComparison.Ordinal)) return 6;
+            if (Prefix.StartsWith("system.posix_acl_access", StringComparison.Ordinal)) return 2;
+            if (Prefix.StartsWith("system.posix_acl_default", StringComparison.Ordinal)) return 3;
+            return 0;
+        }
+        private int CalculateMetaSize(Node Node, int Offset)
+        {
+            if (Node.WholeFragment)
+                return Align(Node.HeaderRel + 8, 32);
+
+            if (!Node.Compressed)
+                return Align(Node.HeaderRel, 32);
+
+            int Base = Node.BigPclusters
+                ? Node.HeaderRel + 16 + Node.TotalLclusters * 8
+                : Node.HeaderRel + 8 + CompactIndexBytes(Node.TotalLclusters);
+            int End = Offset + Base;
+            var Last = Node.Groups.Count > 0 ? Node.Groups[Node.Groups.Count - 1] : null;
+
+            if (!Node.PartialFragment && (Last != null) && Last.Compressed && (Last.EncodedLength > 0) &&
+                (Last.EncodedLength <= BlockSize) &&
+                ((End % BlockSize) + Last.EncodedLength <= BlockSize))
+            {
+                Node.Inline = true;
+                Node.InlineOffset = End;
+                Node.InlineLength = Last.EncodedLength;
+                Node.InlineLcn = Last.Lcn;
+                Last.PhysicalBlocks = 0;
+                return Align(Base + Last.EncodedLength, 32);
+            }
+
+            Node.Inline = false;
+            return Align(Base, 32);
+        }
+        private int CountSubdirectories(Node Dir)
+        {
+            int Result = 0;
+            foreach (var N in Dir.Children)
+            {
+                if (N.Type == FilesystemItemType.Directory)
+                    Result++;
+            }
+            return Result;
+        }
+
+        private byte[] BuildDirectoryData(Node Dir)
+        {
+            var Entries = new List<DirEntry>();
+            AddDirEntry(Entries, ".", Dir.Nid, 2);
+            AddDirEntry(Entries, "..", (Dir.Parent ?? Dir).Nid, 2);
+
+            var Children = new List<Node>(Dir.Children);
+            Children.Sort((A, B) => StringComparer.Ordinal.Compare(A.Name, B.Name));
+            foreach (var Child in Children)
+                AddDirEntry(Entries, Child.Name, Child.Nid, FileTypeOf(Child.Type));
+
+            Entries.Sort((A, B) => CompareBytes(A.Name, B.Name));
+
+            var Result = new List<byte>();
+            int Index = 0;
+
+            while (Index < Entries.Count)
+            {
+                int Count = 0;
+                int NameBytes = 0;
+                while (Index + Count < Entries.Count)
+                {
+                    int NameLength = Entries[Index + Count].Name.Length;
+                    int Candidate = (Count + 1) * 12 + NameBytes + NameLength;
+                    if (Candidate > BlockSize)
+                        break;
+
+                    Count++;
+                    NameBytes += NameLength;
+                }
+
+                if (Count == 0)
+                    throw new InvalidOperationException("EROFS: directory entry does not fit into a block");
+
+                var Block = new byte[BlockSize];
+                int NameOffset = Count * 12;
+                for (int i = 0; i < Count; i++)
+                {
+                    var Entry = Entries[Index + i];
+                    int Table = i * 12;
+                    WriteU64(Block, Table, Entry.Nid);
+                    WriteU16(Block, Table + 8, (uint)(NameOffset));
+                    Block[Table + 10] = Entry.FileType;
+                    Block[Table + 11] = 0;
+                    Array.Copy(Entry.Name, 0, Block, NameOffset, Entry.Name.Length);
+                    NameOffset += Entry.Name.Length;
+                }
+
+                int Used = NameOffset;
+                if (Index + Count < Entries.Count)
+                {
+                    Result.AddRange(Block);
+                }
+                else
+                {
+                    for (int i = 0; i < Used; i++)
+                        Result.Add(Block[i]);
+                }
+
+                Index += Count;
+            }
+
+            return Result.ToArray();
+        }
+
+        private static int CompareBytes(byte[] A, byte[] B)
+        {
+            int Length = Math.Min(A.Length, B.Length);
+            for (int i = 0; i < Length; i++)
+            {
+                int Diff = A[i] - B[i];
+                if (Diff != 0)
+                    return Diff;
+            }
+            return A.Length - B.Length;
+        }
+
+        private void AddDirEntry(List<DirEntry> Entries, string Name, ulong Nid, byte FileType)
+        {
+            Entries.Add(new DirEntry
+            {
+                Name = Encoding.UTF8.GetBytes(Name),
+                Nid = Nid,
+                FileType = FileType
+            });
+        }
+
+        private void WriteSuperblock(byte[] Data, int Blocks)
+        {
+            const int Sb = EroFsShared.SuperblockOffset;
+
+            WriteU32(Data, Sb, EroFsShared.Magic);
+            WriteU32(Data, Sb + 4, 0);
+            WriteU32(Data, Sb + 8, XattrPrefixData != null ? 0x10u : 0u);
+            Data[Sb + 12] = 12;
+            Data[Sb + 13] = 0;
+            WriteU16(Data, Sb + 14, (uint)RootNid);
+            WriteU64(Data, Sb + 16, (ulong)Nodes.Count);
+            WriteU64(Data, Sb + 24, 0);
+            WriteU32(Data, Sb + 32, 0);
+            WriteU32(Data, Sb + 36, (uint)Blocks);
+            WriteU32(Data, Sb + 40, 0);
+            WriteU32(Data, Sb + 44, (uint)SharedXattrBlock);
+
+            var Uuid = new Guid("6e79732d-6572-6f66-732d-696d61676500").ToByteArray();
+            Array.Copy(Uuid, 0, Data, Sb + 48, 16);
+
+            bool BigPclusters = Nodes.Exists(N => N.Compressed && N.BigPclusters);
+            uint Features = 0;
+            if (Nodes.Exists(N => N.Compressed))
+                Features |= 1;
+            if (BigPclusters)
+                Features |= 2;
+            if (Nodes.Exists(N => N.Inline))
+                Features |= 0x10;
+            if (XattrPrefixData != null)
+                Features |= 0x40;
+            bool HasFragments = Nodes.Exists(N => N.Hidden);
+            if (HasFragments)
+                Features |= 0x20;
+            WriteU32(Data, Sb + 80, Features);
+            WriteU16(Data, Sb + 84, BigPclusters ? 1u : 0u);
+
+            if (BigPclusters)
+            {
+                int Config = Sb + 128;
+                WriteU16(Data, Config, 14u);
+                WriteU16(Data, Config + 2, 0xFFFF);
+                WriteU16(Data, Config + 4, 16);
+            }
+            WriteU16(Data, Sb + 86, 0);
+            WriteU16(Data, Sb + 88, 0);
+            Data[Sb + 90] = 0;
+            Data[Sb + 91] = XattrPrefixData != null ? (byte)XattrPrefixes.Count : (byte)0;
+            WriteU32(Data, Sb + 92, XattrPrefixData != null ? (uint)(XattrPrefixBlock * BlockSize / 4) : 0u);
+            WriteU64(Data, Sb + 96, HasFragments ? Nodes.First(N => N.Hidden).Nid : 0);
+            Data[Sb + 104] = 0;
+            Data[Sb + 105] = 0;
+            WriteU32(Data, Sb + 108, 0);
+            WriteU64(Data, Sb + 112, 0);
+            WriteU64(Data, Sb + 120, 0);
+        }
+
+        private static void WriteXattrs(byte[] Image, Node Node, int InodeOffset)
+        {
+            if ((Node.XattrData == null) || (Node.XattrData.Length == 0))
+                return;
+
+            Array.Copy(Node.XattrData, 0, Image, InodeOffset + InodeSize, Node.XattrData.Length);
+        }
+        private void WriteInode(byte[] Image, Node Node, int Index)
+        {
+            int Offset = (int)(Node.Nid * InodeUnit);
+
+            if (Node.WholeFragment)
+            {
+                WriteU16(Image, Offset, 3);
+                WriteU16(Image, Offset + 2, (uint)Node.XattrCount);
+                WriteU16(Image, Offset + 4, (uint)((Node.Mode & 0xFFF) | TypeBits(Node.Type)));
+                WriteU16(Image, Offset + 6, 0);
+                WriteU64(Image, Offset + 8, (ulong)Node.Data.Length);
+                WriteU32(Image, Offset + 16, 0);
+                WriteU32(Image, Offset + 20, Node.Ino);
+                WriteU32(Image, Offset + 24, Node.User);
+                WriteU32(Image, Offset + 28, Node.Group);
+                WriteU64(Image, Offset + 32, 0);
+                WriteU32(Image, Offset + 40, 0);
+                WriteU32(Image, Offset + 44, Node.Nlink);
+                WriteXattrs(Image, Node, Offset);
+                WriteU64(Image, Offset + Node.HeaderRel, Node.FragmentOffset | (1UL << 63));
+                return;
+            }
+
+            WriteU16(Image, Offset, Node.Compressed ? (Node.BigPclusters ? 3u : 7u) : 1u);
+            WriteU16(Image, Offset + 2, (uint)Node.XattrCount);
+            WriteU16(Image, Offset + 4, (uint)((Node.Mode & 0xFFF) | TypeBits(Node.Type)));
+            WriteU16(Image, Offset + 6, 0);
+            WriteU64(Image, Offset + 8, (ulong)Node.Data.Length);
+            WriteU32(Image, Offset + 16, Node.Compressed ? (uint)Node.Groups.Sum(G => G.PhysicalBlocks) : DataAddress(Node));
+            WriteU32(Image, Offset + 20, Node.Ino);
+            WriteU32(Image, Offset + 24, Node.User);
+            WriteU32(Image, Offset + 28, Node.Group);
+            WriteU64(Image, Offset + 32, 0);
+            WriteU32(Image, Offset + 40, 0);
+            WriteU32(Image, Offset + 44, Node.Nlink);
+            WriteXattrs(Image, Node, Offset);
+
+            if (Node.Compressed)
+            {
+                int Header = Offset + Node.HeaderRel;
+                uint Advise = (uint)(Node.BigPclusters ? 2 : 1);
+                if (Node.Inline)
+                    Advise |= 8;
+                if (Node.PartialFragment)
+                    Advise |= 0x20;
+
+                WriteU32(Image, Header, Node.PartialFragment ? (uint)Node.FragmentOffset : 0);
+                WriteU16(Image, Header + 4, Advise);
+                if (Node.Inline)
+                    WriteU16(Image, Header + 2, (uint)Node.InlineLength);
+                Image[Header + 6] = 0;
+                Image[Header + 7] = 0;
+
+                if (Node.BigPclusters)
+                    WriteFullIndexes(Image, Node, Header);
+                else
+                    WriteCompactIndexes(Image, Node, Header);
+
+                if (Node.Inline)
+                {
+                    var Last = Node.Groups[Node.Groups.Count - 1];
+                    Array.Copy(Last.Data, Last.Data.Length - Node.InlineLength,
+                        Image, Node.InlineOffset, Node.InlineLength);
+                }
+            }
+        }
+
+        private void WriteFullIndexes(byte[] Image, Node Node, int Header)
+        {
+            int EntryBase = Header + 16;
+            int BlockOffset = 0;
+
+            foreach (var Group in Node.Groups)
+            {
+                int EntryOffset = EntryBase + Group.Lcn * 8;
+                int Physical = (Group.PhysicalBlocks == 0) ? 0 : (int)Node.StartBlock + BlockOffset;
+
+                if (Group.Compressed)
+                {
+                    WriteU16(Image, EntryOffset, 1);
+                    WriteU16(Image, EntryOffset + 2, 0);
+                    WriteU32(Image, EntryOffset + 4, (uint)Physical);
+
+                    for (int i = 1; i < Group.Count; i++)
+                    {
+                        int NonHead = EntryBase + (Group.Lcn + i) * 8;
+                        uint Delta0 = (uint)i;
+                        if ((i == 1) && (Group.PhysicalBlocks > 1))
+                            Delta0 = 0x800u | (uint)Group.PhysicalBlocks;
+
+                        WriteU16(Image, NonHead, 2);
+                        WriteU16(Image, NonHead + 2, BlockSize);
+                        WriteU16(Image, NonHead + 4, Delta0);
+                        WriteU16(Image, NonHead + 6, (uint)(Group.Count - i));
+                    }
+                }
+                else
+                {
+                    WriteU16(Image, EntryOffset, 0);
+                    WriteU16(Image, EntryOffset + 2, 0);
+                    WriteU32(Image, EntryOffset + 4, (uint)Physical);
+                }
+
+                BlockOffset += Group.PhysicalBlocks;
+            }
+        }
+        private static int CompactIndexBytes(int Total)
+        {
+            GetCompactLayout(Total, out int Initial, out int TwoB, out int FourBEnd);
+            return Initial * 4 + TwoB * 2 + ((FourBEnd + 1) / 2) * 8;
+        }
+
+        private static void GetCompactLayout(int Total, out int Initial, out int TwoB, out int FourBEnd)
+        {
+            if (Total < 6)
+            {
+                Initial = 0;
+                TwoB = 0;
+                FourBEnd = Total;
+                return;
+            }
+
+            Initial = 6;
+            TwoB = ((Total - Initial) / 16) * 16;
+            FourBEnd = Total - Initial - TwoB;
+        }
+
+        private void WriteCompactIndexes(byte[] Image, Node Node, int Header)
+        {
+            int Total = Node.TotalLclusters;
+            var Types = new int[Total];
+            var Physical = new int[Total];
+            var Delta0 = new int[Total];
+            var Delta1 = new int[Total];
+
+            int Block = 0;
+            foreach (var Group in Node.Groups)
+            {
+                if (Group.Compressed)
+                {
+                    Types[Group.Lcn] = 1;
+                    Physical[Group.Lcn] = (Group.PhysicalBlocks == 0) ? 0 : (int)Node.StartBlock + Block;
+                    for (int i = 1; i < Group.Count; i++)
+                    {
+                        int EntryLcn = Group.Lcn + i;
+                        Types[EntryLcn] = 2;
+                        Delta0[EntryLcn] = i;
+                        Delta1[EntryLcn] = Group.Count - i;
+                    }
+                }
+                else
+                {
+                    Types[Group.Lcn] = 0;
+                    Physical[Group.Lcn] = (Group.PhysicalBlocks == 0) ? 0 : (int)Node.StartBlock + Block;
+                }
+
+                Block++;
+            }
+
+            GetCompactLayout(Total, out int Initial, out int TwoB, out int FourBEnd);
+
+            int PackOffset = Header + 8;
+            int Lcn = 0;
+            int BlkAddr = (int)Node.StartBlock - 1;
+            bool DummyHead = true;
+
+            while (Initial > 0)
+            {
+                WriteCompactPack(Image, ref PackOffset, Types, Physical, Delta0, Delta1,
+                    ref Lcn, 2, 4, false, ref BlkAddr, ref DummyHead);
+                Initial -= 2;
+            }
+
+            while (TwoB > 0)
+            {
+                WriteCompactPack(Image, ref PackOffset, Types, Physical, Delta0, Delta1,
+                    ref Lcn, 16, 2, false, ref BlkAddr, ref DummyHead);
+                TwoB -= 16;
+            }
+
+            while (FourBEnd > 1)
+            {
+                WriteCompactPack(Image, ref PackOffset, Types, Physical, Delta0, Delta1,
+                    ref Lcn, 2, 4, false, ref BlkAddr, ref DummyHead);
+                FourBEnd -= 2;
+            }
+
+            if (FourBEnd > 0)
+            {
+                WriteCompactPack(Image, ref PackOffset, Types, Physical, Delta0, Delta1,
+                    ref Lcn, 2, 4, true, ref BlkAddr, ref DummyHead);
+            }
+        }
+
+        private void WriteCompactPack(byte[] Image, ref int PackOffset, int[] Types, int[] Physical,
+            int[] Delta0, int[] Delta1, ref int Lcn, int Count, int EntrySize, bool Final,
+            ref int BlkAddr, ref bool DummyHead)
+        {
+            int Lobits = 12;
+            int EncodeBits = (Count * EntrySize * 8 - 32) / Count;
+            int PackSize = Count * EntrySize;
+            int Base = BlkAddr;
+            int Bit = 0;
+
+            for (int i = 0; i < Count; i++)
+            {
+                int Value = 0;
+                if (Lcn < Types.Length)
+                {
+                    if (Types[Lcn] == 2)
+                    {
+                        int Offset = (i + 1 == Count) ? Delta1[Lcn] : Delta0[Lcn];
+                        Value = (2 << Lobits) | (Offset & (0x7FF));
+                    }
+                    else
+                    {
+                        if (DummyHead)
+                            BlkAddr++;
+
+                        DummyHead = true;
+                        Value = Types[Lcn] << Lobits;
+
+                        // Physical block addresses are implied by the compact base blkaddr.
+                    }
+
+                    Lcn++;
+                }
+                else if (DummyHead)
+                {
+                    BlkAddr++;
+                }
+
+                WriteBits(Image, PackOffset, ref Bit, Value, EncodeBits);
+            }
+
+            WriteU32(Image, PackOffset + PackSize - 4, (uint)Base);
+            PackOffset += PackSize;
+        }
+
+        private static void WriteBits(byte[] Data, int Offset, ref int Bit, int Value, int Count)
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                if ((Value & (1 << i)) != 0)
+                {
+                    int Pos = Offset + ((Bit + i) / 8);
+                    Data[Pos] |= (byte)(1 << ((Bit + i) % 8));
+                }
+            }
+            Bit += Count;
+        }
+        private uint DataAddress(Node Node)
+        {
+            if ((Node.Type == FilesystemItemType.Character) || (Node.Type == FilesystemItemType.Block))
+            {
+                uint Minor = Node.Minor & 0xFF;
+                uint Major = Node.Major & 0xFFF;
+                return Minor | (Major << 8) | ((Node.Minor & 0xFFFFFF00u) << 12);
+            }
+
+            return Node.StartBlock;
+        }
+
+        private static uint TypeBits(FilesystemItemType Type)
+        {
+            switch (Type)
+            {
+                case FilesystemItemType.Fifo: return 0x1000;
+                case FilesystemItemType.Character: return 0x2000;
+                case FilesystemItemType.Directory: return 0x4000;
+                case FilesystemItemType.Block: return 0x6000;
+                case FilesystemItemType.File: return 0x8000;
+                case FilesystemItemType.SymLink: return 0xA000;
+                case FilesystemItemType.Socket: return 0xC000;
+                default: return 0;
+            }
+        }
+
+        private static byte FileTypeOf(FilesystemItemType Type)
+        {
+            switch (Type)
+            {
+                case FilesystemItemType.File: return 1;
+                case FilesystemItemType.Directory: return 2;
+                case FilesystemItemType.Character: return 3;
+                case FilesystemItemType.Block: return 4;
+                case FilesystemItemType.Fifo: return 5;
+                case FilesystemItemType.Socket: return 6;
+                case FilesystemItemType.SymLink: return 7;
+                default: return 0;
+            }
+        }
+
+        private static int Align(int Value, int Alignment) =>
+            (Value + Alignment - 1) / Alignment * Alignment;
+
+        private static string Normalize(string Path)
+        {
+            if (String.IsNullOrEmpty(Path) || (Path == ".") || (Path == "/"))
+                return "/";
+
+            Path = Path.Replace('\\', '/').Trim('/');
+            return "/" + Path;
+        }
+
+        private static string NameOf(string Path) =>
+            Path.Substring(Path.LastIndexOf('/') + 1);
+
+        private static string ParentOf(string Path)
+        {
+            int Pos = Path.LastIndexOf('/');
+            return (Pos <= 0) ? "/" : Path.Substring(0, Pos);
+        }
+
+        private static void WriteU16(byte[] Data, int Offset, uint Value)
+        {
+            Data[Offset] = (byte)Value;
+            Data[Offset + 1] = (byte)(Value >> 8);
+        }
+
+        private static void WriteU32(byte[] Data, int Offset, uint Value)
+        {
+            Data[Offset] = (byte)Value;
+            Data[Offset + 1] = (byte)(Value >> 8);
+            Data[Offset + 2] = (byte)(Value >> 16);
+            Data[Offset + 3] = (byte)(Value >> 24);
+        }
+
+        private static void WriteU64(byte[] Data, int Offset, ulong Value)
+        {
+            WriteU32(Data, Offset, (uint)Value);
+            WriteU32(Data, Offset + 4, (uint)(Value >> 32));
+        }
+    }
+}

@@ -6,11 +6,19 @@ using System.Text;
 
 namespace NyaFs.Filesystem.Cpio
 {
-    class CpioFsReader : RawPacket, Universal.IFilesystemReader
+    public class CpioFsReader : RawPacket, Universal.IFilesystemReader, Universal.IRootFsInfo
     {
+        private readonly string ExpectedMagic;
         private List<Types.CpioNode> Nodes = new List<Types.CpioNode>();
 
-        public CpioFsReader(byte[] Data) : base(Data) { Init(); }
+        /// <summary>Parsed non-trailer entries, in archive order.</summary>
+        public IReadOnlyList<Types.CpioNode> Items => Nodes;
+
+        public CpioFsReader(byte[] Data, string expectedMagic = "070701") : base(Data)
+        {
+            ExpectedMagic = expectedMagic;
+            Init(); 
+        }
 
         public CpioFsReader(string Filename) : this(System.IO.File.ReadAllBytes(Filename)) { }
 
@@ -19,7 +27,7 @@ namespace NyaFs.Filesystem.Cpio
             long Offset = 0;
             while (Offset < Raw.Length)
             {
-                var FI = new Types.CpioFileInfo(Raw, Offset);
+                var FI = new Types.CpioFileInfo(Raw, Offset, ExpectedMagic);
 
                 if (FI.IsCorrectMagic)
                 {
@@ -44,6 +52,24 @@ namespace NyaFs.Filesystem.Cpio
                 return (Path[0] == '/') ? Path.Substring(1) : Path;
             else
                 return Path;
+        }
+
+        public bool TryGetRootFsItem(out uint User, out uint Group, out uint Mode)
+        {
+            foreach (var N in Nodes)
+            {
+                var P = UnifyPath(N.Path);
+                if ((P.Length == 0) || (P == "."))
+                {
+                    User = N.UserId;
+                    Group = N.GroupId;
+                    Mode = N.Mode & 0xFFF;
+                    return true;
+                }
+            }
+
+            User = Group = Mode = 0;
+            return false;
         }
 
         /// <summary>

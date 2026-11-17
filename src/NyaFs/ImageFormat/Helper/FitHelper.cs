@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,15 +19,38 @@ namespace NyaFs.ImageFormat.Helper
             return null;
         }
 
+        /// <summary>
+        /// Resolve the configuration node name for a FIT image.
+        /// Falls back to the first configuration when the requested name and the
+        /// 'default' property are both absent (valid for partial/device FIT images).
+        /// </summary>
+        public static string GetDefaultConfigNode(FlattenedDeviceTree.Types.Node Configurations, string RequestedConfig)
+        {
+            var Cfg = (RequestedConfig != null) ? RequestedConfig : Configurations.GetStringValue("default");
+
+            if ((Cfg == null) && (Configurations.Nodes.Count > 0))
+            {
+                Cfg = Configurations.Nodes[0].Name;
+                Log.Warning(0, $"No 'default' configuration; using '{Cfg}'.");
+            }
+
+            return Cfg;
+        }
+
         public static string GetFilesystemType(Types.FsType Fs)
         {
             switch(Fs)
             {
                 case Types.FsType.Cpio: return "cpio";
                 case Types.FsType.Ext2: return "ext2";
+                case Types.FsType.Ext3: return "ext3";
+                case Types.FsType.Ext4: return "ext4";
                 case Types.FsType.SquashFs: return "squashfs";
                 case Types.FsType.CramFs: return "cramfs";
                 case Types.FsType.RomFs: return "romfs";
+                case Types.FsType.UbiFs: return "ubifs";
+                case Types.FsType.Fat: return "fat";
+                case Types.FsType.F2fs: return "f2fs";
                 case Types.FsType.Unknown:
                 default:
                     return "unknown";
@@ -40,27 +63,33 @@ namespace NyaFs.ImageFormat.Helper
             {
                 case "cpio": return Types.FsType.Cpio;
                 case "ext2": return Types.FsType.Ext2;
+                case "ext3": return Types.FsType.Ext3;
+                case "ext4": return Types.FsType.Ext4;
                 case "squashfs": return Types.FsType.SquashFs;
                 case "cramfs": return Types.FsType.CramFs;
                 case "romfs": return Types.FsType.RomFs;
+                case "ubifs": return Types.FsType.UbiFs;
+                case "fat": return Types.FsType.Fat;
+                case "f2fs": return Types.FsType.F2fs;
                 default: return Types.FsType.Unknown;
             }
         }
 
-        public static Types.CompressionType DetectCompression(byte[] Raw)
+        public static Types.CompressionType DetectCompression(byte[] Raw) =>
+            DetectCompression(new ImageFormat.ImageData(Raw));
+
+        /// <summary>
+        /// Detect compression by asking the built-in compressor plugins (single source of truth).
+        /// </summary>
+        public static Types.CompressionType DetectCompression(ImageFormat.ImageData Raw)
         {
-            var Header16 = Raw.ReadUInt16(0);
-            switch (Header16)
+            foreach (var C in Plugins.BuiltinPlugins.Compressors)
             {
-                case 0x5a42: return Types.CompressionType.IH_COMP_BZIP2;
-                case 0x4C89: return Types.CompressionType.IH_COMP_LZO;
-                case 0x8b1f: return Types.CompressionType.IH_COMP_GZIP;
-                case 0x005d: return Types.CompressionType.IH_COMP_LZMA;
-                case 0x2204: return Types.CompressionType.IH_COMP_LZ4;
-                case 0xb528: return Types.CompressionType.IH_COMP_ZSTD;
-                case 0xfd37: return Types.CompressionType.IH_COMP_XZ;
-                default: return Types.CompressionType.IH_COMP_NONE;
+                if (C.DetectCompressor(Raw))
+                    return C.Compression;
             }
+
+            return Types.CompressionType.IH_COMP_NONE;
         }
 
         public static bool Is64BitArchitecture(Types.CPU Arch)
@@ -358,6 +387,7 @@ namespace NyaFs.ImageFormat.Helper
                 case "zstd": return Types.CompressionType.IH_COMP_ZSTD;
                 case "bzip2": return Types.CompressionType.IH_COMP_BZIP2;
                 case "lzo": return Types.CompressionType.IH_COMP_LZO;
+                case "xz": return Types.CompressionType.IH_COMP_XZ;
                 default:
                     Log.Error(0, $"Unsupported compression type: {Compression}");
                     throw new ArgumentException($"Unsupported compression type: {Compression}");
@@ -394,6 +424,7 @@ namespace NyaFs.ImageFormat.Helper
                 case Types.CompressionType.IH_COMP_LZ4: return Compressors.Lz4.CompressWithHeader(Source);
                 case Types.CompressionType.IH_COMP_BZIP2: return Compressors.Bzip2.CompressWithHeader(Source);
                 case Types.CompressionType.IH_COMP_ZSTD: return Compressors.ZStd.CompressWithHeader(Source);
+                case Types.CompressionType.IH_COMP_XZ: return Compressors.Xz.CompressWithHeader(Source);
                 default:
                     Log.Error(0, $"Unsupported compression type: {Compression}");
                     throw new ArgumentException($"Unsupported compression type: {Compression}");
@@ -432,17 +463,41 @@ namespace NyaFs.ImageFormat.Helper
             }
         }
 
+        public static byte[] CalcHash(string Algorithm, byte[] Data)
+        {
+            switch ((Algorithm ?? "sha1").ToLowerInvariant())
+            {
+                case "sha1": return CalcSHA1Hash(Data);
+                case "sha256": return CalcSHA256Hash(Data);
+                case "sha512": return CalcSHA512Hash(Data);
+                case "crc32":
+                    {
+                        var Value = HashHelper.Crc32(Data);
+                        return new[] { (byte)(Value >> 24), (byte)(Value >> 16), (byte)(Value >> 8), (byte)Value };
+                    }
+                default: return null;
+            }
+        }
+
         public static byte[] CalcSHA1Hash(byte[] Data)
         {
-            using (SHA1Managed sha1 = new SHA1Managed())
+            using (var sha1 = SHA1.Create())
             {
                 return sha1.ComputeHash(Data);
             }
         }
 
+        public static byte[] CalcSHA512Hash(byte[] Data)
+        {
+            using (var sha512 = SHA512.Create())
+            {
+                return sha512.ComputeHash(Data);
+            }
+        }
+
         public static byte[] CalcSHA256Hash(byte[] Data)
         {
-            using (SHA256Managed sha256 = new SHA256Managed())
+            using (var sha256 = SHA256.Create())
             {
                 return sha256.ComputeHash(Data);
             }

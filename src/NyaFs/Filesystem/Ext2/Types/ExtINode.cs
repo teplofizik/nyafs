@@ -185,6 +185,15 @@ namespace NyaFs.Filesystem.Ext2.Types
         }
 
         /// <summary>
+        /// Block number of the extended-attribute block (i_file_acl_lo, 0x68); 0 if none.
+        /// </summary>
+        public uint FileAcl
+        {
+            get { return ReadUInt32(0x68); }
+            set { WriteUInt32(0x68, value); }
+        }
+
+        /// <summary>
         /// Inode flags. Any of:
         /// 0x1	This file requires secure deletion (EXT4_SECRM_FL). (not implemented)
         /// 0x2	This file should be preserved, should undeletion be desired(EXT4_UNRM_FL). (not implemented)
@@ -257,6 +266,20 @@ namespace NyaFs.Filesystem.Ext2.Types
         }
 
         /// <summary>
+        /// Raw i_block area (60 bytes, 0x28..0x64): the classic block map or, for ext4, the extent tree root.
+        /// </summary>
+        public byte[] INodeBlockArea => ReadArray(0x28, 60);
+
+        /// <summary>
+        /// Overwrite the raw i_block area (60 bytes, 0x28..0x64), e.g. with an extent tree root.
+        /// </summary>
+        public void SetINodeBlockArea(byte[] Data)
+        {
+            if ((Data == null) || (Data.Length != 60)) throw new ArgumentException("i_block area must be 60 bytes");
+            WriteArray(0x28, Data, 60);
+        }
+
+        /// <summary>
         /// i_block[EXT4_N_BLOCKS=15] (0x28)
         /// </summary>
         public uint[] Block
@@ -265,7 +288,7 @@ namespace NyaFs.Filesystem.Ext2.Types
             set
             {
                 if (value == null) throw new ArgumentNullException("IMode Block must be not null value");
-                if (value.Length != 0x10) throw new ArgumentException("IMode Block length must be 15 dwords");
+                if (value.Length != 15) throw new ArgumentException("IMode Block length must be 15 dwords");
 
                 for(int i = 0; i < 15; i++)
                     WriteUInt32(0x28 + i * 4, value[i]); 
@@ -360,5 +383,10 @@ namespace NyaFs.Filesystem.Ext2.Types
             get { return ReadUInt16(0x7C); }
             set { WriteUInt16(0x7C, value); }
         }
+
+        public uint GetUInt16(long Offset) => ReadUInt16(Offset);
+        public uint GetUInt32(long Offset) => ReadUInt32(Offset);
+        public int GetByte(long Offset) => Convert.ToInt32(ReadByte(Offset));
+        public byte[] GetBytes(long Offset, long Size) => ReadArray(Offset, Size);
     }
 }

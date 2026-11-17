@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -9,8 +9,22 @@ namespace NyaFs.ImageFormat.Types
         Unknown,
         Cpio,
         Ext2,
+        Ext3,
+        Ext4,
         SquashFs,
         CramFs,
-        RomFs
+        RomFs,
+        Tar,
+        LittleFs,
+        Spiffs,
+        UbiFs,
+        Fat,
+        F2fs,
+        Iso9660,
+        ExFat,
+        EroFs,
+        Udf,
+        Yaffs2,
+        Jffs2
     }
 }

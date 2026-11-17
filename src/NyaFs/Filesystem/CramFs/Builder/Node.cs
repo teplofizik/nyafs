@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -33,9 +33,11 @@ namespace NyaFs.Filesystem.CramFs.Builder
 
         public virtual byte[] Content => null;
 
-        public Types.CrNode GenerateNode() => new Types.CrNode(Universal.Helper.FsHelper.GetLinuxMode(Type, Mode), 
+        protected virtual uint StoredSize => Convert.ToUInt32(Content?.Length ?? 0);
+
+        public Types.CrNode GenerateNode(bool BigEndian, bool WideInodes = false) => new Types.CrNode(Universal.Helper.FsHelper.GetLinuxMode(Type, Mode), 
                                                                User & 0xFFFF, Group & 0xFF,
-                                                               Convert.ToUInt32(Content?.Length ?? 0), 
-                                                               Filename);
+                                                               StoredSize, 
+                                                               Filename, BigEndian, WideInodes);
     }
 }

@@ -67,7 +67,7 @@ namespace NyaFs.Filesystem.Universal
 
             if (Path[0] == '/') Path = Path.Substring(1);
 
-            var Parts = Path.Split("/");
+            var Parts = Path.Split('/');
 
             Items.Dir Base = Root;
             string Rel = null;
@@ -109,7 +109,7 @@ namespace NyaFs.Filesystem.Universal
 
             if (Path[0] == '/') Path = Path.Substring(1);
 
-            var Parts = Path.Split("/");
+            var Parts = Path.Split('/');
 
             Items.Dir Base = Root; 
             string Rel = null;

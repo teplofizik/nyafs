@@ -13,6 +13,6 @@ namespace NyaFs.Filesystem.SquashFs.Builder.Nodes
             this.Target = Target;
         }
 
-        public override Types.SqInode GetINode() => new Types.Nodes.BasicSymLink(Mode, UId, GId, 1, Target);
+        public override Types.SqInode GetINode() => new Types.Nodes.BasicSymLink(Mode, UId, GId, 1, Target, XAttrIndex);
     }
 }

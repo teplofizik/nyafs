@@ -38,7 +38,7 @@ namespace NyaFs.Filesystem.SquashFs.Compression
 
         internal override byte[] Compress(byte[] Data)
         {
-            throw new NotImplementedException();
+            return NyaLZO.LZO1xCompressor.Compress(Data);
         }
 
         internal override byte[] Decompress(byte[] Data)

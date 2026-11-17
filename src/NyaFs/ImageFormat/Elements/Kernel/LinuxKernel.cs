@@ -16,8 +16,19 @@ namespace NyaFs.ImageFormat.Elements.Kernel
         /// </summary>
         public byte[] Image = null;
 
+        /// <summary>Canonical format reported by the loaded kernel plugin.</summary>
+        public string KernelFormat;
+
+        private readonly Dictionary<string, string> PluginOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        public void SetKernelOption(string Format, string Name, string Value) =>
+            PluginOptions[Format + "." + Name] = Value;
+
+        public string GetKernelOption(string Format, string Name, string DefaultValue = null) =>
+            PluginOptions.TryGetValue(Format + "." + Name, out string Value) ? Value : DefaultValue;
+
         /// <summary>
-        /// Загружено ли ядро
+        /// ����㦥�� �� ��
         /// </summary>
         public bool Loaded => (Image != null);
     }

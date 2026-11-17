@@ -1,6 +1,7 @@
-﻿using NyaFs.ImageFormat.Elements.Dtb;
+using NyaFs.ImageFormat.Elements.Dtb;
 using NyaFs.ImageFormat.Elements.Fs;
 using NyaFs.ImageFormat.Elements.Kernel;
+using NyaFs.ImageFormat.Plugins.Base;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -34,13 +35,26 @@ namespace NyaFs.Processor
         public ImageProcessor(Scripting.ScriptParser Parser, string[] PluginsDirs, bool LoadAll = false)
         {
             this.Parser = Parser;
+            Plugins.KeyStore = KeyStore;
+            LoadInternalPlugins();
+
+            var Loaded = new HashSet<string>();
             foreach (string Dir in PluginsDirs)
             {
-                if (System.IO.Directory.Exists(Dir))
+                if (string.IsNullOrEmpty(Dir))
+                    continue;
+
+                string Full;
+                try { Full = System.IO.Path.GetFullPath(Dir); } catch { continue; }
+
+                if (!Loaded.Add(Full))
+                    continue;
+
+                if (System.IO.Directory.Exists(Full))
                 {
-                    LoadPlugins(Dir);
-                    
-                    if(!LoadAll)
+                    LoadPlugins(Full);
+
+                    if (!LoadAll)
                         break;
                 }
             }
@@ -51,24 +65,85 @@ namespace NyaFs.Processor
 
         }
 
-        public void SetFs(LinuxFilesystem Fs) => Blob.SetFilesystem(0, Fs);
+        public void SetFs(LinuxFilesystem Fs)
+        {
+            if (ActiveNode != null)
+                ActiveNode.Fs = Fs;
+            Blob.SetFilesystem(0, Fs);
+        }
 
-        public void SetKernel(LinuxKernel Kernel) => Blob.SetKernel(0, Kernel);
+        public void SetKernel(LinuxKernel Kernel)
+        {
+            if (ActiveNode != null)
+                ActiveNode.Kernel = Kernel;
+            Blob.SetKernel(0, Kernel);
+        }
 
-        public void SetDeviceTree(DeviceTree Dtb) => Blob.SetDevTree(0, Dtb);
+        public void SetDeviceTree(DeviceTree Dtb)
+        {
+            if (ActiveNode != null)
+                ActiveNode.Dtb = Dtb;
+            Blob.SetDevTree(0, Dtb);
+        }
 
         public void Reset()
         {
             Blob = new ImageFormat.BaseImageBlob();
+            ActiveNode = null;
         }
 
-        public LinuxKernel GetKernel() => Blob.GetKernel(0);
+        public LinuxKernel GetKernel(bool CreateIfNotExists = false)
+        {
+            var Res = (ActiveNode?.Kernel) ?? Blob.GetKernel(0);
 
-        public LinuxFilesystem GetFs() => Blob.GetFilesystem(0);
+            if ((Res == null) && CreateIfNotExists)
+            {
+                Res = new LinuxKernel();
+                if (ActiveNode != null)
+                    ActiveNode.Kernel = Res;
+                Blob.SetKernel(0, Res);
+            }
 
-        public DeviceTree GetDevTree() => Blob.GetDevTree(0);
+            return Res;
+        }
+
+        public LinuxFilesystem GetFs(bool CreateIfNotExists = false)
+        {
+            var Res = (ActiveNode?.Fs) ?? Blob.GetFilesystem(0);
+
+            if ((Res == null) && CreateIfNotExists)
+            {
+                Res = new LinuxFilesystem();
+                if (ActiveNode != null)
+                    ActiveNode.Fs = Res;
+                Blob.SetFilesystem(0, Res);
+            }
+
+            return Res;
+        }
+
+        public DeviceTree GetDevTree(bool CreateIfNotExists = false)
+        {
+            var Res = (ActiveNode?.Dtb) ?? Blob.GetDevTree(0);
+
+            if((Res == null) && CreateIfNotExists)
+            {
+                Res = new DeviceTree();
+                if (ActiveNode != null)
+                    ActiveNode.Dtb = Res;
+                Blob.SetDevTree(0, Res);
+            }
+
+            return Res;
+        }
 
         public ImageFormat.BaseImageBlob GetBlob() => Blob;
+
+        /// <summary>User/profile key store shared by security-aware plugins.</summary>
+        public Keys.IKeyStore KeyStore = new Keys.FileKeyStore();
+
+        /// <summary>Currently selected plan node for use/import and editing.</summary>
+        public ImageFormat.ImageBuildNode ActiveNode { get; set; }
 
         public bool IsFsLoaded => Blob.IsProvidedFs;
 
@@ -79,10 +154,102 @@ namespace NyaFs.Processor
                 if (S.CheckCondition(this))
                 {
                     var Step = S.GetPreprocessed(Scope);
+                    if (Step == null)
+                        continue;
+
                     var Res = Step.Exec(this);
+                    if ((Res.Status != ScriptStepStatus.Error) && IsMutating(Step.Name))
+                    {
+                        if (IsFilesystemCommand(Step.Name))
+                            MarkDirty(ImageFormat.ImageKind.Filesystem);
+                        else
+                            MarkDirty();
+                    }
 
                     WriteLogLine(S, Res);
                 }
+            }
+        }
+
+        public void MarkDirty()
+        {
+            if (Blob.BuildPlan != null)
+                Blob.BuildPlan.MarkAllDirty();
+        }
+
+        public void MarkDirty(ImageFormat.ImageKind Kind)
+        {
+            if (Blob.BuildPlan == null)
+                return;
+
+            // When an element of the plan is selected, only its branch is dirty;
+            // otherwise keep the legacy behaviour (mark every element of the kind).
+            if ((ActiveNode != null) && Blob.BuildPlan.MarkDirty(ActiveNode.Path))
+                return;
+
+            Blob.BuildPlan.MarkDirty(Kind);
+        }
+
+        private static bool IsFilesystemCommand(string Name)
+        {
+            switch (Name)
+            {
+                case "dir":
+                case "file":
+                case "slink":
+                case "block":
+                case "char":
+                case "fifo":
+                case "sock":
+                case "rm":
+                case "chmod":
+                case "chown":
+                case "chgrp":
+                case "xattr":
+                case "mkfs":
+                case "pkg":
+                case "user":
+                case "group":
+                case "useradd":
+                case "usermod":
+                case "userdel":
+                case "groupadd":
+                case "groupdel":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsMutating(string Name)
+        {
+            switch (Name)
+            {
+                case "dir":
+                case "file":
+                case "slink":
+                case "block":
+                case "char":
+                case "fifo":
+                case "sock":
+                case "rm":
+                case "chmod":
+                case "chown":
+                case "chgrp":
+                case "xattr":
+                case "mkfs":
+                case "pkg":
+                case "set":
+                case "user":
+                case "group":
+                case "useradd":
+                case "usermod":
+                case "userdel":
+                case "groupadd":
+                case "groupdel":
+                    return true;
+                default:
+                    return false;
             }
         }
 
@@ -99,6 +266,36 @@ namespace NyaFs.Processor
             }
         }
 
+        private void ProcessPluginList(NyaPlugin[] PluginList)
+        {
+            foreach (var Plugin in PluginList)
+            {
+                if (Plugins.Load(Plugin))
+                {
+                    var CP = Plugin as Scripting.Plugins.CommandPlugin;
+                    if (CP != null)
+                    {
+                        var Generators = CP.GetGenerators();
+
+                        Parser.AddGenerators(Generators);
+                    }
+                }
+            }
+        }
+
+        public void LoadInternalPlugins()
+        {
+            var PluginList = new List<NyaPlugin>();
+
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Images);
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Filesystems);
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Kernels);
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Dtbs);
+            PluginList.AddRange(ImageFormat.Plugins.BuiltinPlugins.Compressors);
+
+            ProcessPluginList(PluginList.ToArray());
+        }
+
         public void LoadPlugins(string Path)
         {
             var Filenames = System.IO.Directory.GetFiles($"{Path}/", "*.dll");
@@ -108,20 +305,7 @@ namespace NyaFs.Processor
                 try
                 {
                     var PluginList = Plugins.LoadFromFile(F);
-
-                    foreach (var Plugin in PluginList)
-                    {
-                        if (Plugins.Load(Plugin))
-                        {
-                            var C = Plugin as Scripting.Plugins.CommandPlugin;
-                            if (C != null)
-                            {
-                                var Generators = C.GetGenerators();
-
-                                Parser.AddGenerators(Generators);
-                            }
-                        }
-                    }
+                    ProcessPluginList(PluginList);
                 }
                 catch (Exception E)
                 {

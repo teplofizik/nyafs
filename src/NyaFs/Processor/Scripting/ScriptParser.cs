@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -13,6 +13,10 @@ namespace NyaFs.Processor.Scripting
         {
             this.Base = Base;
         }
+
+        public ScriptStepGenerator[] GetGenerators() => Base.GetGenerators();
+
+        public ScriptStepGenerator GetGenerator(string Name) => Base.GetGenerator(Name);
 
         public Script ParseScript(string Filename)
         {
@@ -52,7 +56,12 @@ namespace NyaFs.Processor.Scripting
                     if (Temp == null)
                     {
                         if (P.First() == '"')
-                            Temp = P;
+                        {
+                            if ((P.Length > 1) && (P.Last() == '"'))
+                                Args.Add(P.Substring(1, P.Length - 2));
+                            else
+                                Temp = P;
+                        }
                         else
                             Args.Add(P);
                     }
@@ -111,7 +120,7 @@ namespace NyaFs.Processor.Scripting
             for (int i = 0; i < Lines.Length; i++)
             {
                 var TCmd = Lines[i].Trim();
-                if (TCmd.StartsWith('#')) continue;
+                if (TCmd.StartsWith("#")) continue;
                 if (TCmd.Length == 0) continue;
 
                 string Cond = ExtractCondition(TCmd);

@@ -90,7 +90,7 @@ namespace NyaFs.ImageFormat.Composite
             return true;
         }
 
-        private static string ResolvePath(string Path, string BaseDir)
+        public static string ResolvePath(string Path, string BaseDir)
         {
             if (String.IsNullOrEmpty(Path))
                 return Path;
@@ -117,6 +117,16 @@ namespace NyaFs.ImageFormat.Composite
         private static byte[] BuildFilesystem(string Format, string Directory, PlanContent Content,
             PluginRegistry Plugins, out string Error)
         {
+            var Fs = BuildFilesystemObject(Format, Directory, Content, out Error);
+            if (Fs == null)
+                return null;
+
+            return SerializeFilesystem(Fs, Format, Plugins, out Error);
+        }
+
+        /// <summary>Read a local directory into an in-memory filesystem object.</summary>
+        public static LinuxFilesystem BuildFilesystemObject(string Format, string Directory, PlanContent Content, out string Error)
+        {
             Error = null;
 
             var Fs = new LinuxFilesystem { FilesystemFormat = Format };
@@ -136,6 +146,14 @@ namespace NyaFs.ImageFormat.Composite
                 return null;
             }
 
+            return Fs;
+        }
+
+        /// <summary>Serialize an in-memory filesystem with the writer of the given format.</summary>
+        public static byte[] SerializeFilesystem(LinuxFilesystem Fs, string Format, PluginRegistry Plugins, out string Error)
+        {
+            Error = null;
+
             var Plugin = Plugins?.ResolveFilesystem(Format);
             var Writer = Plugin?.GetFilesystemWriter(Fs);
             if (Writer == null)
@@ -146,7 +164,7 @@ namespace NyaFs.ImageFormat.Composite
 
             if (!Writer.CheckFilesystem(Fs))
             {
-                Error = $"Filesystem ''{Format}'' cannot represent the content of the directory";
+                Error = $"Filesystem '{Format}' cannot represent the content of the directory";
                 return null;
             }
 

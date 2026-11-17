@@ -16,6 +16,9 @@ namespace NyaFs.ImageFormat.Composite
     {
         private readonly string Path;
 
+        /// <summary>Registry used to resolve filesystem/kernel/dtb writers (defaults to the ambient one).</summary>
+        public Plugins.PluginRegistry Registry { get; set; } = Plugins.PluginHost.Current;
+
         public AndroidImageWriter(string Path)
         {
             this.Path = Path;
@@ -156,11 +159,11 @@ namespace NyaFs.ImageFormat.Composite
             return Result;
         }
 
-        private static byte[] GetKernelData(LinuxKernel Kernel)
+        private byte[] GetKernelData(LinuxKernel Kernel)
         {
             if (!String.IsNullOrEmpty(Kernel.KernelFormat))
             {
-                var Plugin = PluginHost.Current.ResolveKernel(Kernel.KernelFormat);
+                var Plugin = (Registry ?? PluginHost.Current).ResolveKernel(Kernel.KernelFormat);
                 if ((Plugin != null) && Plugin.SupportWrite)
                 {
                     var Writer = Plugin.GetKernelWriter(Kernel);
@@ -175,10 +178,10 @@ namespace NyaFs.ImageFormat.Composite
             return Kernel.Image ?? Array.Empty<byte>();
         }
 
-        private static byte[] GetFilesystemData(LinuxFilesystem Fs)
+        private byte[] GetFilesystemData(LinuxFilesystem Fs)
         {
             Elements.Fs.Writer.Writer Writer = null;
-            var Plugin = PluginHost.Current.ResolveFilesystem(Fs.FilesystemFormat);
+            var Plugin = (Registry ?? PluginHost.Current).ResolveFilesystem(Fs.FilesystemFormat);
             if ((Plugin != null) && Plugin.SupportWrite)
                 Writer = Plugin.GetFilesystemWriter(Fs);
             if (Writer == null)
@@ -191,12 +194,12 @@ namespace NyaFs.ImageFormat.Composite
             return FitHelper.GetCompressedData(Writer.RawStream, Fs.Info.Compression);
         }
 
-        private static byte[] GetDtbData(Elements.Dtb.DeviceTree Dtb)
+        private byte[] GetDtbData(Elements.Dtb.DeviceTree Dtb)
         {
             if (Dtb == null)
                 return null;
 
-            var Plugin = PluginHost.Current.ResolveDtb(Dtb.DevtreeFormat);
+            var Plugin = (Registry ?? PluginHost.Current).ResolveDtb(Dtb.DevtreeFormat);
             if ((Plugin != null) && Plugin.SupportWrite)
             {
                 var Writer = Plugin.GetDevtreeWriter(Dtb);

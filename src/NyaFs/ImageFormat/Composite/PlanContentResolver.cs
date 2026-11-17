@@ -82,7 +82,7 @@ namespace NyaFs.ImageFormat.Composite
                     return true;
                 }
 
-                Data = BuildFilesystem(Format, DirPath, C, Plugins, out Error);
+                Data = BuildFilesystem(Format, DirPath, C, Node.Options, Node.Size, Node.SizeAuto, Plugins, out Error);
                 return true;
             }
 
@@ -115,10 +115,18 @@ namespace NyaFs.ImageFormat.Composite
         }
 
         private static byte[] BuildFilesystem(string Format, string Directory, PlanContent Content,
+            System.Collections.Generic.IDictionary<string, string> Options, long? Size, bool SizeAuto,
             PluginRegistry Plugins, out string Error)
         {
             var Fs = BuildFilesystemObject(Format, Directory, Content, out Error);
             if (Fs == null)
+                return null;
+
+            if (Size.HasValue && !SizeAuto &&
+                !Options.ContainsKey("size") && !Options.ContainsKey("fs-size"))
+                Fs.FsSize = Size.Value;
+
+            if (!FilesystemPlanOptions.Apply(Fs, Format, Options, Plugins, out Error))
                 return null;
 
             return SerializeFilesystem(Fs, Format, Plugins, out Error);

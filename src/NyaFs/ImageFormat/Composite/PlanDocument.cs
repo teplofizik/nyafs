@@ -63,6 +63,9 @@ namespace NyaFs.ImageFormat.Composite
         public readonly Dictionary<string, string> Options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public readonly List<PlanElement> Children = new List<PlanElement>();
 
+        /// <summary>Root content for filesystem layouts (e.g. `format: squashfs`).</summary>
+        public PlanContent Content;
+
         /// <summary>
         /// Remember where the schema lives so relative content paths and the sidecar
         /// blob cache can be resolved by the writers.
@@ -145,6 +148,9 @@ namespace NyaFs.ImageFormat.Composite
 
                 if (TryGet(Root, "options", out var RootOptions) && (RootOptions is YamlMappingNode RootOptionsMap))
                     ReadOptions(RootOptionsMap, Doc.Options, true);
+
+                if (TryGet(Root, "content", out var Content) && (Content is YamlMappingNode ContentMap))
+                    Doc.Content = ParseContent(ContentMap);
 
                 if (TryGet(Root, "children", out var Children) && (Children is YamlSequenceNode Sequence))
                 {

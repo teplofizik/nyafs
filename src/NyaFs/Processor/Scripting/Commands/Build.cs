@@ -48,14 +48,25 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (String.IsNullOrEmpty(Document.Format))
                     return new ScriptStepResult(ScriptStepStatus.Error, "Layout has no format");
 
+                PlanDocument.SetDocumentSource(Document.Options, Filename);
+
                 var Plugin = Processor.Plugins.ResolveImage(Document.Format);
                 if (Plugin == null)
-                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown container format '{Document.Format}'");
+                {
+                    var FsPlugin = Processor.Plugins.ResolveFilesystem(Document.Format);
+                    if (FsPlugin == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error,
+                            $"Unknown container or filesystem format '{Document.Format}'");
+
+                    var FsData = FilesystemImageBuilder.Build(Document, Processor.Plugins, out Error);
+                    if (FsData == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build image: {Error}");
+
+                    return Write(Output, FsData);
+                }
 
                 if (!Plugin.SupportLayout)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Format '{Plugin.Format}' does not support layout");
-
-                PlanDocument.SetDocumentSource(Document.Options, Filename);
 
                 var Root = Plugin.CreatePlan(Document, out Error);
                 if (Root == null)
@@ -68,6 +79,11 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Data == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build image: {Error}");
 
+                return Write(Output, Data);
+            }
+
+            private static ScriptStepResult Write(string Output, byte[] Data)
+            {
                 try
                 {
                     System.IO.File.WriteAllBytes(Output, Data);

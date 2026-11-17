@@ -88,14 +88,26 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (String.IsNullOrEmpty(Document.Format))
                     return new ScriptStepResult(ScriptStepStatus.Error, "Layout has no format");
 
+                PlanDocument.SetDocumentSource(Document.Options, Filename);
+
                 var Plugin = Processor.Plugins.ResolveImage(Document.Format);
                 if (Plugin == null)
-                    return new ScriptStepResult(ScriptStepStatus.Error, $"Unknown container format '{Document.Format}'");
+                {
+                    var FsPlugin = Processor.Plugins.ResolveFilesystem(Document.Format);
+                    if (FsPlugin == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error,
+                            $"Unknown container or filesystem format '{Document.Format}'");
+
+                    var FsData = FilesystemImageBuilder.Build(Document, Processor.Plugins, out Error);
+                    if (FsData == null)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid layout: {Error}");
+
+                    return new ScriptStepResult(ScriptStepStatus.Ok,
+                        $"Layout is valid: {Document.Format}, {FsData.Length} bytes.");
+                }
 
                 if (!Plugin.SupportLayout)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Format '{Plugin.Format}' does not support layout");
-
-                PlanDocument.SetDocumentSource(Document.Options, Filename);
 
                 var Root = Plugin.CreatePlan(Document, out Error);
                 if (Root == null)

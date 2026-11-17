@@ -60,6 +60,7 @@ namespace NyaFs.ImageFormat.Composite
 
         public int Schema = CurrentSchema;
         public string Format = "";
+        public long? Size;
         public readonly Dictionary<string, string> Options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public readonly List<PlanElement> Children = new List<PlanElement>();
 
@@ -144,6 +145,7 @@ namespace NyaFs.ImageFormat.Composite
                 }
 
                 Doc.Format = GetString(Root, "format", "");
+                Doc.Size = GetSize(Root, "size", out _);
                 ReadOptions(Root, Doc.Options);
 
                 if (TryGet(Root, "options", out var RootOptions) && (RootOptions is YamlMappingNode RootOptionsMap))
@@ -299,6 +301,8 @@ namespace NyaFs.ImageFormat.Composite
             Sb.Append("schema: ").Append(Schema).Append('\n');
             if (!String.IsNullOrEmpty(Format))
                 Sb.Append("format: ").Append(Quote(Format)).Append('\n');
+            if (Size.HasValue)
+                Sb.Append("size: ").Append(Hex(Size.Value)).Append('\n');
 
             if (Options.Count > 0)
             {

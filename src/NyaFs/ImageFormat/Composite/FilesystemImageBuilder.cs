@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using NyaFs.ImageFormat.Plugins;
 
 namespace NyaFs.ImageFormat.Composite
@@ -52,10 +52,76 @@ namespace NyaFs.ImageFormat.Composite
             if (Fs == null)
                 return null;
 
-            if (!FilesystemPlanOptions.Apply(Fs, Document.Format, Document.Options, Plugins, out Error))
+            var Options = new System.Collections.Generic.Dictionary<string, string>(
+                Document.Options, StringComparer.OrdinalIgnoreCase);
+            Options.Remove("size");
+            Options.Remove("fill");
+
+            if (!FilesystemPlanOptions.Apply(Fs, Document.Format, Options, Plugins, out Error))
                 return null;
 
-            return PlanContentResolver.SerializeFilesystem(Fs, Document.Format, Plugins, out Error);
+            var Data = PlanContentResolver.SerializeFilesystem(Fs, Document.Format, Plugins, out Error);
+            if (Data == null)
+                return null;
+
+            var Target = Document.Size;
+            if (!Target.HasValue && Document.Options.TryGetValue("size", out var SizeText))
+                Target = PlanDocument.ParseSize(SizeText, out _);
+            if (!Target.HasValue && (Fs.FsSize > 0))
+                Target = Fs.FsSize;
+
+            if (!Target.HasValue)
+                return Data;
+
+            if ((Fs.FsSize > 0) && (Fs.FsSize > Target.Value))
+            {
+                Error = $"fs-size 0x{Fs.FsSize:x} is larger than the target size 0x{Target.Value:x}";
+                return null;
+            }
+
+            if (Data.Length > Target.Value)
+            {
+                Error = $"Filesystem image is 0x{Data.Length:x} bytes, larger than the target size 0x{Target.Value:x}";
+                return null;
+            }
+
+            if (Data.Length == Target.Value)
+                return Data;
+
+            if (Target.Value > Int32.MaxValue)
+            {
+                Error = $"Target size 0x{Target.Value:x} is too large for a filesystem image";
+                return null;
+            }
+
+            var Result = new byte[(int)Target.Value];
+            Buffer.BlockCopy(Data, 0, Result, 0, Data.Length);
+
+            var Fill = GetFill(Document, Document.Format);
+            for (var I = Data.Length; I < Result.Length; I++)
+                Result[I] = Fill;
+
+            return Result;
+        }
+
+        private static byte GetFill(PlanDocument Document, string Format)
+        {
+            if (Document.Options.TryGetValue("fill", out var Text))
+            {
+                var Value = PlanDocument.ParseSize(Text, out _);
+                if (Value.HasValue)
+                    return (byte)Value.Value;
+            }
+
+            switch ((Format ?? "").ToLowerInvariant())
+            {
+                case "ubifs":
+                case "jffs2":
+                case "yaffs2":
+                    return 0xFF;
+                default:
+                    return 0x00;
+            }
         }
     }
 }

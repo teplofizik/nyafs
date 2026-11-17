@@ -31,8 +31,14 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(Elements.Fs.LinuxFilesystem Fs) =>
             new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Ext2.Ext3FsBuilder(DetectFixDiskSize(Fs)));
 
-        private uint DetectFixDiskSize(Elements.Fs.LinuxFilesystem Fs) =>
+        private uint DetectFixDiskSize(Elements.Fs.LinuxFilesystem Fs)
+        {
+            if (Fs.FsSize > 0)
+                return (uint)Fs.FsSize;
+
+            return
             Convert.ToUInt32(Fs.GetContentSize() * 2 + 0x100000).GetAligned(0x800000);
+        }
 
         /// <summary>ext3 stores uid/gid in 16-bit fields.</summary>
         public override bool CheckFilesystem(Elements.Fs.LinuxFilesystem Fs) => CheckUidGid(Fs, 0xFFFF, 0xFFFF);

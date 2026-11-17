@@ -70,10 +70,6 @@ namespace NyaFs.ImageFormat.Composite
             if (Node.Fs != null)
             {
                 var Format = !string.IsNullOrEmpty(Node.Format) ? Node.Format : Node.Fs.FilesystemFormat;
-                if (Node.Size.HasValue && !Node.SizeAuto &&
-                    !Node.Options.ContainsKey("size") && !Node.Options.ContainsKey("fs-size"))
-                    Node.Fs.FsSize = Node.Size.Value;
-
                 if (!FilesystemPlanOptions.Apply(Node.Fs, Format, Node.Options, Plugins, out Error))
                     return false;
 

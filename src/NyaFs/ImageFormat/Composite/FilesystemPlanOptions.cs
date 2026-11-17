@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using NyaFs.Filesystem.F2fs;
 using NyaFs.Filesystem.Jffs2;
@@ -44,6 +44,9 @@ namespace NyaFs.ImageFormat.Composite
                 if (Pair.Key.StartsWith("plan.", StringComparison.OrdinalIgnoreCase))
                     continue;
 
+                if (String.Equals(Pair.Key, "fill", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 if (!ApplyOne(Fs, Format, Plugin, Pair.Key.Trim(), Pair.Value.Trim(), out Error))
                     return false;
             }
@@ -65,9 +68,13 @@ namespace NyaFs.ImageFormat.Composite
 
             switch (Name)
             {
-                case "size":
                 case "fs-size":
-                    return SetSize(Fs, Value, out Error);
+                case "fs_size":
+                    return SetFsSize(Fs, Value, out Error);
+
+                case "size":
+                    Error = "Use node/slot 'size' for the region; use 'fs-size' for the filesystem volume";
+                    return false;
 
                 case "squashfs.compression":
                     return SetSquashFs(Fs, Value, out Error);
@@ -200,7 +207,7 @@ namespace NyaFs.ImageFormat.Composite
             return Plugin.TryApplyOption(Fs, Key, Value, out Error);
         }
 
-        private static bool SetSize(LinuxFilesystem Fs, string Value, out string Error)
+        private static bool SetFsSize(LinuxFilesystem Fs, string Value, out string Error)
         {
             Error = null;
             var Size = PlanDocument.ParseSize(Value, out var Auto);

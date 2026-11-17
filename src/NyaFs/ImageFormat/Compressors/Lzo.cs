@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using NyaLZO;
 using NyaIO.Data;
 
@@ -26,19 +26,24 @@ namespace NyaFs.ImageFormat.Compressors
             WriteBE16(Header, 0x0D, 0x0940);       // version needed
             Header[0x0F] = 1;                      // method: LZO1X-1
             Header[0x10] = 5;                      // level
-            WriteBE32(Header, 0x11, 0x00000003);   // F_ADLER32_D | F_ADLER32_C
+            WriteBE32(Header, 0x11, 0x00000001);   // F_ADLER32_D (no compressed checksum)
             WriteBE32(Header, 0x15, 0);            // mode
             WriteBE32(Header, 0x19, 0);            // mtime
             WriteBE32(Header, 0x1D, 0);            // gmtdiff
             Header[0x21] = 0;                      // file name length
-            WriteBE32(Header, 0x22, Adler32(Data));
+
+            // lzop validates an Adler32 checksum over the serialized header.
+            WriteBE32(Header, 0x22, Adler32(Header, 9, 0x22 - 9));
+
+            // One block: uncompressed size, compressed size, data checksum, data.
             WriteBE32(Header, 0x26, (uint)Data.Length);
             WriteBE32(Header, 0x2A, (uint)Compressed.Length);
-            WriteBE32(Header, 0x2E, Adler32(Compressed));
+            WriteBE32(Header, 0x2E, Adler32(Data));
 
-            var Result = new byte[Header.Length + Compressed.Length];
+            var Result = new byte[Header.Length + Compressed.Length + 4];
             Array.Copy(Header, 0, Result, 0, Header.Length);
             Array.Copy(Compressed, 0, Result, Header.Length, Compressed.Length);
+            // Zero-length block terminator (lzop reads blocks until src_len == 0).
             return Result;
         }
 
@@ -56,18 +61,20 @@ namespace NyaFs.ImageFormat.Compressors
             Data[Offset + 3] = (byte)Value;
         }
 
-        private static uint Adler32(byte[] Data)
+        private static uint Adler32(byte[] Data, int Offset, int Length)
         {
             const uint Mod = 65521;
             uint A = 1;
             uint B = 0;
-            foreach (var Value in Data)
+            for (var I = Offset; I < Offset + Length; I++)
             {
-                A = (A + Value) % Mod;
+                A = (A + Data[I]) % Mod;
                 B = (B + A) % Mod;
             }
             return (B << 16) | A;
         }
+
+        private static uint Adler32(byte[] Data) => Adler32(Data, 0, Data.Length);
 
         public static byte[] Decompress(byte[] Data)
         {

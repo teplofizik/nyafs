@@ -35,6 +35,8 @@ namespace NyaFs.Filesystem.UbiFs
 
         private readonly List<Volume> Volumes = new List<Volume>();
 
+        public int VolumeCount => Volumes.Count;
+
         public UbiBuilder(int PebSize, int PageSize)
         {
             this.PebSize = PebSize;
@@ -59,8 +61,8 @@ namespace NyaFs.Filesystem.UbiFs
             Fill(Image, 0xFF);
 
             // layout volume (2 PEBs) holds the volume table
-            WritePeb(Image, 0, UBI_LAYOUT_VOLUME_ID, 0, (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize));
-            WritePeb(Image, 1, UBI_LAYOUT_VOLUME_ID, 1, (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize));
+            WritePeb(Image, 0, UBI_LAYOUT_VOLUME_ID, 0, (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
+            WritePeb(Image, 1, UBI_LAYOUT_VOLUME_ID, 1, (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
             WriteVolumeTable(Image, 0);
             WriteVolumeTable(Image, 1);
 
@@ -68,9 +70,33 @@ namespace NyaFs.Filesystem.UbiFs
             int Peb = (int)UBI_LAYOUT_VOLUME_EBS;
             foreach (var V in Volumes)
             {
+                uint DataSize = 0;
+                uint UsedEbs = 0;
+                uint DataCrc = 0;
+                if (V.Type == VolumeType.UBI_VID_STATIC)
+                {
+                    int Total = 0;
+                    foreach (var L in V.Lebs)
+                        Total += Math.Min(L.Length, LebSize);
+
+                    var All = new byte[Total];
+                    int Pos = 0;
+                    foreach (var L in V.Lebs)
+                    {
+                        var Len = Math.Min(L.Length, LebSize);
+                        Array.Copy(L, 0, All, Pos, Len);
+                        Pos += Len;
+                    }
+
+                    DataSize = (uint)Total;
+                    UsedEbs = (uint)V.Lebs.Count;
+                    DataCrc = Crc32.CalcCrc(All);
+                }
+
                 for (int i = 0; i < V.Lebs.Count; i++)
                 {
-                    WritePeb(Image, Peb, V.Id, (uint)i, (uint)(V.Lebs.Count * LebSize));
+                    WritePeb(Image, Peb, V.Id, (uint)i, DataSize,
+                        V.Type, UsedEbs, DataCrc);
 
                     var Leb = V.Lebs[i];
                     Array.Copy(Leb, 0, Image, (long)Peb * PebSize + DataOffset, Math.Min(Leb.Length, LebSize));
@@ -82,7 +108,8 @@ namespace NyaFs.Filesystem.UbiFs
         }
 
         /// <summary>Write the EC header, the VID header and the (zero/0xFF) padding of one PEB.</summary>
-        private void WritePeb(byte[] Image, int Peb, uint VolId, uint Lnum, uint DataSize)
+        private void WritePeb(byte[] Image, int Peb, uint VolId, uint Lnum, uint DataSize,
+            VolumeType Type = VolumeType.UBI_VID_DYNAMIC, uint UsedEbs = 0, uint DataCrc = 0)
         {
             long Base = (long)Peb * PebSize;
 
@@ -99,15 +126,15 @@ namespace NyaFs.Filesystem.UbiFs
             long Vid = Base + PageSize;
             WriteBE32(Image, Vid + 0x00, UBI_VID_HDR_MAGIC);
             Image[Vid + 0x04] = (byte)UBI_VERSION;
-            Image[Vid + 0x05] = (byte)VolumeType.UBI_VID_DYNAMIC; // vol_type
+            Image[Vid + 0x05] = (byte)Type;                        // vol_type
             Image[Vid + 0x06] = 0;                                // copy_flag
             Image[Vid + 0x07] = 0;                                // compat
             WriteBE32(Image, Vid + 0x08, VolId);
             WriteBE32(Image, Vid + 0x0C, Lnum);
-            WriteBE32(Image, Vid + 0x14, 0);                      // data_size (0 for dynamic volumes)
-            WriteBE32(Image, Vid + 0x18, 0);                      // used_ebs = 0 for dynamic volumes
+            WriteBE32(Image, Vid + 0x14, (Type == VolumeType.UBI_VID_STATIC) ? DataSize : 0);
+            WriteBE32(Image, Vid + 0x18, (Type == VolumeType.UBI_VID_STATIC) ? UsedEbs : 0);
             WriteBE32(Image, Vid + 0x1C, 0);                      // data_pad
-            WriteBE32(Image, Vid + 0x20, 0);                      // data_crc (0 for dynamic volumes)
+            WriteBE32(Image, Vid + 0x20, (Type == VolumeType.UBI_VID_STATIC) ? DataCrc : 0);
             WriteBE64(Image, Vid + 0x28, 0);                      // sqnum
             WriteBE32(Image, Vid + 0x3C, Crc32.CalcCrc(Slice(Image, Vid, 0x3C)));
         }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using NyaFs.ImageFormat.Plugins;
 
 namespace NyaFs.ImageFormat.Composite
@@ -36,6 +36,14 @@ namespace NyaFs.ImageFormat.Composite
 
             if (Node.Children.Count > 0)
             {
+                if (Node.Format == "ubi")
+                {
+                    Node.Options["plan.base"] = BaseDir ?? "";
+                    Node.Options["plan.blobs"] = BlobDir ?? "";
+                    Data = UbiImageBuilder.Build(Node, Plugins, out Error);
+                    return Data != null;
+                }
+
                 if (!PlanMaterializer.Apply(Node, Plugins, BaseDir, BlobDir, out var MaterializeError))
                 {
                     Error = MaterializeError;

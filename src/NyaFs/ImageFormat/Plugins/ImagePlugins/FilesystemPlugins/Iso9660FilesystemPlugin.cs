@@ -26,7 +26,15 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
             new Elements.Fs.Reader.BaseFsReader(Types.FsType.Iso9660, new Filesystem.Iso9660.Iso9660Reader(Data));
 
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(LinuxFilesystem Fs) =>
-            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Iso9660.Iso9660Builder());
+            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Iso9660.Iso9660Builder
+            {
+                BootImagePath = Fs.IsoBootImage,
+                BootLoadSectors = Fs.IsoBootLoadSectors,
+                BootLoadSegment = Fs.IsoBootLoadSegment,
+                BootMediaType = Fs.IsoBootMediaType,
+                BootSystemType = Fs.IsoBootSystemType,
+                BootIdentifier = Fs.IsoBootIdentifier
+            });
 
         public override bool CheckFilesystem(LinuxFilesystem Fs) => true;
     }

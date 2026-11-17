@@ -60,6 +60,17 @@ namespace NyaFs.ImageFormat.Elements.Fs
         public int EroFsCompressionLevel = 10;
         public readonly List<string> EroFsXattrPrefixes = new List<string>();
 
+        /// <summary>El Torito boot image path inside the ISO tree (iso9660).</summary>
+        public string IsoBootImage;
+
+        /// <summary>El Torito boot load size in 512-byte sectors (0 = auto).</summary>
+        public int IsoBootLoadSectors = 0;
+
+        public ushort IsoBootLoadSegment = 0;
+        public byte IsoBootMediaType = 0;
+        public byte IsoBootSystemType = 0;
+        public string IsoBootIdentifier = "NYAFS";
+
         /// <summary>Write UDF with a virtual allocation table (VAT).</summary>
         public bool UdfVat = false;
 

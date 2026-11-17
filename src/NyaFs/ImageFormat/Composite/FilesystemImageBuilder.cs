@@ -64,6 +64,14 @@ namespace NyaFs.ImageFormat.Composite
             if (Data == null)
                 return null;
 
+            if (!String.IsNullOrWhiteSpace(Content.Compression))
+            {
+                if (!PlanCompression.TryApply(Data, Content.Compression, Plugins, out var Compressed, out Error))
+                    return null;
+
+                Data = Compressed;
+            }
+
             var Target = Document.Size;
             if (!Target.HasValue && Document.Options.TryGetValue("size", out var SizeText))
                 Target = PlanDocument.ParseSize(SizeText, out _);

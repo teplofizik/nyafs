@@ -5,6 +5,8 @@ using System.Linq;
 using System.Security.Cryptography;
 using NyaFs.ImageFormat;
 using NyaFs.ImageFormat.Composite;
+using NyaFs.ImageFormat.Elements.Fs;
+using NyaFs.ImageFormat.Plugins;
 using NyaFs.Processor.Scripting.Helper;
 
 namespace NyaFs.Processor.Scripting.Commands
@@ -68,7 +70,8 @@ namespace NyaFs.Processor.Scripting.Commands
                 var OutPath = System.IO.Path.GetFullPath(Output);
                 var BlobDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OutPath) ?? ".",
                     System.IO.Path.GetFileName(OutPath) + ".blobs");
-                var Document = FromTree(Tree, BlobDir);
+                var FilesDir = OutPath + ".files";
+                var Document = FromTree(Tree, BlobDir, FilesDir, Processor.Plugins);
 
                 System.IO.File.WriteAllText(OutPath, Document.ToYaml());
                 return new ScriptStepResult(ScriptStepStatus.Ok,
@@ -118,7 +121,7 @@ namespace NyaFs.Processor.Scripting.Commands
             }
         }
 
-        private static PlanDocument FromTree(ImageNode Root, string BlobDir)
+        private static PlanDocument FromTree(ImageNode Root, string BlobDir, string FilesDir, PluginRegistry Plugins)
         {
             var Doc = new PlanDocument
             {
@@ -129,13 +132,20 @@ namespace NyaFs.Processor.Scripting.Commands
             foreach (var Option in Root.Options)
                 Doc.Options[Option.Key] = Option.Value;
 
+            if (TryExportFilesystem(Root, FilesDir, Plugins, "root", out var RootDir, out var RootCompression))
+            {
+                Doc.Content = new PlanContent { Dir = RootDir, Compression = RootCompression };
+                Doc.Size = (Root.Size > 0) ? Root.Size : (long?)null;
+                return Doc;
+            }
+
             foreach (var Child in Root.Children)
-                Doc.Children.Add(FromNode(Child, BlobDir));
+                Doc.Children.Add(FromNode(Child, BlobDir, FilesDir, Plugins));
 
             return Doc;
         }
 
-        private static PlanElement FromNode(ImageNode Node, string BlobDir)
+        private static PlanElement FromNode(ImageNode Node, string BlobDir, string FilesDir, PluginRegistry Plugins)
         {
             var E = new PlanElement
             {
@@ -149,7 +159,11 @@ namespace NyaFs.Processor.Scripting.Commands
             foreach (var Option in Node.Options)
                 E.Options[Option.Key] = Option.Value;
 
-            if (Node.Raw != null)
+            if (TryExportFilesystem(Node, FilesDir, Plugins, Node.Path, out var ContentDir, out var Compression))
+            {
+                E.Content = new PlanContent { Dir = ContentDir, Compression = Compression };
+            }
+            else if (Node.Raw != null)
             {
                 var Sha = Sha256Hex(Node.Raw);
                 System.IO.Directory.CreateDirectory(BlobDir);
@@ -162,9 +176,113 @@ namespace NyaFs.Processor.Scripting.Commands
             }
 
             foreach (var Child in Node.Children)
-                E.Children.Add(FromNode(Child, BlobDir));
+                E.Children.Add(FromNode(Child, BlobDir, FilesDir, Plugins));
 
             return E;
+        }
+
+        /// <summary>
+        /// Filesystem leaves are exported as an editable directory (plus the
+        /// packaging compression) instead of an immutable blob. If extraction is
+        /// not possible (special nodes, unknown reader), the caller falls back
+        /// to an immutable content.file.
+        /// </summary>
+        private static bool TryExportFilesystem(ImageNode Node, string FilesDir, PluginRegistry Plugins,
+            string RelPath, out string DirPath, out string Compression)
+        {
+            DirPath = null;
+            Compression = null;
+
+            if ((Node == null) || Node.IsContainer || (Node.Raw == null) ||
+                (Node.Kind != ImageKind.Filesystem) || String.IsNullOrEmpty(Node.Format))
+                return false;
+
+            var Data = Node.Raw;
+            if (Node.Compression != NyaFs.ImageFormat.Types.CompressionType.IH_COMP_NONE)
+            {
+                var Compressor = Plugins?.GetCompressors()
+                    .FirstOrDefault(C => C.Compression == Node.Compression);
+                if (Compressor == null)
+                    return false;
+
+                try { Data = Compressor.Decompress(Data); }
+                catch { return false; }
+
+                if (Data == null)
+                    return false;
+            }
+
+            var Plugin = Plugins?.ResolveFilesystem(Node.Format);
+            var Reader = Plugin?.GetFilesystemReader(Data);
+            if (Reader == null)
+                return false;
+
+            var Fs = new LinuxFilesystem { FilesystemFormat = Node.Format };
+            try { Reader.ReadToFs(Fs); }
+            catch { return false; }
+
+            var Rel = String.IsNullOrEmpty(RelPath) ? "root" : RelPath.Replace('\\', '/');
+            var Target = System.IO.Path.Combine(FilesDir, Rel.Replace('/', System.IO.Path.DirectorySeparatorChar));
+
+            try
+            {
+                if (System.IO.Directory.Exists(Target))
+                    System.IO.Directory.Delete(Target, true);
+                System.IO.Directory.CreateDirectory(Target);
+
+                if (!WriteDirectory(Fs.Fs.Root, Target))
+                    return false;
+            }
+            catch
+            {
+                return false;
+            }
+
+            DirPath = System.IO.Path.GetFileName(FilesDir) + "/" + Rel;
+            if (Node.Compression != NyaFs.ImageFormat.Types.CompressionType.IH_COMP_NONE)
+                Compression = PlanCompression.NameOf(Node.Compression);
+
+            return true;
+        }
+
+        private static bool WriteDirectory(Filesystem.Universal.Items.Dir Dir, string Target)
+        {
+            foreach (var Item in Dir.Items)
+            {
+                var Name = Item.ShortFilename;
+                if (String.IsNullOrEmpty(Name) ||
+                    (Name.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0))
+                    return false;
+
+                var Full = System.IO.Path.Combine(Target, Name);
+
+                if (Item is Filesystem.Universal.Items.Dir SubDir)
+                {
+                    System.IO.Directory.CreateDirectory(Full);
+                    if (!WriteDirectory(SubDir, Full))
+                        return false;
+                }
+                else if (Item is Filesystem.Universal.Items.File File)
+                {
+                    System.IO.File.WriteAllBytes(Full, File.Content ?? Array.Empty<byte>());
+                }
+                else if (Item is Filesystem.Universal.Items.SymLink Link)
+                {
+#if NETSTANDARD2_0
+                    return false;
+#else
+                    System.IO.File.CreateSymbolicLink(Full, Link.Target);
+#endif
+                }
+                else
+                {
+                    // Device/FIFO/socket nodes cannot be represented on the host
+                    // filesystem reliably; keep the immutable blob instead.
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static string Sha256Hex(byte[] Data)

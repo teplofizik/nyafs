@@ -317,6 +317,21 @@ namespace NyaFs.ImageFormat.Composite
                 }
             }
 
+            if (Content != null)
+            {
+                Sb.Append("content:\n");
+                if (Content.File != null)
+                    Sb.Append("  file: ").Append(Quote(Content.File)).Append('\n');
+                if (Content.Dir != null)
+                    Sb.Append("  dir: ").Append(Quote(Content.Dir)).Append('\n');
+                if (Content.Blob != null)
+                    Sb.Append("  blob: ").Append(Quote(Content.Blob)).Append('\n');
+                if (Content.Empty)
+                    Sb.Append("  empty: true\n");
+                if (Content.Compression != null)
+                    Sb.Append("  compression: ").Append(Quote(Content.Compression)).Append('\n');
+            }
+
             if (Children.Count > 0)
             {
                 Sb.Append("children:\n");

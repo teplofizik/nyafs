@@ -30,6 +30,12 @@ namespace NyaFs.ImageFormat.Composite
 
             if (C.Empty)
             {
+                if (!String.IsNullOrWhiteSpace(C.Compression))
+                {
+                    Error = $"Content of '{Node.Path}' is empty and cannot be compressed";
+                    return true;
+                }
+
                 Skip = true;
                 return true;
             }
@@ -44,7 +50,7 @@ namespace NyaFs.ImageFormat.Composite
                 }
 
                 Data = System.IO.File.ReadAllBytes(FilePath);
-                return true;
+                return ApplyCompression(C, ref Data, Plugins, out Error);
             }
 
             if (!String.IsNullOrEmpty(C.Blob))
@@ -58,7 +64,7 @@ namespace NyaFs.ImageFormat.Composite
                     if (System.IO.File.Exists(BlobPath))
                     {
                         Data = System.IO.File.ReadAllBytes(BlobPath);
-                        return true;
+                        return ApplyCompression(C, ref Data, Plugins, out Error);
                     }
                 }
 
@@ -83,10 +89,32 @@ namespace NyaFs.ImageFormat.Composite
                 }
 
                 Data = BuildFilesystem(Format, DirPath, C, Node.Options, Plugins, out Error);
-                return true;
+                if (Data == null)
+                    return true;
+
+                return ApplyCompression(C, ref Data, Plugins, out Error);
             }
 
             Error = $"Content of '{Node.Path}' has no source (file/dir/blob/empty)";
+            return true;
+        }
+
+        private static bool ApplyCompression(PlanContent Content, ref byte[] Data,
+            PluginRegistry Plugins, out string Error)
+        {
+            if (String.IsNullOrWhiteSpace(Content.Compression))
+            {
+                Error = null;
+                return true;
+            }
+
+            if (!PlanCompression.TryApply(Data, Content.Compression, Plugins, out var Result, out Error))
+            {
+                Data = null;
+                return true;
+            }
+
+            Data = Result;
             return true;
         }
 

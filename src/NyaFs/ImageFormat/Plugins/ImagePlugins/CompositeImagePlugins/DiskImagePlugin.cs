@@ -104,5 +104,22 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
 
             return Build(Blob, out Error);
         }
+
+        public override bool SupportsStreaming => true;
+
+        public override bool BuildTo(System.IO.Stream Output, BaseImageBlob Blob,
+            PluginRegistry Plugins, out string Error)
+        {
+            var Root = Blob?.BuildPlan?.Root;
+            if ((Root != null) && (Root.Raw == null))
+                return DiskImageBuilder.BuildTo(Output, Root, Plugins, out Error);
+
+            var Data = Build(Blob, Plugins, out Error);
+            if (Data == null)
+                return false;
+
+            Output.Write(Data, 0, Data.Length);
+            return true;
+        }
     }
 }

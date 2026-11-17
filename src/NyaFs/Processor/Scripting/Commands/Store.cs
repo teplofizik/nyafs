@@ -290,6 +290,29 @@ namespace NyaFs.Processor.Scripting.Commands
                             if (!FormatMatch)
                                 continue;
 
+                            if (Plugin.SupportsStreaming)
+                            {
+                                try
+                                {
+                                    using (var Stream = System.IO.File.Create(Path))
+                                    {
+                                        if (!Plugin.BuildTo(Stream, Processor.GetBlob(), Processor.Plugins, out var StreamError))
+                                        {
+                                            Stream.Close();
+                                            System.IO.File.Delete(Path);
+                                            return new ScriptStepResult(ScriptStepStatus.Error, StreamError ?? $"Cannot build {Format} image");
+                                        }
+                                    }
+                                }
+                                catch (Exception E)
+                                {
+                                    try { System.IO.File.Delete(Path); } catch { }
+                                    return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot write {Path}: {E.Message}");
+                                }
+
+                                return new ScriptStepResult(ScriptStepStatus.Ok, $"Images are stored to file {Path} as {Format} image!");
+                            }
+
                             var Data = Plugin.Build(Processor.GetBlob(), Processor.Plugins, out var Error);
                             if (Data == null)
                                 return new ScriptStepResult(ScriptStepStatus.Error, Error ?? $"Cannot build {Format} image");

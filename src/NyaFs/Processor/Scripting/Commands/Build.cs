@@ -75,6 +75,32 @@ namespace NyaFs.Processor.Scripting.Commands
                 PlanDocument.SetSource(Root, Filename);
 
                 var Blob = new BaseImageBlob { BuildPlan = new ImageBuildPlan(Root) };
+
+                if (Plugin.SupportsStreaming)
+                {
+                    try
+                    {
+                        using (var Stream = System.IO.File.Create(Output))
+                        {
+                            if (!Plugin.BuildTo(Stream, Blob, Processor.Plugins, out Error))
+                            {
+                                Stream.Close();
+                                System.IO.File.Delete(Output);
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build image: {Error}");
+                            }
+                        }
+                    }
+                    catch (Exception E)
+                    {
+                        try { System.IO.File.Delete(Output); } catch { }
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot write {Output}: {E.Message}");
+                    }
+
+                    var Size = new System.IO.FileInfo(Output).Length;
+                    return new ScriptStepResult(ScriptStepStatus.Ok,
+                        $"Image is built to {Output} ({Size} bytes).");
+                }
+
                 var Data = Plugin.Build(Blob, Processor.Plugins, out Error);
                 if (Data == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build image: {Error}");

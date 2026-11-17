@@ -65,24 +65,42 @@ namespace NyaFs.Processor
 
         }
 
-        public void SetFs(LinuxFilesystem Fs) => Blob.SetFilesystem(0, Fs);
+        public void SetFs(LinuxFilesystem Fs)
+        {
+            if (ActiveNode != null)
+                ActiveNode.Fs = Fs;
+            Blob.SetFilesystem(0, Fs);
+        }
 
-        public void SetKernel(LinuxKernel Kernel) => Blob.SetKernel(0, Kernel);
+        public void SetKernel(LinuxKernel Kernel)
+        {
+            if (ActiveNode != null)
+                ActiveNode.Kernel = Kernel;
+            Blob.SetKernel(0, Kernel);
+        }
 
-        public void SetDeviceTree(DeviceTree Dtb) => Blob.SetDevTree(0, Dtb);
+        public void SetDeviceTree(DeviceTree Dtb)
+        {
+            if (ActiveNode != null)
+                ActiveNode.Dtb = Dtb;
+            Blob.SetDevTree(0, Dtb);
+        }
 
         public void Reset()
         {
             Blob = new ImageFormat.BaseImageBlob();
+            ActiveNode = null;
         }
 
         public LinuxKernel GetKernel(bool CreateIfNotExists = false)
         {
-            var Res = Blob.GetKernel(0);
+            var Res = (ActiveNode?.Kernel) ?? Blob.GetKernel(0);
 
             if ((Res == null) && CreateIfNotExists)
             {
                 Res = new LinuxKernel();
+                if (ActiveNode != null)
+                    ActiveNode.Kernel = Res;
                 Blob.SetKernel(0, Res);
             }
 
@@ -91,11 +109,13 @@ namespace NyaFs.Processor
 
         public LinuxFilesystem GetFs(bool CreateIfNotExists = false)
         {
-            var Res = Blob.GetFilesystem(0);
+            var Res = (ActiveNode?.Fs) ?? Blob.GetFilesystem(0);
 
             if ((Res == null) && CreateIfNotExists)
             {
                 Res = new LinuxFilesystem();
+                if (ActiveNode != null)
+                    ActiveNode.Fs = Res;
                 Blob.SetFilesystem(0, Res);
             }
 
@@ -104,11 +124,13 @@ namespace NyaFs.Processor
 
         public DeviceTree GetDevTree(bool CreateIfNotExists = false)
         {
-            var Res = Blob.GetDevTree(0);
+            var Res = (ActiveNode?.Dtb) ?? Blob.GetDevTree(0);
 
             if((Res == null) && CreateIfNotExists)
             {
                 Res = new DeviceTree();
+                if (ActiveNode != null)
+                    ActiveNode.Dtb = Res;
                 Blob.SetDevTree(0, Res);
             }
 
@@ -157,8 +179,15 @@ namespace NyaFs.Processor
 
         public void MarkDirty(ImageFormat.ImageKind Kind)
         {
-            if (Blob.BuildPlan != null)
-                Blob.BuildPlan.MarkDirty(Kind);
+            if (Blob.BuildPlan == null)
+                return;
+
+            // When an element of the plan is selected, only its branch is dirty;
+            // otherwise keep the legacy behaviour (mark every element of the kind).
+            if ((ActiveNode != null) && Blob.BuildPlan.MarkDirty(ActiveNode.Path))
+                return;
+
+            Blob.BuildPlan.MarkDirty(Kind);
         }
 
         private static bool IsFilesystemCommand(string Name)

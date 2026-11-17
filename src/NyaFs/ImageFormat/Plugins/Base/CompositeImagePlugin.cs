@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using ZstdSharp;
@@ -102,6 +102,19 @@ namespace NyaFs.ImageFormat.Plugins.Base
         /// <summary>Can this composite format be built from the loaded blob.</summary>
         public virtual bool SupportWrite => false;
 
+        /// <summary>Can an empty plan (layout) be created for this format.</summary>
+        public virtual bool SupportLayout => false;
+
+        /// <summary>
+        /// Create a build plan root from a declarative layout (YAML/JSON). The core only
+        /// orchestrates; the plugin validates its options and fills the node tree.
+        /// </summary>
+        public virtual ImageBuildNode CreatePlan(ImageFormat.Composite.PlanDocument Document, out string Error)
+        {
+            Error = "Layout is not supported for " + Format;
+            return null;
+        }
+
         /// <summary>Keep opaque children in the loaded plan even when no nested reader accepts them.</summary>
         public virtual bool PreserveUnknownChildren => false;
 
@@ -111,5 +124,12 @@ namespace NyaFs.ImageFormat.Plugins.Base
             Error = null;
             return null;
         }
+
+        /// <summary>
+        /// Build with an explicit plugin registry (used when a layout has to serialize
+        /// nested filesystems/kernels by format). Defaults to the legacy entry point.
+        /// </summary>
+        public virtual byte[] Build(BaseImageBlob Blob, Plugins.PluginRegistry Plugins, out string Error) =>
+            Build(Blob, out Error);
     }
 }

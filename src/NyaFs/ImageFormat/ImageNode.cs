@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace NyaFs.ImageFormat
 {
@@ -52,6 +52,9 @@ namespace NyaFs.ImageFormat
 
         /// <summary>Size of this element's payload in bytes.</summary>
         public long Size = 0;
+
+        /// <summary>Offset of this element inside its parent container (logical bytes), -1 if unknown.</summary>
+        public long Offset = -1;
 
         /// <summary>Raw bytes of this element as loaded (before transparent decompression).</summary>
         public byte[] Raw = null;

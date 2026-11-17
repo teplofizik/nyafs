@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -290,7 +290,7 @@ namespace NyaFs.Processor.Scripting.Commands
                             if (!FormatMatch)
                                 continue;
 
-                            var Data = Plugin.Build(Processor.GetBlob(), out var Error);
+                            var Data = Plugin.Build(Processor.GetBlob(), Processor.Plugins, out var Error);
                             if (Data == null)
                                 return new ScriptStepResult(ScriptStepStatus.Error, Error ?? $"Cannot build {Format} image");
                             System.IO.File.WriteAllBytes(Path, Data);

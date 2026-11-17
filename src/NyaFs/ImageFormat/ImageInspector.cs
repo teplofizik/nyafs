@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using NyaFs.ImageFormat.Types;
 using NyaFs.ImageFormat.Plugins;
@@ -153,7 +153,9 @@ namespace NyaFs.ImageFormat
                         Container = Image.Format,
                         Raw = CI.Content,
                         Info = CI.Info,
-                        Description = CI.Description
+                        Description = CI.Description,
+                        Offset = CI.Offset,
+                        Size = (CI.Size >= 0) ? CI.Size : 0
                     };
                     Child.Path = (Node.Path.Length == 0) ? Child.Name : Node.Path + "/" + Child.Name;
                     Child.Hashes.AddRange(CI.Hashes ?? new ImageHash[0]);

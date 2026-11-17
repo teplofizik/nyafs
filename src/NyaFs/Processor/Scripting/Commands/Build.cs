@@ -66,7 +66,15 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Data == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build image: {Error}");
 
-                System.IO.File.WriteAllBytes(Output, Data);
+                try
+                {
+                    System.IO.File.WriteAllBytes(Output, Data);
+                }
+                catch (Exception E)
+                {
+                    return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot write {Output}: {E.Message}");
+                }
+
                 return new ScriptStepResult(ScriptStepStatus.Ok,
                     $"Image is built to {Output} ({Data.Length} bytes).");
             }

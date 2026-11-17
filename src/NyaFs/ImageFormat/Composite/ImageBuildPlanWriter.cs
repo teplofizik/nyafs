@@ -17,6 +17,9 @@ namespace NyaFs.ImageFormat.Composite
     {
         private readonly ImageBuildPlan Plan;
 
+        /// <summary>Registry used to resolve filesystem/kernel/dtb writers (defaults to the ambient one).</summary>
+        public Plugins.PluginRegistry Registry { get; set; } = Plugins.PluginHost.Current;
+
         public RSA SigningKey { get; set; }
         public string SigningKeyName { get; set; }
         public string SigningAlgorithm { get; set; }
@@ -472,7 +475,7 @@ namespace NyaFs.ImageFormat.Composite
                         Error = "No filesystem object for " + Node.Path;
                         return null;
                     }
-                    var FsPlugin = Plugins.PluginHost.Current.ResolveFilesystem(Node.Fs.FilesystemFormat);
+                    var FsPlugin = (Registry ?? Plugins.PluginHost.Current).ResolveFilesystem(Node.Fs.FilesystemFormat);
                     var FsWriter = FsPlugin?.GetFilesystemWriter(Node.Fs)
                         ?? Elements.Fs.Writer.Writer.GetRawFilesystemWriter(Node.Fs);
                     if ((FsWriter == null) || !FsWriter.CheckFilesystem(Node.Fs))
@@ -515,11 +518,11 @@ namespace NyaFs.ImageFormat.Composite
             return FitHelper.GetCompressedData(Raw, GetCompression(Node));
         }
 
-        private static byte[] GetKernelData(Elements.Kernel.LinuxKernel Kernel)
+        private byte[] GetKernelData(Elements.Kernel.LinuxKernel Kernel)
         {
             if (!String.IsNullOrEmpty(Kernel.KernelFormat))
             {
-                var Plugin = Plugins.PluginHost.Current.ResolveKernel(Kernel.KernelFormat);
+                var Plugin = (Registry ?? Plugins.PluginHost.Current).ResolveKernel(Kernel.KernelFormat);
                 if ((Plugin != null) && Plugin.SupportWrite)
                 {
                     var Writer = Plugin.GetKernelWriter(Kernel);

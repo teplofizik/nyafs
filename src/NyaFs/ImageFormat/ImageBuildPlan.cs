@@ -33,6 +33,35 @@ namespace NyaFs.ImageFormat
         public readonly List<ImageHash> Hashes = new List<ImageHash>();
         public bool Dirty;
 
+        // ---- layout slot (declarative build) ----
+
+        /// <summary>Offset inside the parent container, null when auto-placed.</summary>
+        public long? Offset;
+
+        /// <summary>Slot size, null when it should be derived from the content.</summary>
+        public long? Size;
+
+        /// <summary>True when the size is derived from the content and rounded by the format.</summary>
+        public bool SizeAuto;
+
+        /// <summary>Alignment for auto placement (format default when null).</summary>
+        public long? Align;
+
+        /// <summary>Number of identical copies (e.g. redundant bootloader copies).</summary>
+        public int RepeatCount = 1;
+
+        /// <summary>Distance between repeated copies.</summary>
+        public long? RepeatStride;
+
+        /// <summary>Byte used for the unused part of the slot.</summary>
+        public byte Fill = 0xFF;
+
+        /// <summary>Content is immutable between builds (cache/bundle candidate).</summary>
+        public bool Immutable;
+
+        /// <summary>Declarative content source (file/dir/blob/empty); null when filled by commands.</summary>
+        public Composite.PlanContent Content;
+
         public bool IsContainer => Children.Count > 0;
     }
 
@@ -225,7 +254,9 @@ namespace NyaFs.ImageFormat
                 Info = Source.Info,
                 Raw = Source.Raw,
                 DefaultConfiguration = Source.DefaultConfiguration,
-                Description = Source.Description
+                Description = Source.Description,
+                Offset = (Source.Offset >= 0) ? Source.Offset : (long?)null,
+                Size = (Source.Size > 0) ? Source.Size : (long?)null
             };
 
             foreach (var Option in Source.Options)

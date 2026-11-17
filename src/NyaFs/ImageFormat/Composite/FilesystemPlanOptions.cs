@@ -124,6 +124,29 @@ namespace NyaFs.ImageFormat.Composite
                 case "erofs.xattr-prefix":
                     return AddEroFsPrefix(Fs, Value, out Error);
 
+                case "iso9660.boot-image":
+                    Fs.IsoBootImage = Value;
+                    return true;
+
+                case "iso9660.boot-load-size":
+                    return SetBootInt(Value, 0, 0xFFFF, out var BootSectors, out Error) &&
+                        SetIsoBootSectors(Fs, BootSectors, out Error);
+
+                case "iso9660.boot-load-segment":
+                    return SetBootInt(Value, 0, 0xFFFF, out var BootSegment, out Error) &&
+                        SetIsoBootSegment(Fs, (ushort)BootSegment, out Error);
+
+                case "iso9660.boot-media-type":
+                    return SetBootInt(Value, 0, 3, out var BootMedia, out Error) &&
+                        SetIsoBootMedia(Fs, (byte)BootMedia, out Error);
+
+                case "iso9660.boot-system-type":
+                    return SetBootInt(Value, 0, 0xFF, out var BootSystem, out Error) &&
+                        SetIsoBootSystem(Fs, (byte)BootSystem, out Error);
+
+                case "iso9660.boot-identifier":
+                    Fs.IsoBootIdentifier = Value;
+                    return true;
                 case "cramfs.endian":
                     return SetCramFsEndian(Fs, Value, out Error);
             }
@@ -186,6 +209,37 @@ namespace NyaFs.ImageFormat.Composite
                         return AddEroFsPrefix(Fs, Value, out Error);
                     break;
 
+                case "boot-image":
+                    if (Fmt == "iso9660") { Fs.IsoBootImage = Value; return true; }
+                    break;
+
+                case "boot-load-size":
+                    if (Fmt == "iso9660")
+                        return SetBootInt(Value, 0, 0xFFFF, out var BS, out Error) &&
+                            SetIsoBootSectors(Fs, BS, out Error);
+                    break;
+
+                case "boot-load-segment":
+                    if (Fmt == "iso9660")
+                        return SetBootInt(Value, 0, 0xFFFF, out var BG, out Error) &&
+                            SetIsoBootSegment(Fs, (ushort)BG, out Error);
+                    break;
+
+                case "boot-media-type":
+                    if (Fmt == "iso9660")
+                        return SetBootInt(Value, 0, 3, out var BM, out Error) &&
+                            SetIsoBootMedia(Fs, (byte)BM, out Error);
+                    break;
+
+                case "boot-system-type":
+                    if (Fmt == "iso9660")
+                        return SetBootInt(Value, 0, 0xFF, out var BY, out Error) &&
+                            SetIsoBootSystem(Fs, (byte)BY, out Error);
+                    break;
+
+                case "boot-identifier":
+                    if (Fmt == "iso9660") { Fs.IsoBootIdentifier = Value; return true; }
+                    break;
                 case "endian":
                     if (Fmt == "cramfs")
                         return SetCramFsEndian(Fs, Value, out Error);
@@ -333,6 +387,48 @@ namespace NyaFs.ImageFormat.Composite
             return false;
         }
 
+        private static bool SetBootInt(string Value, int Min, int Max, out int Result, out string Error)
+        {
+            Error = null;
+            var Size = PlanDocument.ParseSize(Value, out var Auto);
+            if (Auto || !Size.HasValue || (Size.Value < Min) || (Size.Value > Max))
+            {
+                Error = $"Invalid value '{Value}' (expected {Min}..{Max})";
+                Result = 0;
+                return false;
+            }
+
+            Result = (int)Size.Value;
+            return true;
+        }
+
+        private static bool SetIsoBootSectors(LinuxFilesystem Fs, int Value, out string Error)
+        {
+            Error = null;
+            Fs.IsoBootLoadSectors = Value;
+            return true;
+        }
+
+        private static bool SetIsoBootSegment(LinuxFilesystem Fs, ushort Value, out string Error)
+        {
+            Error = null;
+            Fs.IsoBootLoadSegment = Value;
+            return true;
+        }
+
+        private static bool SetIsoBootMedia(LinuxFilesystem Fs, byte Value, out string Error)
+        {
+            Error = null;
+            Fs.IsoBootMediaType = Value;
+            return true;
+        }
+
+        private static bool SetIsoBootSystem(LinuxFilesystem Fs, byte Value, out string Error)
+        {
+            Error = null;
+            Fs.IsoBootSystemType = Value;
+            return true;
+        }
         private static bool SetBool(LinuxFilesystem Fs, string Value, out bool Result, out string Error)
         {
             Error = null;

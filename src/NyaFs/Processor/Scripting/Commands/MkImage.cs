@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using NyaFs.ImageFormat;
 using NyaFs.ImageFormat.Composite;
+using NyaFs.ImageFormat.Elements.Fs;
 using NyaFs.Processor.Scripting.Helper;
 
 namespace NyaFs.Processor.Scripting.Commands
@@ -49,18 +50,68 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (String.IsNullOrEmpty(Name))
                     return new ScriptStepResult(ScriptStepStatus.Error, "Layout has no format and no format argument is given");
 
+                PlanDocument.SetDocumentSource(Document.Options, Filename);
+
                 var Plugin = Processor.Plugins.ResolveImage(Name);
                 if (Plugin == null)
                 {
-                    var Formats = String.Join(", ", Processor.Plugins.GetImages().Where(P => P.SupportLayout).Select(P => P.Format));
-                    return new ScriptStepResult(ScriptStepStatus.Error,
-                        $"Unknown container format '{Name}'. Layout-capable formats: {Formats}");
+                    var FsPlugin = Processor.Plugins.ResolveFilesystem(Name);
+                    if (FsPlugin == null)
+                    {
+                        var Formats = String.Join(", ", Processor.Plugins.GetImages().Where(P => P.SupportLayout).Select(P => P.Format));
+                        return new ScriptStepResult(ScriptStepStatus.Error,
+                            $"Unknown container or filesystem format '{Name}'. Layout-capable containers: {Formats}");
+                    }
+
+                    if (!FsPlugin.SupportWrite)
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Filesystem '{Name}' is read-only");
+
+                    LinuxFilesystem Fs = null;
+                    if ((Document.Content != null) && !String.IsNullOrEmpty(Document.Content.Dir))
+                    {
+                        Document.Options.TryGetValue("plan.base", out var BaseDir);
+                        var DirPath = PlanContentResolver.ResolvePath(Document.Content.Dir, BaseDir);
+                        if (!System.IO.Directory.Exists(DirPath))
+                            return new ScriptStepResult(ScriptStepStatus.Error, $"Content directory '{DirPath}' is not found");
+
+                        Fs = PlanContentResolver.BuildFilesystemObject(Name, DirPath, Document.Content, out Error);
+                        if (Fs == null)
+                            return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot read content: {Error}");
+
+                        var Options = new System.Collections.Generic.Dictionary<string, string>(
+                            Document.Options, StringComparer.OrdinalIgnoreCase);
+                        Options.Remove("size");
+                        Options.Remove("fill");
+
+                        if (!FilesystemPlanOptions.Apply(Fs, Name, Options, Processor.Plugins, out Error))
+                            return new ScriptStepResult(ScriptStepStatus.Error, $"Invalid filesystem options: {Error}");
+                    }
+                    else
+                    {
+                        Fs = new LinuxFilesystem { FilesystemFormat = Name };
+                    }
+
+                    var FsRoot = new ImageBuildNode
+                    {
+                        Name = Name,
+                        Path = "",
+                        Kind = ImageKind.Filesystem,
+                        Format = Name,
+                        Fs = Fs,
+                        Content = Document.Content
+                    };
+
+                    Processor.Reset();
+                    Processor.GetBlob().BuildPlan = new ImageBuildPlan(FsRoot);
+                    Processor.ActiveNode = FsRoot;
+                    Processor.SetFs(Fs);
+
+                    return new ScriptStepResult(ScriptStepStatus.Ok,
+                        $"Filesystem plan '{Name}' is created.");
                 }
 
                 if (!Plugin.SupportLayout)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Format '{Plugin.Format}' does not support layout");
-
-                PlanDocument.SetDocumentSource(Document.Options, Filename);
 
                 var Root = Plugin.CreatePlan(Document, out Error);
                 if (Root == null)

@@ -20,7 +20,8 @@ namespace NyaFs.ImageFormat.Plugins
             new ImagePlugins.CompositeImagePlugins.VendorBootPlugin(),
             new ImagePlugins.CompositeImagePlugins.FitPlugin(),
             new ImagePlugins.CompositeImagePlugins.LegacyImagePlugin(),
-            new ImagePlugins.CompositeImagePlugins.DiskImagePlugin()
+            new ImagePlugins.CompositeImagePlugins.DiskImagePlugin(),
+            new ImagePlugins.CompositeImagePlugins.UbiImagePlugin()
         };
 
         public static readonly Base.FilesystemPlugin[] Filesystems = new Base.FilesystemPlugin[]

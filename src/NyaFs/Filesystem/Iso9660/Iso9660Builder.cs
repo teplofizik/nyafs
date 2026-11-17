@@ -42,6 +42,14 @@ namespace NyaFs.Filesystem.Iso9660
         private readonly List<Node> Directories = new List<Node>();
         private Node Root;
 
+        // El Torito (no-emulation) boot support.
+        public string BootImagePath;
+        public int BootLoadSectors;
+        public ushort BootLoadSegment;
+        public byte BootMediaType;
+        public byte BootSystemType;
+        public string BootIdentifier = "NYAFS";
+
         public void Directory(string Path, uint User, uint Group, uint Mode) =>
             GetOrCreate(Path, User, Group, Mode, FilesystemItemType.Directory, null, null);
 
@@ -73,11 +81,18 @@ namespace NyaFs.Filesystem.Iso9660
             foreach (var Dir in Directories)
                 Dir.DirectorySize = MeasureDirectory(Dir);
 
+            var BootNode = String.IsNullOrEmpty(BootImagePath) ? null : FindNode(Root, BootImagePath);
+            if (!String.IsNullOrEmpty(BootImagePath) && ((BootNode == null) || (BootNode.Type != FilesystemItemType.File)))
+                throw new InvalidOperationException($"El Torito boot image '{BootImagePath}' is not a file in the ISO tree");
+
+            bool Bootable = BootNode != null;
+            int DescriptorSectors = Bootable ? 3 : 2;
             int PathTableSize = MeasurePathTables();
             int PathTableSectors = (PathTableSize + Iso9660Shared.SectorSize - 1) / Iso9660Shared.SectorSize;
-            int LPathTableSector = Iso9660Shared.PrimaryVolumeDescriptorSector + 2;
+            int LPathTableSector = Iso9660Shared.PrimaryVolumeDescriptorSector + DescriptorSectors;
             int MPathTableSector = LPathTableSector + PathTableSectors;
-            int CurrentSector = MPathTableSector + PathTableSectors;
+            int BootCatalogSector = Bootable ? MPathTableSector + PathTableSectors : -1;
+            int CurrentSector = Bootable ? BootCatalogSector + 1 : MPathTableSector + PathTableSectors;
 
             foreach (var Dir in Directories)
             {
@@ -96,7 +111,9 @@ namespace NyaFs.Filesystem.Iso9660
                 WriteDirectory(Image, Dir);
 
             WriteFiles(Image, Root);
-            WriteDescriptors(Image, VolumeSectors, PathTableSize, LPathTableSector, MPathTableSector);
+            if (Bootable)
+                WriteBootCatalog(Image, BootCatalogSector, BootNode);
+            WriteDescriptors(Image, VolumeSectors, PathTableSize, LPathTableSector, MPathTableSector, BootCatalogSector);
 
             return Image;
         }
@@ -545,7 +562,69 @@ namespace NyaFs.Filesystem.Iso9660
             Array.Copy(M.ToArray(), 0, Image, (long)MPathTableSector * Iso9660Shared.SectorSize, M.Count);
         }
 
-        private void WriteDescriptors(byte[] Image, int VolumeSectors, int PathTableSize, int LPathTableSector, int MPathTableSector)
+        private static Node FindNode(Node Directory, string Path)
+        {
+            var Normalized = Iso9660Shared.Normalize(Path ?? "");
+            if (Normalized.Length == 0)
+                return Directory;
+
+            foreach (var Part in Normalized.Split('/'))
+            {
+                Node Next = null;
+                foreach (var Child in Directory.Children)
+                    if (String.Equals(Child.Name, Part, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Next = Child;
+                        break;
+                    }
+
+                if (Next == null)
+                    return null;
+
+                Directory = Next;
+            }
+
+            return Directory;
+        }
+
+        private void WriteBootCatalog(byte[] Image, int CatalogSector, Node BootNode)
+        {
+            var Catalog = new byte[Iso9660Shared.SectorSize];
+
+            // Validation entry.
+            Catalog[0] = 1;                 // header id
+            Catalog[1] = 0;                 // platform: x86
+            Iso9660Shared.WriteAscii(Catalog, 4, 24, BootIdentifier);
+            Catalog[30] = 0x55;
+            Catalog[31] = 0xAA;
+
+            int Sum = 0;
+            for (var I = 0; I < 32; I += 2)
+                Sum += Catalog[I] | (Catalog[I + 1] << 8);
+            var Checksum = (0x10000 - (Sum & 0xFFFF)) & 0xFFFF;
+            Catalog[28] = (byte)Checksum;
+            Catalog[29] = (byte)(Checksum >> 8);
+
+            // Default entry: no emulation.
+            var Sectors = (BootLoadSectors > 0)
+                ? BootLoadSectors
+                : (int)((BootNode.DataLength + 511) / 512);
+            if (Sectors < 0) Sectors = 0;
+            if (Sectors > 0xFFFF) Sectors = 0xFFFF;
+
+            Catalog[32] = 0x88;             // bootable
+            Catalog[33] = BootMediaType;    // 0 = no emulation
+            Catalog[34] = (byte)BootLoadSegment;
+            Catalog[35] = (byte)(BootLoadSegment >> 8);
+            Catalog[36] = BootSystemType;
+            Catalog[37] = 0;
+            Catalog[38] = (byte)Sectors;
+            Catalog[39] = (byte)(Sectors >> 8);
+            Iso9660Shared.WriteU32LE(Catalog, 40, BootNode.Extent);
+
+            Array.Copy(Catalog, 0, Image, (long)CatalogSector * Iso9660Shared.SectorSize, Catalog.Length);
+        }
+        private void WriteDescriptors(byte[] Image, int VolumeSectors, int PathTableSize, int LPathTableSector, int MPathTableSector, int BootCatalogSector)
         {
             long Pvd = (long)Iso9660Shared.PrimaryVolumeDescriptorSector * Iso9660Shared.SectorSize;
             var Descriptor = new byte[Iso9660Shared.SectorSize];
@@ -582,7 +661,23 @@ namespace NyaFs.Filesystem.Iso9660
             Array.Copy(RootRecord, 0, Descriptor, Iso9660Shared.RootRecordOffset, RootRecord.Length);
             Array.Copy(Descriptor, 0, Image, Pvd, Descriptor.Length);
 
-            long Terminator = Pvd + Iso9660Shared.SectorSize;
+            long Terminator = Pvd + ((BootCatalogSector >= 0) ? 2 : 1) * Iso9660Shared.SectorSize;
+
+            if (BootCatalogSector >= 0)
+            {
+                var Boot = new byte[Iso9660Shared.SectorSize];
+                Boot[0] = 0;
+                Boot[1] = (byte)'C';
+                Boot[2] = (byte)'D';
+                Boot[3] = (byte)'0';
+                Boot[4] = (byte)'0';
+                Boot[5] = (byte)'1';
+                Boot[6] = 1;
+                Iso9660Shared.WriteAscii(Boot, 7, 32, "EL TORITO SPECIFICATION");
+                Iso9660Shared.WriteAscii(Boot, 39, 32, BootIdentifier);
+                Iso9660Shared.WriteU32LE(Boot, 71, (uint)BootCatalogSector);
+                Array.Copy(Boot, 0, Image, Pvd + Iso9660Shared.SectorSize, Boot.Length);
+            }
             Array.Clear(Image, (int)Terminator, Iso9660Shared.SectorSize);
             Image[Terminator] = 0xFF;
             Image[Terminator + 1] = (byte)'C';

@@ -6,6 +6,69 @@ namespace NyaFs.ImageFormat.Compressors
 {
     public static class LZO
     {
+        private static readonly byte[] Magic = new byte[] { 0x89, 0x4C, 0x5A, 0x4F, 0x00, 0x0D, 0x0A, 0x1A, 0x0A };
+
+        /// <summary>
+        /// Compress data into a minimal lzop container (LZO1X-1, Adler32 checksums,
+        /// one block, no file name). The layout is compatible with the reader below.
+        /// </summary>
+        public static byte[] Compress(byte[] Data)
+        {
+            if (Data == null)
+                throw new ArgumentNullException(nameof(Data));
+
+            var Compressed = LZO1xCompressor.Compress(Data);
+            var Header = new byte[50];
+
+            Array.Copy(Magic, 0, Header, 0, Magic.Length);
+            WriteBE16(Header, 0x09, 0x0940);       // version
+            WriteBE16(Header, 0x0B, 0x20A0);       // lib version
+            WriteBE16(Header, 0x0D, 0x0940);       // version needed
+            Header[0x0F] = 1;                      // method: LZO1X-1
+            Header[0x10] = 5;                      // level
+            WriteBE32(Header, 0x11, 0x00000003);   // F_ADLER32_D | F_ADLER32_C
+            WriteBE32(Header, 0x15, 0);            // mode
+            WriteBE32(Header, 0x19, 0);            // mtime
+            WriteBE32(Header, 0x1D, 0);            // gmtdiff
+            Header[0x21] = 0;                      // file name length
+            WriteBE32(Header, 0x22, Adler32(Data));
+            WriteBE32(Header, 0x26, (uint)Data.Length);
+            WriteBE32(Header, 0x2A, (uint)Compressed.Length);
+            WriteBE32(Header, 0x2E, Adler32(Compressed));
+
+            var Result = new byte[Header.Length + Compressed.Length];
+            Array.Copy(Header, 0, Result, 0, Header.Length);
+            Array.Copy(Compressed, 0, Result, Header.Length, Compressed.Length);
+            return Result;
+        }
+
+        private static void WriteBE16(byte[] Data, int Offset, int Value)
+        {
+            Data[Offset] = (byte)(Value >> 8);
+            Data[Offset + 1] = (byte)Value;
+        }
+
+        private static void WriteBE32(byte[] Data, int Offset, uint Value)
+        {
+            Data[Offset] = (byte)(Value >> 24);
+            Data[Offset + 1] = (byte)(Value >> 16);
+            Data[Offset + 2] = (byte)(Value >> 8);
+            Data[Offset + 3] = (byte)Value;
+        }
+
+        private static uint Adler32(byte[] Data)
+        {
+            const uint Mod = 65521;
+            uint A = 1;
+            uint B = 0;
+            foreach (var Value in Data)
+            {
+                A = (A + Value) % Mod;
+                B = (B + A) % Mod;
+            }
+            return (B << 16) | A;
+        }
+
         public static byte[] Decompress(byte[] Data)
         {
             // Check header

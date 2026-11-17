@@ -72,9 +72,22 @@ namespace NyaFs.ImageFormat.Composite
             if (Root == null)
                 return;
 
+            SetDocumentSource(Root.Options, SchemaFilename);
+        }
+
+        /// <summary>
+        /// Same as <see cref="SetSource(ImageBuildNode, string)"/> but for the parsed
+        /// document, so plugins can resolve relative paths (for example a vendor
+        /// template) before the root node exists.
+        /// </summary>
+        public static void SetDocumentSource(IDictionary<string, string> Options, string SchemaFilename)
+        {
+            if (Options == null)
+                return;
+
             var Full = System.IO.Path.GetFullPath(SchemaFilename);
-            Root.Options["plan.base"] = System.IO.Path.GetDirectoryName(Full) ?? "";
-            Root.Options["plan.blobs"] = Full + ".blobs";
+            Options["plan.base"] = System.IO.Path.GetDirectoryName(Full) ?? "";
+            Options["plan.blobs"] = Full + ".blobs";
         }
 
         public static PlanDocument Load(string Filename, out string Error)

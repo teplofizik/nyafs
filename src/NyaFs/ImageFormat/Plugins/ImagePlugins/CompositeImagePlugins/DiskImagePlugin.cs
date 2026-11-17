@@ -1,6 +1,7 @@
-using NyaFs.ImageFormat.Composite;
-using NyaFs.ImageFormat.Plugins.Base;
 using System.Collections.Generic;
+using NyaFs.ImageFormat.Composite;
+using NyaFs.ImageFormat.Plugins;
+using NyaFs.ImageFormat.Plugins.Base;
 
 namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
 {
@@ -51,7 +52,57 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
                 ? (Disk.IsGpt ? "GPT disk image" : "MBR disk image")
                 : null;
 
+        public override bool SupportLayout => true;
+
+        public override ImageBuildNode CreatePlan(PlanDocument Document, out string Error)
+        {
+            Error = null;
+
+            var Table = Document.Options.TryGetValue("table", out var TableValue) && !string.IsNullOrWhiteSpace(TableValue)
+                ? TableValue.Trim().ToLowerInvariant()
+                : "gpt";
+
+            if ((Table != "mbr") && (Table != "gpt"))
+            {
+                Error = "Disk layout 'table' must be 'mbr' or 'gpt'";
+                return null;
+            }
+
+            if ((Table == "mbr") && (Document.Children.Count > 4))
+            {
+                Error = "MBR supports at most 4 partitions; use 'table: gpt'";
+                return null;
+            }
+
+            var Root = new ImageBuildNode
+            {
+                Name = "disk",
+                Path = "",
+                Kind = ImageKind.Unknown,
+                Format = Format
+            };
+
+            Root.Options["table"] = Table;
+            foreach (var Key in new[] { "total", "align", "seed" })
+                if (Document.Options.TryGetValue(Key, out var Value) && !string.IsNullOrWhiteSpace(Value))
+                    Root.Options[Key] = Value.Trim();
+
+            foreach (var Child in Document.Children)
+                Root.Children.Add(PlanNodes.FromElement(Child, ""));
+
+            return Root;
+        }
+
         public override byte[] Build(BaseImageBlob Blob, out string Error) =>
             DiskImageWriter.Build(Blob, out Error);
+
+        public override byte[] Build(BaseImageBlob Blob, PluginRegistry Plugins, out string Error)
+        {
+            var Root = Blob?.BuildPlan?.Root;
+            if ((Root != null) && (Root.Raw == null))
+                return DiskImageBuilder.Build(Root, Plugins, out Error);
+
+            return Build(Blob, out Error);
+        }
     }
 }

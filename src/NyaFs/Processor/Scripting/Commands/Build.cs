@@ -55,6 +55,8 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (!Plugin.SupportLayout)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Format '{Plugin.Format}' does not support layout");
 
+                PlanDocument.SetDocumentSource(Document.Options, Filename);
+
                 var Root = Plugin.CreatePlan(Document, out Error);
                 if (Root == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot create layout: {Error}");

@@ -63,6 +63,20 @@ namespace NyaFs.ImageFormat.Composite
         public readonly Dictionary<string, string> Options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public readonly List<PlanElement> Children = new List<PlanElement>();
 
+        /// <summary>
+        /// Remember where the schema lives so relative content paths and the sidecar
+        /// blob cache can be resolved by the writers.
+        /// </summary>
+        public static void SetSource(ImageBuildNode Root, string SchemaFilename)
+        {
+            if (Root == null)
+                return;
+
+            var Full = System.IO.Path.GetFullPath(SchemaFilename);
+            Root.Options["plan.base"] = System.IO.Path.GetDirectoryName(Full) ?? "";
+            Root.Options["plan.blobs"] = Full + ".blobs";
+        }
+
         public static PlanDocument Load(string Filename, out string Error)
         {
             try

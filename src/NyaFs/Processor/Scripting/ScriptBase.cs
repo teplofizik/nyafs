@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -52,6 +52,7 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Inspect());
         Add(new Commands.MkImage());
         Add(new Commands.Layout());
+        Add(new Commands.Build());
             Add(new Commands.Keys());
             Add(new Commands.Reset());
             Add(new Commands.Var());

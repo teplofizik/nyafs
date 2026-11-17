@@ -64,6 +64,8 @@ namespace NyaFs.Processor.Scripting.Commands
                 if (Root == null)
                     return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot create layout: {Error}");
 
+                PlanDocument.SetSource(Root, Filename);
+
                 Processor.Reset();
                 Processor.GetBlob().BuildPlan = new ImageBuildPlan(Root);
 

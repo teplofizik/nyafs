@@ -193,18 +193,34 @@ namespace NyaFs.ImageFormat.Composite
                 return false;
             }
 
-            var Counter = new CountingStream(Output);
-            if (!Writer.WriteFsTo(Counter, Fs))
+            long Count;
+            if (Output.CanSeek)
             {
-                Error = $"Filesystem '{Document.Format}' produced no data";
-                return false;
+                if (!Writer.WriteFsTo(Output, Fs))
+                {
+                    Error = $"Filesystem '{Document.Format}' produced no data";
+                    return false;
+                }
+
+                Count = Output.Length;
+            }
+            else
+            {
+                var Counter = new CountingStream(Output);
+                if (!Writer.WriteFsTo(Counter, Fs))
+                {
+                    Error = $"Filesystem '{Document.Format}' produced no data";
+                    return false;
+                }
+
+                Count = Counter.Length;
             }
 
             if (Target.HasValue)
             {
-                if (Counter.Length > Target.Value)
+                if (Count > Target.Value)
                 {
-                    Error = $"Filesystem image is 0x{Counter.Length:x} bytes, larger than the target size 0x{Target.Value:x}";
+                    Error = $"Filesystem image is 0x{Count:x} bytes, larger than the target size 0x{Target.Value:x}";
                     return false;
                 }
 
@@ -213,11 +229,14 @@ namespace NyaFs.ImageFormat.Composite
                 for (var I = 0; I < Buffer.Length; I++)
                     Buffer[I] = Fill;
 
-                var Remaining = Target.Value - Counter.Length;
+                if (Output.CanSeek)
+                    Output.Seek(Count, System.IO.SeekOrigin.Begin);
+
+                var Remaining = Target.Value - Count;
                 while (Remaining > 0)
                 {
                     var Chunk = (int)Math.Min(Remaining, Buffer.Length);
-                    Counter.Write(Buffer, 0, Chunk);
+                    Output.Write(Buffer, 0, Chunk);
                     Remaining -= Chunk;
                 }
             }

@@ -112,6 +112,136 @@ namespace NyaFs.ImageFormat.Composite
             return Result;
         }
 
+        public static bool BuildTo(System.IO.Stream Output, PlanDocument Document,
+            PluginRegistry Plugins, out string Error)
+        {
+            Error = null;
+
+            if ((Document == null) || String.IsNullOrEmpty(Document.Format))
+            {
+                Error = "Layout has no filesystem format";
+                return false;
+            }
+
+            var Content = Document.Content;
+            if ((Content == null) || String.IsNullOrEmpty(Content.Dir))
+            {
+                Error = $"Filesystem layout '{Document.Format}' needs content: {{ dir: ... }}";
+                return false;
+            }
+
+            // Compression currently works on the completed image.
+            if (!String.IsNullOrWhiteSpace(Content.Compression))
+            {
+                var Data = Build(Document, Plugins, out Error);
+                if (Data == null)
+                    return false;
+
+                Output.Write(Data, 0, Data.Length);
+                return true;
+            }
+
+            var Plugin = Plugins?.ResolveFilesystem(Document.Format);
+            if (Plugin == null)
+            {
+                Error = $"Unknown filesystem format '{Document.Format}'";
+                return false;
+            }
+
+            if (!Plugin.SupportWrite)
+            {
+                Error = $"Filesystem '{Document.Format}' is read-only";
+                return false;
+            }
+
+            Document.Options.TryGetValue("plan.base", out var BaseDir);
+            var DirPath = PlanContentResolver.ResolvePath(Content.Dir, BaseDir);
+            if (!System.IO.Directory.Exists(DirPath))
+            {
+                Error = $"Content directory '{DirPath}' is not found";
+                return false;
+            }
+
+            var Fs = PlanContentResolver.BuildFilesystemObject(Document.Format, DirPath, Content, out Error);
+            if (Fs == null)
+                return false;
+
+            var Options = new System.Collections.Generic.Dictionary<string, string>(
+                Document.Options, StringComparer.OrdinalIgnoreCase);
+            Options.Remove("size");
+            Options.Remove("fill");
+
+            if (!FilesystemPlanOptions.Apply(Fs, Document.Format, Options, Plugins, out Error))
+                return false;
+
+            var Target = Document.Size;
+            if (!Target.HasValue && Document.Options.TryGetValue("size", out var SizeText))
+                Target = PlanDocument.ParseSize(SizeText, out _);
+            if (!Target.HasValue && (Fs.FsSize > 0))
+                Target = Fs.FsSize;
+
+            if (Target.HasValue && (Fs.FsSize > 0) && (Fs.FsSize > Target.Value))
+            {
+                Error = $"fs-size 0x{Fs.FsSize:x} is larger than the target size 0x{Target.Value:x}";
+                return false;
+            }
+
+            var Writer = Plugin.GetFilesystemWriter(Fs);
+            if (Writer == null)
+            {
+                Error = $"No filesystem writer for '{Document.Format}'";
+                return false;
+            }
+
+            var Counter = new CountingStream(Output);
+            if (!Writer.WriteFsTo(Counter, Fs))
+            {
+                Error = $"Filesystem '{Document.Format}' produced no data";
+                return false;
+            }
+
+            if (Target.HasValue)
+            {
+                if (Counter.Length > Target.Value)
+                {
+                    Error = $"Filesystem image is 0x{Counter.Length:x} bytes, larger than the target size 0x{Target.Value:x}";
+                    return false;
+                }
+
+                var Fill = GetFill(Document, Document.Format);
+                var Buffer = new byte[64 * 1024];
+                for (var I = 0; I < Buffer.Length; I++)
+                    Buffer[I] = Fill;
+
+                var Remaining = Target.Value - Counter.Length;
+                while (Remaining > 0)
+                {
+                    var Chunk = (int)Math.Min(Remaining, Buffer.Length);
+                    Counter.Write(Buffer, 0, Chunk);
+                    Remaining -= Chunk;
+                }
+            }
+
+            return true;
+        }
+
+        private sealed class CountingStream : System.IO.Stream
+        {
+            private readonly System.IO.Stream Target;
+            private long Count;
+
+            public CountingStream(System.IO.Stream Target) { this.Target = Target; }
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => Count;
+            public override long Position { get => Count; set => throw new NotSupportedException(); }
+            public override void Write(byte[] Buffer, int Offset, int Count) { Target.Write(Buffer, Offset, Count); this.Count += Count; }
+            public override void Flush() => Target.Flush();
+            public override int Read(byte[] Buffer, int Offset, int Count) => throw new NotSupportedException();
+            public override long Seek(long Offset, System.IO.SeekOrigin Origin) => throw new NotSupportedException();
+            public override void SetLength(long Value) => throw new NotSupportedException();
+        }
         private static byte GetFill(PlanDocument Document, string Format)
         {
             if (Document.Options.TryGetValue("fill", out var Text))

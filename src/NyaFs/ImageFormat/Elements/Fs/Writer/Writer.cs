@@ -14,6 +14,19 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
 
         public virtual bool HasRawStreamData => RawStream != null;
 
+        public virtual bool SupportsStreaming => false;
+
+        /// <summary>Write the filesystem directly to a stream when the writer supports it.</summary>
+        public virtual bool WriteFsTo(System.IO.Stream Output, LinuxFilesystem Fs)
+        {
+            WriteFs(Fs);
+            if (!HasRawStreamData)
+                return false;
+
+            Output.Write(RawStream, 0, RawStream.Length);
+            return true;
+        }
+
         public virtual byte[] RawStream => null;
 
         protected static uint ConvertToUnixTimestamp(DateTime timestamp)

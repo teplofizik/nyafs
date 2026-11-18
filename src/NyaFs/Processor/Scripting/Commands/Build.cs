@@ -58,11 +58,27 @@ namespace NyaFs.Processor.Scripting.Commands
                         return new ScriptStepResult(ScriptStepStatus.Error,
                             $"Unknown container or filesystem format '{Document.Format}'");
 
-                    var FsData = FilesystemImageBuilder.Build(Document, Processor.Plugins, out Error);
-                    if (FsData == null)
-                        return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build image: {Error}");
+                    try
+                    {
+                        using (var Stream = System.IO.File.Create(Output))
+                        {
+                            if (!FilesystemImageBuilder.BuildTo(Stream, Document, Processor.Plugins, out Error))
+                            {
+                                Stream.Close();
+                                System.IO.File.Delete(Output);
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build image: {Error}");
+                            }
+                        }
+                    }
+                    catch (Exception E)
+                    {
+                        try { System.IO.File.Delete(Output); } catch { }
+                        return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot write {Output}: {E.Message}");
+                    }
 
-                    return Write(Output, FsData);
+                    var FsSize = new System.IO.FileInfo(Output).Length;
+                    return new ScriptStepResult(ScriptStepStatus.Ok,
+                        $"Image is built to {Output} ({FsSize} bytes).");
                 }
 
                 if (!Plugin.SupportLayout)

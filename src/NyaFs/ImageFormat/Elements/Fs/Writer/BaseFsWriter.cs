@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -21,6 +21,8 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
             this.Filename = Filename;
         }
 
+        public override bool SupportsStreaming => Builder is Filesystem.Universal.IFilesystemStreamBuilder;
+
         public override void WriteFs(LinuxFilesystem Fs)
         {
             ProcessDirectory(Fs.Fs.Root);
@@ -33,6 +35,24 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
             }
             else
                 FsData = Data;
+        }
+
+        public override bool WriteFsTo(System.IO.Stream Output, LinuxFilesystem Fs)
+        {
+            ProcessDirectory(Fs.Fs.Root);
+
+            if (Builder is Filesystem.Universal.IFilesystemStreamBuilder StreamBuilder)
+            {
+                StreamBuilder.WriteFilesystemImage(Output);
+                return true;
+            }
+
+            var Data = Builder.GetFilesystemImage();
+            if (Data == null)
+                return false;
+
+            Output.Write(Data, 0, Data.Length);
+            return true;
         }
 
         private void ProcessDirectory(Filesystem.Universal.Items.Dir Dir)

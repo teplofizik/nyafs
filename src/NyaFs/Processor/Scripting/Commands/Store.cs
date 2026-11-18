@@ -582,6 +582,29 @@ namespace NyaFs.Processor.Scripting.Commands
 
                     if (Writer.CheckFilesystem(Fs))
                     {
+                        if (Writer.SupportsStreaming)
+                        {
+                            try
+                            {
+                                using (var Stream = System.IO.File.Create(Path))
+                                {
+                                    if (!Writer.WriteFsTo(Stream, Fs))
+                                    {
+                                        Stream.Close();
+                                        System.IO.File.Delete(Path);
+                                        return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot build {Format} image");
+                                    }
+                                }
+                            }
+                            catch (Exception E)
+                            {
+                                try { System.IO.File.Delete(Path); } catch { }
+                                return new ScriptStepResult(ScriptStepStatus.Error, $"Cannot write {Path}: {E.Message}");
+                            }
+
+                            return new ScriptStepResult(ScriptStepStatus.Ok, $"Filesystem is stored to file {Path} as {Format} image!");
+                        }
+
                         Writer.WriteFs(Fs);
 
                         // Built-in writers take the file name and write it themselves; plugin

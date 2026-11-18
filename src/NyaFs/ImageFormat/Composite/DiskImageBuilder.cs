@@ -24,6 +24,8 @@ namespace NyaFs.ImageFormat.Composite
             public long Offset;
             public long Size;
             public byte[] Data;
+            public string FilePath;
+            public long DataLength;
             public byte MbrType;
             public Guid TypeGuid;
             public Guid UniqueGuid;
@@ -74,11 +76,29 @@ namespace NyaFs.ImageFormat.Composite
 
             foreach (var Child in Root.Children)
             {
-                if (!PlanNodeSerializer.TrySerialize(Child, Plugins, BaseDir, BlobDir,
-                    out var Data, out var Skip, out var Err))
+                byte[] Data = null;
+                string FilePath = null;
+                long DataLength;
+                bool Skip;
+
+                if (PlanContentFile.TryGet(Child, BaseDir, out FilePath, out DataLength, out Skip, out var FileError))
                 {
-                    Error = Err;
-                    return false;
+                    if (!String.IsNullOrEmpty(FileError))
+                    {
+                        Error = FileError;
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (!PlanNodeSerializer.TrySerialize(Child, Plugins, BaseDir, BlobDir,
+                        out Data, out Skip, out var Err))
+                    {
+                        Error = Err;
+                        return false;
+                    }
+
+                    DataLength = Data?.Length ?? 0;
                 }
 
                 if (Skip)
@@ -86,13 +106,13 @@ namespace NyaFs.ImageFormat.Composite
 
                 long Size;
                 if (Child.SizeAuto || !Child.Size.HasValue)
-                    Size = RoundUp(Data.Length, Sector);
+                    Size = RoundUp(DataLength, Sector);
                 else
                     Size = Child.Size.Value;
 
-                if (Size < Data.Length)
+                if (Size < DataLength)
                 {
-                    Error = $"Partition '{Child.Name}' is too small for its content ({Size} < {Data.Length} bytes)";
+                    Error = $"Partition '{Child.Name}' is too small for its content ({Size} < {DataLength} bytes)";
                     return false;
                 }
 
@@ -138,6 +158,8 @@ namespace NyaFs.ImageFormat.Composite
                     Offset = Offset,
                     Size = Size,
                     Data = Data,
+                    FilePath = FilePath,
+                    DataLength = DataLength,
                     MbrType = (byte)(Option(Child, "mbr-type", 0x83) & 0xFF),
                     TypeGuid = TypeGuid,
                     UniqueGuid = UniqueGuid
@@ -232,8 +254,10 @@ namespace NyaFs.ImageFormat.Composite
                     }
 
                     WriteZeros(Output, Part.Offset - Pos);
-                    Output.Write(Part.Data, 0, Part.Data.Length);
-                    Pos = Part.Offset + Part.Data.Length;
+                    if (!WritePart(Output, Part, out Error))
+                        return false;
+
+                    Pos = Part.Offset + Part.DataLength;
 
                     WriteZeros(Output, Part.Offset + Part.Size - Pos);
                     Pos = Part.Offset + Part.Size;
@@ -263,8 +287,10 @@ namespace NyaFs.ImageFormat.Composite
                     }
 
                     WriteZeros(Output, Part.Offset - Pos);
-                    Output.Write(Part.Data, 0, Part.Data.Length);
-                    Pos = Part.Offset + Part.Data.Length;
+                    if (!WritePart(Output, Part, out Error))
+                        return false;
+
+                    Pos = Part.Offset + Part.DataLength;
 
                     WriteZeros(Output, Part.Offset + Part.Size - Pos);
                     Pos = Part.Offset + Part.Size;
@@ -276,6 +302,65 @@ namespace NyaFs.ImageFormat.Composite
             return true;
         }
 
+        private static bool WritePart(System.IO.Stream Output, Part Part, out string Error)
+        {
+            Error = null;
+
+            if (Part.FilePath != null)
+            {
+                try
+                {
+                    using (var Source = new System.IO.FileStream(Part.FilePath,
+                        System.IO.FileMode.Open, System.IO.FileAccess.Read,
+                        System.IO.FileShare.Read, 1024 * 1024, System.IO.FileOptions.SequentialScan))
+                    {
+                        if (Source.Length < Part.DataLength)
+                        {
+                            Error = $"Content file '{Part.FilePath}' is shorter than expected";
+                            return false;
+                        }
+
+                        return CopyExactly(Source, Output, Part.DataLength, out Error);
+                    }
+                }
+                catch (Exception E)
+                {
+                    Error = $"Cannot read content file '{Part.FilePath}': {E.Message}";
+                    return false;
+                }
+            }
+
+            if ((Part.Data == null) || (Part.Data.Length < Part.DataLength))
+            {
+                Error = $"Partition '{Part.Name}' has no content";
+                return false;
+            }
+
+            Output.Write(Part.Data, 0, (int)Part.DataLength);
+            return true;
+        }
+
+        private static bool CopyExactly(System.IO.Stream Source, System.IO.Stream Output,
+            long Length, out string Error)
+        {
+            Error = null;
+            var Buffer = new byte[1024 * 1024];
+
+            while (Length > 0)
+            {
+                var Read = Source.Read(Buffer, 0, (int)Math.Min(Buffer.Length, Length));
+                if (Read <= 0)
+                {
+                    Error = "Content file ended before the declared size";
+                    return false;
+                }
+
+                Output.Write(Buffer, 0, Read);
+                Length -= Read;
+            }
+
+            return true;
+        }
         private static readonly byte[] ZeroBuffer = new byte[64 * 1024];
 
         private static void WriteZeros(System.IO.Stream Output, long Count)

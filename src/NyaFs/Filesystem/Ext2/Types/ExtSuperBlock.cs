@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
+using NyaFs.Filesystem.Universal;
 
 namespace NyaFs.Filesystem.Ext2.Types
 {
@@ -9,9 +10,13 @@ namespace NyaFs.Filesystem.Ext2.Types
     /// The Super Block of Ext Filesystem
     /// https://ext4.wiki.kernel.org/index.php/Ext4_Disk_Layout
     /// </summary>
-    internal class ExtSuperBlock : ArrayWrapper
+    internal class ExtSuperBlock : StoreArrayWrapper
     {
-        public ExtSuperBlock(byte[] Data, long Offset) : base(Data, Offset, 0x400)
+        public ExtSuperBlock(byte[] Data, long Offset) : this(new MemoryStore(Data), Offset)
+        {
+        }
+
+        public ExtSuperBlock(IRandomAccessStore Store, long Offset) : base(Store, Offset, 0x400)
         {
 
         }

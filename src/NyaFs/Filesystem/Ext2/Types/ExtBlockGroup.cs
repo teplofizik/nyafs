@@ -1,15 +1,16 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
+using NyaFs.Filesystem.Universal;
 
 namespace NyaFs.Filesystem.Ext2.Types
 {
-    public class ExtBlockGroup : ArrayWrapper
+    public class ExtBlockGroup : StoreArrayWrapper
     {
         public readonly uint Id;
 
-        public ExtBlockGroup(byte[] Data, uint Id, long Offset) : base(Data, Offset, 0x20)
+        public ExtBlockGroup(IRandomAccessStore Store, uint Id, long Offset) : base(Store, Offset, 0x20)
         {
             this.Id = Id;
         }

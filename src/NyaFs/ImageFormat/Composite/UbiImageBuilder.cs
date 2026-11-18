@@ -17,7 +17,25 @@ namespace NyaFs.ImageFormat.Composite
     {
         public static byte[] Build(ImageBuildNode Root, PluginRegistry Plugins, out string Error)
         {
+            using (var Stream = new System.IO.MemoryStream())
+            {
+                if (!BuildTo(Stream, Root, Plugins, out Error))
+                    return null;
+
+                return Stream.ToArray();
+            }
+        }
+
+        public static bool BuildTo(System.IO.Stream Output, ImageBuildNode Root,
+            PluginRegistry Plugins, out string Error)
+        {
             Error = null;
+
+            if ((Output == null) || !Output.CanWrite)
+            {
+                Error = "UBI output stream is not writable";
+                return false;
+            }
 
             var PebSize = (int)Option(Root, "peb", Option(Root, "block", 0x20000));
             var PageSize = (int)Option(Root, "page", 0x800);
@@ -26,7 +44,7 @@ namespace NyaFs.ImageFormat.Composite
                 (PebSize <= 2 * PageSize))
             {
                 Error = $"Invalid UBI geometry: peb={PebSize}, page={PageSize}";
-                return null;
+                return false;
             }
 
             var LebSize = PebSize - 2 * PageSize;
@@ -42,7 +60,7 @@ namespace NyaFs.ImageFormat.Composite
                 if (String.IsNullOrEmpty(Name))
                 {
                     Error = "UBI volume without a name";
-                    return null;
+                    return false;
                 }
 
                 var Type = ParseType(Get(Child, "volume-type", Get(Child, "type", null)), Child.Format);
@@ -54,18 +72,18 @@ namespace NyaFs.ImageFormat.Composite
                 {
                     Data = BuildUbifs(Child, LebSize, PageSize, BaseDir, Plugins, out Error);
                     if (Data == null)
-                        return null;
+                        return false;
                 }
                 else
                 {
                     if (!PlanNodeSerializer.TrySerialize(Child, Plugins, BaseDir, BlobDir,
                         out Data, out var Skip, out Error))
-                        return null;
+                        return false;
 
                     if (Skip || (Data == null) || (Data.Length == 0))
                     {
                         Error = $"UBI volume '{Name}' has no content";
-                        return null;
+                        return false;
                     }
                 }
 
@@ -84,39 +102,39 @@ namespace NyaFs.ImageFormat.Composite
             if (Ubi.VolumeCount == 0)
             {
                 Error = "UBI layout needs at least one volume";
-                return null;
+                return false;
             }
 
-            var Result = Ubi.Build();
-            var Target = Option(Root, "total", Option(Root, "size", 0));
+            Ubi.WriteTo(Output);
 
+            var Target = Option(Root, "total", Option(Root, "size", 0));
             if (Target > 0)
             {
-                if (Target > Int32.MaxValue)
+                if (Ubi.ImageLength > Target)
                 {
-                    Error = "UBI target size is too large";
-                    return null;
+                    Error = $"UBI image is 0x{Ubi.ImageLength:x} bytes, larger than the target 0x{Target:x}";
+                    return false;
                 }
 
-                if (Result.Length > Target)
-                {
-                    Error = $"UBI image is 0x{Result.Length:x} bytes, larger than the target 0x{Target:x}";
-                    return null;
-                }
-
-                if (Result.Length < Target)
-                {
-                    var Padded = new byte[(int)Target];
-                    Array.Copy(Result, Padded, Result.Length);
-                    for (var I = Result.Length; I < Padded.Length; I++)
-                        Padded[I] = 0xFF;
-                    Result = Padded;
-                }
+                WriteZeros(Output, Target - Ubi.ImageLength);
             }
 
-            return Result;
+            return true;
         }
 
+        private static void WriteZeros(System.IO.Stream Output, long Count)
+        {
+            var Buffer = new byte[64 * 1024];
+            for (var I = 0; I < Buffer.Length; I++)
+                Buffer[I] = 0xFF;
+
+            while (Count > 0)
+            {
+                var Chunk = (int)Math.Min(Count, Buffer.Length);
+                Output.Write(Buffer, 0, Chunk);
+                Count -= Chunk;
+            }
+        }
         private static byte[] BuildUbifs(ImageBuildNode Child, int LebSize, int PageSize,
             string BaseDir, PluginRegistry Plugins, out string Error)
         {

@@ -37,6 +37,17 @@ namespace NyaFs.Filesystem.UbiFs
 
         public int VolumeCount => Volumes.Count;
 
+        public long ImageLength
+        {
+            get
+            {
+                long Pebs = (long)UBI_LAYOUT_VOLUME_EBS;
+                foreach (var V in Volumes)
+                    Pebs += V.Lebs.Count;
+                return Pebs * PebSize;
+            }
+        }
+
         public UbiBuilder(int PebSize, int PageSize)
         {
             this.PebSize = PebSize;
@@ -53,21 +64,27 @@ namespace NyaFs.Filesystem.UbiFs
 
         public byte[] Build()
         {
-            int TotalPebs = (int)UBI_LAYOUT_VOLUME_EBS;
-            foreach (var V in Volumes)
-                TotalPebs += V.Lebs.Count;
+            using (var Stream = new System.IO.MemoryStream())
+            {
+                WriteTo(Stream);
+                return Stream.ToArray();
+            }
+        }
 
-            var Image = new byte[(long)TotalPebs * PebSize];
-            Fill(Image, 0xFF);
+        /// <summary>Write the UBI container sequentially, one PEB at a time.</summary>
+        public void WriteTo(System.IO.Stream Output)
+        {
+            var Peb = new byte[PebSize];
 
-            // layout volume (2 PEBs) holds the volume table
-            WritePeb(Image, 0, UBI_LAYOUT_VOLUME_ID, 0, (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
-            WritePeb(Image, 1, UBI_LAYOUT_VOLUME_ID, 1, (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
-            WriteVolumeTable(Image, 0);
-            WriteVolumeTable(Image, 1);
+            for (uint I = 0; I < UBI_LAYOUT_VOLUME_EBS; I++)
+            {
+                Fill(Peb, 0xFF);
+                WritePeb(Peb, 0, UBI_LAYOUT_VOLUME_ID, I,
+                    (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
+                WriteVolumeTable(Peb, 0);
+                Output.Write(Peb, 0, Peb.Length);
+            }
 
-            // volume LEBs
-            int Peb = (int)UBI_LAYOUT_VOLUME_EBS;
             foreach (var V in Volumes)
             {
                 uint DataSize = 0;
@@ -93,20 +110,17 @@ namespace NyaFs.Filesystem.UbiFs
                     DataCrc = Crc32.CalcCrc(All);
                 }
 
-                for (int i = 0; i < V.Lebs.Count; i++)
+                for (int I = 0; I < V.Lebs.Count; I++)
                 {
-                    WritePeb(Image, Peb, V.Id, (uint)i, DataSize,
-                        V.Type, UsedEbs, DataCrc);
+                    Fill(Peb, 0xFF);
+                    WritePeb(Peb, 0, V.Id, (uint)I, DataSize, V.Type, UsedEbs, DataCrc);
 
-                    var Leb = V.Lebs[i];
-                    Array.Copy(Leb, 0, Image, (long)Peb * PebSize + DataOffset, Math.Min(Leb.Length, LebSize));
-                    Peb++;
+                    var Leb = V.Lebs[I];
+                    Array.Copy(Leb, 0, Peb, DataOffset, Math.Min(Leb.Length, LebSize));
+                    Output.Write(Peb, 0, Peb.Length);
                 }
             }
-
-            return Image;
         }
-
         /// <summary>Write the EC header, the VID header and the (zero/0xFF) padding of one PEB.</summary>
         private void WritePeb(byte[] Image, int Peb, uint VolId, uint Lnum, uint DataSize,
             VolumeType Type = VolumeType.UBI_VID_DYNAMIC, uint UsedEbs = 0, uint DataCrc = 0)

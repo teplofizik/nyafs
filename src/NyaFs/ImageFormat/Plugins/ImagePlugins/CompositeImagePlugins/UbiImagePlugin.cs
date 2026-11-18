@@ -153,5 +153,27 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.CompositeImagePlugins
 
             return UbiImageBuilder.Build(Root, Plugins, out Error);
         }
+
+        public override bool SupportsStreaming => true;
+
+        public override bool BuildTo(System.IO.Stream Output, BaseImageBlob Blob,
+            PluginRegistry Plugins, out string Error)
+        {
+            var Root = Blob?.BuildPlan?.Root;
+            if (Root == null)
+            {
+                Error = "No UBI build plan";
+                return false;
+            }
+
+            if ((Root.Raw != null) && (Root.Children.Count == 0))
+            {
+                Error = null;
+                Output.Write(Root.Raw, 0, Root.Raw.Length);
+                return true;
+            }
+
+            return UbiImageBuilder.BuildTo(Output, Root, Plugins, out Error);
+        }
     }
 }

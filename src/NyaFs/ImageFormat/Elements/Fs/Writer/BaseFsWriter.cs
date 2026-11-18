@@ -9,10 +9,17 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
         string Filename = null;
         byte[] FsData = null;
         Filesystem.Universal.IFilesystemBuilder Builder;
+        Func<System.IO.Stream, Filesystem.Universal.IFilesystemBuilder> StreamingBuilderFactory;
 
         public BaseFsWriter(Filesystem.Universal.IFilesystemBuilder Builder)
         {
             this.Builder = Builder;
+        }
+
+        public BaseFsWriter(Filesystem.Universal.IFilesystemBuilder Builder, Func<System.IO.Stream, Filesystem.Universal.IFilesystemBuilder> StreamingBuilderFactory)
+        {
+            this.Builder = Builder;
+            this.StreamingBuilderFactory = StreamingBuilderFactory;
         }
 
         public BaseFsWriter(Filesystem.Universal.IFilesystemBuilder Builder, string Filename)
@@ -21,7 +28,7 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
             this.Filename = Filename;
         }
 
-        public override bool SupportsStreaming => Builder is Filesystem.Universal.IFilesystemStreamBuilder;
+        public override bool SupportsStreaming => (StreamingBuilderFactory != null) || (Builder is Filesystem.Universal.IFilesystemStreamBuilder);
 
         public override void WriteFs(LinuxFilesystem Fs)
         {
@@ -39,6 +46,9 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
 
         public override bool WriteFsTo(System.IO.Stream Output, LinuxFilesystem Fs)
         {
+            if ((StreamingBuilderFactory != null) && Output.CanSeek)
+                Builder = StreamingBuilderFactory(Output);
+
             ProcessDirectory(Fs.Fs.Root);
 
             if (Builder is Filesystem.Universal.IFilesystemStreamBuilder StreamBuilder)

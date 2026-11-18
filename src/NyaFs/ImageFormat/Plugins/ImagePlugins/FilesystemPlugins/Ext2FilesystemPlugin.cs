@@ -33,7 +33,7 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         /// </summary>
         /// <returns></returns>
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(Elements.Fs.LinuxFilesystem Fs) =>
-            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Ext2.Ext2FsBuilder(DetectFixDiskSize(Fs)));
+            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Ext2.Ext2FsBuilder(DetectFixDiskSize(Fs)), S => new Filesystem.Ext2.Ext2FsBuilder(DetectFixDiskSize(Fs), new Filesystem.Universal.StreamStore(S, DetectFixDiskSize(Fs))));
 
         private uint DetectFixDiskSize(Elements.Fs.LinuxFilesystem Fs)
         {

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 
 namespace NyaFs.Filesystem.Universal
@@ -41,6 +41,44 @@ namespace NyaFs.Filesystem.Universal
         public void Dispose() { }
     }
 
+    public sealed class StreamStore : IRandomAccessStore
+    {
+        private readonly Stream Stream;
+        private readonly long LengthValue;
+        private readonly long BaseOffset;
+
+        public StreamStore(Stream Stream, long Length, long BaseOffset = 0)
+        {
+            this.Stream = Stream ?? throw new ArgumentNullException(nameof(Stream));
+            if (!Stream.CanSeek || !Stream.CanWrite)
+                throw new ArgumentException("StreamStore requires a seekable writable stream", nameof(Stream));
+            this.LengthValue = Length;
+            this.BaseOffset = BaseOffset;
+            Stream.SetLength(BaseOffset + Length);
+        }
+
+        public long Length => LengthValue;
+
+        public void Read(long Offset, byte[] Buffer, int BufferOffset, int Count)
+        {
+            Stream.Seek(BaseOffset + Offset, SeekOrigin.Begin);
+            var Read = 0;
+            while (Read < Count)
+            {
+                var N = Stream.Read(Buffer, BufferOffset + Read, Count - Read);
+                if (N <= 0) throw new EndOfStreamException();
+                Read += N;
+            }
+        }
+
+        public void Write(long Offset, byte[] Buffer, int BufferOffset, int Count)
+        {
+            Stream.Seek(BaseOffset + Offset, SeekOrigin.Begin);
+            Stream.Write(Buffer, BufferOffset, Count);
+        }
+
+        public void Dispose() { Stream.Flush(); }
+    }
     public sealed class FileStore : IRandomAccessStore
     {
         private readonly FileStream Stream;

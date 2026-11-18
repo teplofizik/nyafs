@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
+using NyaFs.Filesystem.Universal;
 
 namespace NyaFs.Filesystem.Ext2
 {
@@ -21,7 +22,11 @@ namespace NyaFs.Filesystem.Ext2
         const int ROOT_MAX_ENTRIES = 4;      // i_block holds a 12-byte header + 4 * 12-byte entries
         const int MAX_INITIALIZED_LEN = 32768;
 
-        public Ext4FsBuilder(uint DiskBlockSize) : base(DiskBlockSize)
+        public Ext4FsBuilder(uint DiskBlockSize) : this(DiskBlockSize, new MemoryStore(DiskBlockSize))
+        {
+        }
+
+        public Ext4FsBuilder(uint DiskBlockSize, IRandomAccessStore Store) : base(DiskBlockSize, Store)
         {
             Superblock.FeatureIncompatible |= INCOMPAT_EXTENTS;
         }

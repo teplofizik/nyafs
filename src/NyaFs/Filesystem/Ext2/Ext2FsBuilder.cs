@@ -213,7 +213,10 @@ namespace NyaFs.Filesystem.Ext2
 
             WriteXattrs();
             DuplicateSuperblocks();
-            CopyTo(Output);
+            if (Store is StreamStore)
+                Output.Flush();
+            else
+                CopyTo(Output);
         }
 
         private BuilderDirectory GetParentDirectory(string Path)

@@ -460,13 +460,11 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             int IndexFirst = LebCnt - IndexLebs;
             int GcLnum = IndexFirst - 1;
 
-            var Lebs = new byte[LebCnt][];
-            for (int i = 0; i < LebCnt; i++)
-            {
-                Lebs[i] = new byte[LebSize];
-                for (int j = 0; j < LebSize; j++)
-                    Lebs[i][j] = 0xFF;
-            }
+            var Store = new MemoryStore((long)LebCnt * LebSize);
+            var FillBuf = new byte[LebSize];
+            for (int i = 0; i < LebSize; i++) FillBuf[i] = 0xFF;
+            for (int i = 0; i < LebCnt; i++) Store.Write((long)i * LebSize, FillBuf, 0, LebSize);
+            var Lebs = new LebStore(Store, LebSize, LebCnt);
 
             var Ends = new long[LebCnt];       // end of the last real/index node in the LEB (0 = empty)
 
@@ -507,7 +505,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                         idxOff = 0;
                     }
 
-                    Array.Copy(Node, 0, Lebs[idxFirst], idxOff, Node.Length);
+                    Lebs.Write(idxFirst, idxOff, Node);
 
                     var E = new NRef { W0 = Cur[Start].W0, W1 = Cur[Start].W1, Data = Node, Lnum = idxFirst, Offs = idxOff };
                     NextLevel.Add(E);
@@ -546,11 +544,11 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             var Sb = UbifsNodeWriter.Superblock((uint)MinIoSize, (uint)LebSize, (uint)LebCnt, (uint)LebCnt,
                 (ulong)LebSize * (ulong)Math.Min(15, MainLebs), LogLebs, (uint)LptLebsSelected, OrphLebs, JheadCnt, Fanout, LsaveCnt,
                 (ushort)Compression, BigLpt ? 0x02u /*UBIFS_FLG_BIGLPT*/ : 0u, Uuid, Sqnum++);
-            Array.Copy(Sb, 0, Lebs[0], 0, Sb.Length);
+            Lebs.Write(0, 0, Sb);
 
             // log head: a commit start node (the log is otherwise empty)
             var Cs = UbifsNodeWriter.Cs(Sqnum++, 0);
-            Array.Copy(Cs, 0, Lebs[3], 0, Cs.Length);
+            Lebs.Write(3, 0, Cs);
 
             ulong TotalFree = 0, TotalDirty = 0, TotalUsed = 0, TotalDead = 0;
             foreach (var P in Props)
@@ -581,19 +579,15 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                 (uint)MainFirst,
                 (uint)EmptyLebs, (uint)IndexLebs, (uint)LebCnt, Sqnum++);
 
-            Array.Copy(Mst, 0, Lebs[1], 0, Mst.Length);
-            Array.Copy(Mst, 0, Lebs[2], 0, Mst.Length);
+            Lebs.Write(1, 0, Mst);
+            Lebs.Write(2, 0, Mst);
 
             var Pad = UbifsNodeWriter.Pad((uint)(2048 - Mst.Length - PadNodeSize), Sqnum++);
-            Array.Copy(Pad, 0, Lebs[1], Mst.Length, Pad.Length);
-            Array.Copy(Pad, 0, Lebs[2], Mst.Length, Pad.Length);
+            Lebs.Write(1, Mst.Length, Pad);
+            Lebs.Write(2, Mst.Length, Pad);
 
             // flatten
-            var Res = new byte[(long)LebCnt * LebSize];
-            for (int i = 0; i < LebCnt; i++)
-                Array.Copy(Lebs[i], 0, Res, (long)i * LebSize, LebSize);
-
-            return Res;
+            return Store.ToArray();
         }
 
         // ---- main-area packing ----
@@ -635,6 +629,36 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                 WritePad(Lebs, Lnum, Off);
         }
 
+        private void PackNodes(LebStore Lebs, List<NRef> Nodes, int First, long[] Ends)
+        {
+            int Lnum = First, Off = 0;
+            foreach (var N in Nodes)
+            {
+                int Len = Align8(N.Data.Length);
+                if (Off + Len > LebSize)
+                {
+                    if (LebSize - Off >= PadNodeSize)
+                        WritePad(Lebs, Lnum, Off);
+                    Lnum++;
+                    Off = 0;
+                }
+
+                N.Lnum = Lnum;
+                N.Offs = Off;
+                Lebs.Write(Lnum, Off, N.Data);
+                Off += Len;
+                Ends[Lnum] = Off;
+            }
+
+            if ((Off > 0) && (LebSize - Off >= PadNodeSize))
+                WritePad(Lebs, Lnum, Off);
+        }
+
+        private static void WritePad(LebStore Lebs, int Lnum, int Off)
+        {
+            var Pad = UbifsNodeWriter.Pad((uint)(Lebs.LebSize - Off - PadNodeSize), 1);
+            Lebs.Write(Lnum, Off, Pad);
+        }
         private static void WritePad(byte[][] Lebs, int Lnum, int Off)
         {
             var Pad = UbifsNodeWriter.Pad((uint)(Lebs[Lnum].Length - Off - PadNodeSize), 1);
@@ -686,7 +710,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
 
         private struct Lp { public int Free; public int Dirty; public int Used; public bool Index; }
 
-        private List<Lp> ComputeLprops(byte[][] Lebs, long[] Ends, int MainFirst, int IndexFirst, int IndexLebs)
+        private List<Lp> ComputeLprops(LebStore Lebs, long[] Ends, int MainFirst, int IndexFirst, int IndexLebs)
         {
             var Res = new List<Lp>();
             for (int Lnum = MainFirst; Lnum < LebCnt; Lnum++)
@@ -770,7 +794,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         /// Lay out the LPT area: pnodes, nnodes (bottom-up), root, [lsave], ltab - packed
         /// contiguously across the LPT LEBs, flushing to the next LEB when a node does not fit.
         /// </summary>
-        private LptResult BuildLpt(byte[][] Lebs, UbifsLpt.Geometry G, List<Lp> Props)
+        private LptResult BuildLpt(LebStore Lebs, UbifsLpt.Geometry G, List<Lp> Props)
         {
             int LptFirst = G.LptFirst;
             int LptLebs = G.LptLebs;
@@ -817,7 +841,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                 }
 
                 var Node = UbifsLpt.PackPnode(G, p, Group);
-                Array.Copy(Node, 0, Lebs[lnum], off, Node.Length);
+                Lebs.Write(lnum, off, Node);
                 PnodePos[p] = (lnum, off);
                 off += G.PnodeSz;
             }
@@ -851,7 +875,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                     }
 
                     var Node = UbifsLpt.PackNnode(G, UbifsLpt.CalcNnodeNum(Row, k), Br);
-                    Array.Copy(Node, 0, Lebs[lnum], off, Node.Length);
+                    Lebs.Write(lnum, off, Node);
                     Cur[k] = (lnum, off);
                     off += G.NnodeSz;
                 }
@@ -876,7 +900,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
                     Lsave[i] = G.MainFirst;
 
                 var Node = UbifsLpt.PackLsave(G, Lsave);
-                Array.Copy(Node, 0, Lebs[lnum], off, Node.Length);
+                Lebs.Write(lnum, off, Node);
                 off += G.LsaveSz;
             }
 
@@ -889,7 +913,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             CloseLeb();
 
             var LtabBytes = UbifsLpt.PackLtab(G, Ltab);
-            Array.Copy(LtabBytes, 0, Lebs[Result.LtabLnum], Result.LtabOffs, LtabBytes.Length);
+            Lebs.Write(Result.LtabLnum, Result.LtabOffs, LtabBytes);
 
             Result.NheadLnum = lnum;
             Result.NheadOffs = Align(off, MinIoSize);

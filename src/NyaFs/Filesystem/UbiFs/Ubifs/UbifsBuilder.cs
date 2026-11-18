@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.IO;
 using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using FsHelper = NyaFs.Filesystem.Universal.Helper.FsHelper;
@@ -78,6 +79,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         }
 
         private Node Root;
+        private Func<long, IRandomAccessStore> StoreFactory;
 
         public UbifsBuilder(int LebSize, int LebCnt, int MinIoSize = DefaultMinIoSize)
         {
@@ -407,6 +409,25 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
 
         // ---- image build ----
 
+        public void WriteFilesystemImage(Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
+
+            var Seekable = Output.CanSeek;
+            StoreFactory = Len => Seekable ? (IRandomAccessStore)new StreamStore(Output, Len) : new MemoryStore(Len);
+            try
+            {
+                var Data = GetFilesystemImage();
+                if (!Seekable && (Data != null))
+                    Output.Write(Data, 0, Data.Length);
+                else
+                    Output.Flush();
+            }
+            finally
+            {
+                StoreFactory = null;
+            }
+        }
         public byte[] GetFilesystemImage()
         {
             if (Root == null)
@@ -460,7 +481,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             int IndexFirst = LebCnt - IndexLebs;
             int GcLnum = IndexFirst - 1;
 
-            var Store = new MemoryStore((long)LebCnt * LebSize);
+            var Store = StoreFactory != null ? StoreFactory((long)LebCnt * LebSize) : new MemoryStore((long)LebCnt * LebSize);
             var FillBuf = new byte[LebSize];
             for (int i = 0; i < LebSize; i++) FillBuf[i] = 0xFF;
             for (int i = 0; i < LebCnt; i++) Store.Write((long)i * LebSize, FillBuf, 0, LebSize);
@@ -587,7 +608,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             Lebs.Write(2, Mst.Length, Pad);
 
             // flatten
-            return Store.ToArray();
+            return Store is MemoryStore M ? M.ToArray() : null;
         }
 
         // ---- main-area packing ----

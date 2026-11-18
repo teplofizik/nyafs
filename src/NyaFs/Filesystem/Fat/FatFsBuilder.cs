@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using NyaFs.Filesystem.Universal;
 
@@ -10,7 +11,7 @@ namespace NyaFs.Filesystem.Fat
     /// VFAT long names). The directory tree is filled via IFilesystemBuilder; the image
     /// is produced by GetFilesystemImage().
     /// </summary>
-    public class FatFsBuilder : IFilesystemBuilder
+    public class FatFsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder
     {
         private class Node
         {
@@ -42,6 +43,7 @@ namespace NyaFs.Filesystem.Fat
         private int ClusterSize;
 
         private byte[] Image;
+        private System.IO.Stream ImageStream;
         private uint[] FatEntries;
         private UInt32 NextCluster;
 
@@ -126,6 +128,15 @@ namespace NyaFs.Filesystem.Fat
 
         public byte[] GetFilesystemImage()
         {
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(System.IO.Stream Output)
+        {
             if (Root == null)
                 throw new InvalidOperationException("No root directory");
 
@@ -146,7 +157,8 @@ namespace NyaFs.Filesystem.Fat
             NextCluster = 2;
             RootCluster = (FatType == 32) ? Alloc(1)[0] : 0u;
 
-            Image = new byte[(long)TotalSectors * BytesPerSec];
+            ImageStream = Output;
+            Output.SetLength((long)TotalSectors * BytesPerSec);
 
             var RootEntries = new List<byte[]>();
             foreach (var C in Root.Children)
@@ -170,7 +182,7 @@ namespace NyaFs.Filesystem.Fat
                     Off += E.Length;
                 }
                 long Base = (long)(ReservedSectors + NumFats * FatSizeSectors) * BytesPerSec;
-                Array.Copy(Data, 0, Image, Base, Data.Length);
+                WriteAt(Base, Data, Data.Length);
             }
 
             WriteBoot();
@@ -179,10 +191,10 @@ namespace NyaFs.Filesystem.Fat
             for (int i = 0; i < NumFats; i++)
             {
                 long Off = (long)(ReservedSectors + i * FatSizeSectors) * BytesPerSec;
-                Array.Copy(Fat, 0, Image, Off, Fat.Length);
+                WriteAt(Off, Fat, Fat.Length);
             }
 
-            return Image;
+            // streamed directly to Output
         }
 
         // ---- geometry ----
@@ -309,13 +321,24 @@ namespace NyaFs.Filesystem.Fat
         private long ClusterOffset(uint Cluster) =>
             ((long)FirstDataSector + (Cluster - 2) * (long)SecPerClus) * BytesPerSec;
 
+        private void WriteAt(long Offset, byte[] Data, int Length)
+        {
+            ImageStream.Seek(Offset, SeekOrigin.Begin);
+            ImageStream.Write(Data, 0, Length);
+        }
+
+        private void WriteAt(long Offset, byte[] Data, int SourceOffset, int Length)
+        {
+            ImageStream.Seek(Offset, SeekOrigin.Begin);
+            ImageStream.Write(Data, SourceOffset, Length);
+        }
         private void WriteChain(List<uint> Chain, byte[] Data)
         {
             for (int i = 0; i < Chain.Count; i++)
             {
                 int Len = Math.Min(ClusterSize, Data.Length - i * ClusterSize);
                 if (Len > 0)
-                    Array.Copy(Data, i * ClusterSize, Image, ClusterOffset(Chain[i]), Len);
+                    WriteAt(ClusterOffset(Chain[i]), Data, i * ClusterSize, Len);
             }
         }
 
@@ -593,11 +616,11 @@ namespace NyaFs.Filesystem.Fat
 
             B[510] = 0x55;
             B[511] = 0xAA;
-            Array.Copy(B, 0, Image, 0, BytesPerSec);
+            WriteAt(0, B, BytesPerSec);
 
             if (FatType == 32)
             {
-                Array.Copy(B, 0, Image, 6L * BytesPerSec, BytesPerSec);
+                WriteAt(6L * BytesPerSec, B, BytesPerSec);
 
                 var Fsi = new byte[BytesPerSec];
                 PutU32(Fsi, 0, 0x41615252u);
@@ -605,8 +628,8 @@ namespace NyaFs.Filesystem.Fat
                 PutU32(Fsi, 488, (uint)Math.Max(0, ClusterCount - ((int)NextCluster - 2)));
                 PutU32(Fsi, 492, NextCluster);
                 PutU32(Fsi, 508, 0xAA550000u);
-                Array.Copy(Fsi, 0, Image, 1L * BytesPerSec, BytesPerSec);
-                Array.Copy(Fsi, 0, Image, 7L * BytesPerSec, BytesPerSec);
+                WriteAt(1L * BytesPerSec, Fsi, BytesPerSec);
+                WriteAt(7L * BytesPerSec, Fsi, BytesPerSec);
             }
         }
 

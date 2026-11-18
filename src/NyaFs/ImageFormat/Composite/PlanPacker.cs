@@ -28,12 +28,34 @@ namespace NyaFs.ImageFormat.Composite
         public static byte[] Pack(long TotalSize, byte DefaultFill, long DefaultAlign,
             IEnumerable<PlanSlot> Slots, out string Error)
         {
+            using (var Stream = new System.IO.MemoryStream())
+            {
+                if (!PackTo(Stream, TotalSize, DefaultFill, DefaultAlign, Slots, out Error))
+                    return null;
+
+                return Stream.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Stream slots into the output (sequential, no seeking). Payloads are still
+        /// supplied as byte arrays, but the resulting image is not allocated.
+        /// </summary>
+        public static bool PackTo(System.IO.Stream Output, long TotalSize, byte DefaultFill, long DefaultAlign,
+            IEnumerable<PlanSlot> Slots, out string Error)
+        {
             Error = null;
+
+            if ((Output == null) || !Output.CanWrite)
+            {
+                Error = "Output stream is not writable";
+                return false;
+            }
 
             if (TotalSize <= 0)
             {
                 Error = "Image size must be positive";
-                return null;
+                return false;
             }
 
             var Placed = new List<Tuple<PlanSlot, long, long>>();
@@ -54,20 +76,20 @@ namespace NyaFs.ImageFormat.Composite
                 if (Size <= 0)
                 {
                     Error = $"Slot '{Slot.Name}' has no size";
-                    return null;
+                    return false;
                 }
 
                 if (Data.Length > Size)
                 {
                     Error = $"Slot '{Slot.Name}' is too small for its content ({Size} < {Data.Length} bytes)";
-                    return null;
+                    return false;
                 }
 
                 var Offset = Slot.Offset ?? RoundUp(Cursor, Align);
                 if (Offset < 0)
                 {
                     Error = $"Slot '{Slot.Name}' has a negative offset";
-                    return null;
+                    return false;
                 }
 
                 var Count = Math.Max(1, Slot.RepeatCount);
@@ -80,7 +102,7 @@ namespace NyaFs.ImageFormat.Composite
                     if ((CopyOffset < 0) || (CopyOffset + Size > TotalSize))
                     {
                         Error = $"Slot '{Slot.Name}' does not fit into the image (offset 0x{CopyOffset:x}, size {Size})";
-                        return null;
+                        return false;
                     }
 
                     foreach (var Range in Ranges)
@@ -88,7 +110,7 @@ namespace NyaFs.ImageFormat.Composite
                         if ((CopyOffset < Range.Item1 + Range.Item2) && (Range.Item1 < CopyOffset + Size))
                         {
                             Error = $"Slot '{Slot.Name}' overlaps '{Range.Item3}' at 0x{CopyOffset:x}";
-                            return null;
+                            return false;
                         }
                     }
 
@@ -102,13 +124,12 @@ namespace NyaFs.ImageFormat.Composite
             if (Cursor > TotalSize)
             {
                 Error = "Layout exceeds the image size";
-                return null;
+                return false;
             }
 
-            var Result = new byte[TotalSize];
-            for (long I = 0; I < Result.LongLength; I++)
-                Result[I] = DefaultFill;
+            Placed.Sort((A, B) => A.Item2.CompareTo(B.Item2));
 
+            long Pos = 0;
             foreach (var P in Placed)
             {
                 var Slot = P.Item1;
@@ -116,16 +137,45 @@ namespace NyaFs.ImageFormat.Composite
                 var Size = P.Item3;
                 var Data = Slot.Data ?? Array.Empty<byte>();
 
-                if (Data.Length > 0)
-                    Buffer.BlockCopy(Data, 0, Result, (int)Offset, Data.Length);
+                if (Offset < Pos)
+                {
+                    Error = $"Slot '{Slot.Name}' overlaps the previous data";
+                    return false;
+                }
 
-                for (long I = Data.Length; I < Size; I++)
-                    Result[Offset + I] = Slot.Fill;
+                WriteFill(Output, Offset - Pos, DefaultFill);
+                Pos = Offset;
+
+                if (Data.Length > 0)
+                {
+                    Output.Write(Data, 0, Data.Length);
+                    Pos += Data.Length;
+                }
+
+                WriteFill(Output, Size - Data.Length, Slot.Fill);
+                Pos += Size - Data.Length;
             }
 
-            return Result;
+            WriteFill(Output, TotalSize - Pos, DefaultFill);
+            return true;
         }
 
+        private static void WriteFill(System.IO.Stream Output, long Count, byte Fill)
+        {
+            if (Count <= 0)
+                return;
+
+            var Buffer = new byte[64 * 1024];
+            for (var I = 0; I < Buffer.Length; I++)
+                Buffer[I] = Fill;
+
+            while (Count > 0)
+            {
+                var Chunk = (int)Math.Min(Count, Buffer.Length);
+                Output.Write(Buffer, 0, Chunk);
+                Count -= Chunk;
+            }
+        }
         private static long RoundUp(long Value, long Align)
         {
             if (Align <= 1)

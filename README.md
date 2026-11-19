@@ -10,6 +10,9 @@ firmware images (kernel, ramfs/rootfs, device tree and composite containers).
 - Image formats: raw/compressed kernels (including bare arm64/riscv `Image`),
   FIT, Android and all legacy uImage types, device trees, vendor containers.
 - Extended attributes (xattr), Unix permissions, uid/gid and symlinks.
+- Streaming image writers (`IFilesystemStreamBuilder`): every built-in filesystem
+  can emit its image directly to a `Stream`; multi-volume UBI and NAND/disk
+  filesystem slots are written without materialising the whole image in memory.
 - `.nyapkg` packages with TAR/PAX xattrs and filtering.
 - Plugin architecture for filesystems, compressors, images and commands,
   including optional remote transports (SSH/SCP/SFTP/FTP) and services

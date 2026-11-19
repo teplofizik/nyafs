@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
+using NyaFs.Filesystem.Universal;
 
 namespace NyaFs.Filesystem.Ext2
 {
@@ -22,7 +23,11 @@ namespace NyaFs.Filesystem.Ext2
         /// </summary>
         protected virtual uint JournalBlocks => 1024;
 
-        public Ext3FsBuilder(uint DiskBlockSize) : base(DiskBlockSize)
+        public Ext3FsBuilder(uint DiskBlockSize) : this(DiskBlockSize, new MemoryStore(DiskBlockSize))
+        {
+        }
+
+        public Ext3FsBuilder(uint DiskBlockSize, IRandomAccessStore Store) : base(DiskBlockSize, Store)
         {
             InitExt3();
         }

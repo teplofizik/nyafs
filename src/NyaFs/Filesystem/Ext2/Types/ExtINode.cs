@@ -1,11 +1,12 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
+using NyaFs.Filesystem.Universal;
 
 namespace NyaFs.Filesystem.Ext2.Types
 {
-    internal class ExtINode : ArrayWrapper
+    internal class ExtINode : StoreArrayWrapper
     {
         public uint BlocksCount = 0;
         public readonly uint Index;
@@ -15,7 +16,7 @@ namespace NyaFs.Filesystem.Ext2.Types
         /// </summary>
         /// <param name="Data"></param>
         /// <param name="Offset"></param>
-        public ExtINode(uint Index, byte[] Data, long Offset) : base(Data, Offset, 0x80) // ext2, ext3 => 128 bytes
+        public ExtINode(uint Index, IRandomAccessStore Store, long Offset) : base(Store, Offset, 0x80) // ext2, ext3 => 128 bytes
         {
             this.Index = Index;
 
@@ -28,7 +29,7 @@ namespace NyaFs.Filesystem.Ext2.Types
         /// <param name="Data"></param>
         /// <param name="Offset"></param>
         /// <param name="Size"></param>
-        public ExtINode(uint Index, byte[] Data, long Offset, long Size) : base(Data, Offset, Size)
+        public ExtINode(uint Index, IRandomAccessStore Store, long Offset, long Size) : base(Store, Offset, Size)
         {
             this.Index = Index;
         }

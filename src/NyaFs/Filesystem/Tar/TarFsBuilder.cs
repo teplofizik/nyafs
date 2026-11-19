@@ -10,7 +10,7 @@ namespace NyaFs.Filesystem.Tar
     /// <summary>
     /// Builder for ustar tar archives (with GNU long name/link fallback).
     /// </summary>
-    public class TarFsBuilder : IFilesystemBuilder, IXattrBuilder
+    public class TarFsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder, IXattrBuilder
     {
         private const int BlockingFactor = 20; // 20 * 512 = 10240 (standard tar record size)
 
@@ -42,25 +42,47 @@ namespace NyaFs.Filesystem.Tar
         {
             using (var Stream = new MemoryStream())
             {
-                foreach (var E in Files)
-                    WriteEntry(Stream, E);
-
-                // end-of-archive: two zero blocks
-                Stream.Write(new byte[1024], 0, 1024);
-
-                // pad up to the tar record size
-                int Record = 512 * BlockingFactor;
-                long Rem = Stream.Length % Record;
-                if (Rem != 0)
-                {
-                    int Pad = (int)(Record - Rem);
-                    Stream.Write(new byte[Pad], 0, Pad);
-                }
-
+                WriteFilesystemImage(Stream);
                 return Stream.ToArray();
             }
         }
 
+        public void WriteFilesystemImage(Stream Output)
+        {
+            var Counter = new CountingStream(Output);
+            foreach (var E in Files)
+                WriteEntry(Counter, E);
+
+            // end-of-archive: two zero blocks
+            Counter.Write(new byte[1024], 0, 1024);
+
+            // pad up to the tar record size
+            int Record = 512 * BlockingFactor;
+            long Rem = Counter.Length % Record;
+            if (Rem != 0)
+            {
+                int Pad = (int)(Record - Rem);
+                Counter.Write(new byte[Pad], 0, Pad);
+            }
+        }
+
+        private sealed class CountingStream : Stream
+        {
+            private readonly Stream Target;
+            private long Count;
+
+            public CountingStream(Stream Target) { this.Target = Target; }
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => Count;
+            public override long Position { get => Count; set => throw new NotSupportedException(); }
+            public override void Write(byte[] Buffer, int Offset, int Count) { Target.Write(Buffer, Offset, Count); this.Count += Count; }
+            public override void Flush() => Target.Flush();
+            public override int Read(byte[] Buffer, int Offset, int Count) => throw new NotSupportedException();
+            public override long Seek(long Offset, SeekOrigin Origin) => throw new NotSupportedException();
+            public override void SetLength(long Value) => throw new NotSupportedException();
+        }
         private static string Normalize(string Path)
         {
             if (string.IsNullOrEmpty(Path)) return "";

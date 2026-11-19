@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -9,10 +9,17 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
         string Filename = null;
         byte[] FsData = null;
         Filesystem.Universal.IFilesystemBuilder Builder;
+        Func<System.IO.Stream, Filesystem.Universal.IFilesystemBuilder> StreamingBuilderFactory;
 
         public BaseFsWriter(Filesystem.Universal.IFilesystemBuilder Builder)
         {
             this.Builder = Builder;
+        }
+
+        public BaseFsWriter(Filesystem.Universal.IFilesystemBuilder Builder, Func<System.IO.Stream, Filesystem.Universal.IFilesystemBuilder> StreamingBuilderFactory)
+        {
+            this.Builder = Builder;
+            this.StreamingBuilderFactory = StreamingBuilderFactory;
         }
 
         public BaseFsWriter(Filesystem.Universal.IFilesystemBuilder Builder, string Filename)
@@ -21,9 +28,11 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
             this.Filename = Filename;
         }
 
+        public override bool SupportsStreaming => (StreamingBuilderFactory != null) || (Builder is Filesystem.Universal.IFilesystemStreamBuilder);
+
         public override void WriteFs(LinuxFilesystem Fs)
         {
-            ProcessDirectory(Fs.Fs.Root);
+            ProcessDirectory(Builder, Fs.Fs.Root);
 
             var Data = Builder.GetFilesystemImage();
             if (Filename != null)
@@ -35,48 +44,78 @@ namespace NyaFs.ImageFormat.Elements.Fs.Writer
                 FsData = Data;
         }
 
-        private void ProcessDirectory(Filesystem.Universal.Items.Dir Dir)
+        public override bool WriteFsTo(System.IO.Stream Output, LinuxFilesystem Fs)
+        {
+            if ((StreamingBuilderFactory != null) && Output.CanSeek)
+                Builder = StreamingBuilderFactory(Output);
+
+            ProcessDirectory(Builder, Fs.Fs.Root);
+
+            if (Builder is Filesystem.Universal.IFilesystemStreamBuilder StreamBuilder)
+            {
+                StreamBuilder.WriteFilesystemImage(Output);
+                return true;
+            }
+
+            var Data = Builder.GetFilesystemImage();
+            if (Data == null)
+                return false;
+
+            Output.Write(Data, 0, Data.Length);
+            return true;
+        }
+
+        /// <summary>Populate a builder from a filesystem tree without producing an image.</summary>
+        public static void Populate(Filesystem.Universal.IFilesystemBuilder Builder, LinuxFilesystem Fs)
+        {
+            if (Builder == null) throw new ArgumentNullException(nameof(Builder));
+            if (Fs == null) throw new ArgumentNullException(nameof(Fs));
+
+            ProcessDirectory(Builder, Fs.Fs.Root);
+        }
+
+        private static void ProcessDirectory(Filesystem.Universal.IFilesystemBuilder Builder, Filesystem.Universal.Items.Dir Dir)
         {
             Builder.Directory(Dir.Filename, Dir.User, Dir.Group, Dir.Mode);
-            Attach(Dir);
+            Attach(Builder, Dir);
             foreach (var I in Dir.Items)
             {
                 switch (I.ItemType)
                 {
                     case Filesystem.Universal.Types.FilesystemItemType.Directory:
-                        ProcessDirectory(I as Filesystem.Universal.Items.Dir);
+                        ProcessDirectory(Builder, I as Filesystem.Universal.Items.Dir);
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.File:
                         Builder.File(I.Filename, (I as Filesystem.Universal.Items.File).Content, I.User, I.Group, I.Mode);
-                        Attach(I);
+                        Attach(Builder, I);
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.SymLink:
                         Builder.SymLink(I.Filename, (I as Filesystem.Universal.Items.SymLink).Target, I.User, I.Group, I.Mode);
-                        Attach(I);
+                        Attach(Builder, I);
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.Character:
                         {
                             var C = I as Filesystem.Universal.Items.Char;
                             Builder.Char(I.Filename, C.Major, C.Minor, I.User, I.Group, I.Mode);
-                            Attach(I);
+                            Attach(Builder, I);
                         }
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.Block:
                         {
                             var B = I as Filesystem.Universal.Items.Block;
                             Builder.Block(I.Filename, B.Major, B.Minor, I.User, I.Group, I.Mode);
-                            Attach(I);
+                            Attach(Builder, I);
                         }
                         break;
                     case Filesystem.Universal.Types.FilesystemItemType.Fifo:
                         Builder.Fifo(I.Filename, I.User, I.Group, I.Mode);
-                        Attach(I);
+                        Attach(Builder, I);
                         break;
                 }
             }
         }
 
-        private void Attach(Filesystem.Universal.FilesystemItem I)
+        private static void Attach(Filesystem.Universal.IFilesystemBuilder Builder, Filesystem.Universal.FilesystemItem I)
         {
             if ((I.Xattrs.Count == 0) || !(Builder is Filesystem.Universal.IXattrBuilder Xb))
                 return;

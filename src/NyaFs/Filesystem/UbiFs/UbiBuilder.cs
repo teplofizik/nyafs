@@ -31,11 +31,33 @@ namespace NyaFs.Filesystem.UbiFs
             public VolumeType Type = VolumeType.UBI_VID_DYNAMIC;
             public bool AutoResize;
             public List<byte[]> Lebs = new List<byte[]>();
+
+            /// <summary>Reserved PEB count when the LEBs are written directly (streaming); -1 = use Lebs.Count.</summary>
+            public int ReservedLebs = -1;
+
+            /// <summary>Static-volume metadata for streamed volumes (valid when ReservedLebs >= 0).</summary>
+            public uint StaticDataSize;
+            public uint StaticUsedEbs;
+            public uint StaticDataCrc;
+            public bool HasStaticMeta;
+
+            public int LebCount => (ReservedLebs >= 0) ? ReservedLebs : Lebs.Count;
         }
 
         private readonly List<Volume> Volumes = new List<Volume>();
 
         public int VolumeCount => Volumes.Count;
+
+        public long ImageLength
+        {
+            get
+            {
+                long Pebs = (long)UBI_LAYOUT_VOLUME_EBS;
+                foreach (var V in Volumes)
+                    Pebs += V.LebCount;
+                return Pebs * PebSize;
+            }
+        }
 
         public UbiBuilder(int PebSize, int PageSize)
         {
@@ -51,23 +73,65 @@ namespace NyaFs.Filesystem.UbiFs
             return V;
         }
 
+        /// <summary>
+        /// Reserve a volume whose LEBs will be streamed into the container afterwards
+        /// (see <see cref="WriteHeadersTo"/>); only the PEB count is needed up front.
+        /// </summary>
+        public Volume AddReservedVolume(uint Id, string Name, int Lebs,
+            VolumeType Type = VolumeType.UBI_VID_DYNAMIC, bool AutoResize = true)
+        {
+            if (Lebs < 0) throw new ArgumentOutOfRangeException(nameof(Lebs));
+
+            var V = new Volume { Id = Id, Name = Name, Type = Type, AutoResize = AutoResize, ReservedLebs = Lebs };
+            Volumes.Add(V);
+            return V;
+        }
+
+        /// <summary>Reserve a static volume whose bytes are written directly afterwards.</summary>
+        public Volume AddReservedStaticVolume(uint Id, string Name, int Lebs,
+            uint DataSize, uint UsedEbs, uint DataCrc, bool AutoResize = false)
+        {
+            if (Lebs < 0) throw new ArgumentOutOfRangeException(nameof(Lebs));
+
+            var V = new Volume
+            {
+                Id = Id,
+                Name = Name,
+                Type = VolumeType.UBI_VID_STATIC,
+                AutoResize = AutoResize,
+                ReservedLebs = Lebs,
+                StaticDataSize = DataSize,
+                StaticUsedEbs = UsedEbs,
+                StaticDataCrc = DataCrc,
+                HasStaticMeta = true
+            };
+            Volumes.Add(V);
+            return V;
+        }
+
         public byte[] Build()
         {
-            int TotalPebs = (int)UBI_LAYOUT_VOLUME_EBS;
-            foreach (var V in Volumes)
-                TotalPebs += V.Lebs.Count;
+            using (var Stream = new System.IO.MemoryStream())
+            {
+                WriteTo(Stream);
+                return Stream.ToArray();
+            }
+        }
 
-            var Image = new byte[(long)TotalPebs * PebSize];
-            Fill(Image, 0xFF);
+        /// <summary>Write the UBI container sequentially, one PEB at a time.</summary>
+        public void WriteTo(System.IO.Stream Output)
+        {
+            var Peb = new byte[PebSize];
 
-            // layout volume (2 PEBs) holds the volume table
-            WritePeb(Image, 0, UBI_LAYOUT_VOLUME_ID, 0, (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
-            WritePeb(Image, 1, UBI_LAYOUT_VOLUME_ID, 1, (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
-            WriteVolumeTable(Image, 0);
-            WriteVolumeTable(Image, 1);
+            for (uint I = 0; I < UBI_LAYOUT_VOLUME_EBS; I++)
+            {
+                Fill(Peb, 0xFF);
+                WritePeb(Peb, 0, UBI_LAYOUT_VOLUME_ID, I,
+                    (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
+                WriteVolumeTable(Peb, 0);
+                Output.Write(Peb, 0, Peb.Length);
+            }
 
-            // volume LEBs
-            int Peb = (int)UBI_LAYOUT_VOLUME_EBS;
             foreach (var V in Volumes)
             {
                 uint DataSize = 0;
@@ -93,18 +157,78 @@ namespace NyaFs.Filesystem.UbiFs
                     DataCrc = Crc32.CalcCrc(All);
                 }
 
-                for (int i = 0; i < V.Lebs.Count; i++)
+                for (int I = 0; I < V.Lebs.Count; I++)
                 {
-                    WritePeb(Image, Peb, V.Id, (uint)i, DataSize,
-                        V.Type, UsedEbs, DataCrc);
+                    Fill(Peb, 0xFF);
+                    WritePeb(Peb, 0, V.Id, (uint)I, DataSize, V.Type, UsedEbs, DataCrc);
 
-                    var Leb = V.Lebs[i];
-                    Array.Copy(Leb, 0, Image, (long)Peb * PebSize + DataOffset, Math.Min(Leb.Length, LebSize));
-                    Peb++;
+                    var Leb = V.Lebs[I];
+                    Array.Copy(Leb, 0, Peb, DataOffset, Math.Min(Leb.Length, LebSize));
+                    Output.Write(Peb, 0, Peb.Length);
                 }
             }
+        }
+        /// <summary>
+        /// Write the layout volume and the EC/VID headers of every PEB, filling all
+        /// PEBs with 0xFF. The volume data areas are left erased so a streaming builder
+        /// (e.g. <see cref="PebStore"/>) can fill them in place afterwards.
+        /// </summary>
+        public void WriteHeadersTo(System.IO.Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
 
-            return Image;
+            var Peb = new byte[PebSize];
+
+            for (uint I = 0; I < UBI_LAYOUT_VOLUME_EBS; I++)
+            {
+                Fill(Peb, 0xFF);
+                WritePeb(Peb, 0, UBI_LAYOUT_VOLUME_ID, I,
+                    (uint)(UBI_LAYOUT_VOLUME_EBS * LebSize), VolumeType.UBI_VID_DYNAMIC);
+                WriteVolumeTable(Peb, 0);
+                Output.Write(Peb, 0, Peb.Length);
+            }
+
+            foreach (var V in Volumes)
+            {
+                uint DataSize = 0;
+                uint UsedEbs = 0;
+                uint DataCrc = 0;
+                if (V.Type == VolumeType.UBI_VID_STATIC)
+                {
+                    if (V.HasStaticMeta)
+                    {
+                        DataSize = V.StaticDataSize;
+                        UsedEbs = V.StaticUsedEbs;
+                        DataCrc = V.StaticDataCrc;
+                    }
+                    else if (V.ReservedLebs < 0)
+                    {
+                        int Total = 0;
+                        foreach (var L in V.Lebs)
+                            Total += Math.Min(L.Length, LebSize);
+
+                        var All = new byte[Total];
+                        int Pos = 0;
+                        foreach (var L in V.Lebs)
+                        {
+                            var Len = Math.Min(L.Length, LebSize);
+                            Array.Copy(L, 0, All, Pos, Len);
+                            Pos += Len;
+                        }
+
+                        DataSize = (uint)Total;
+                        UsedEbs = (uint)V.Lebs.Count;
+                        DataCrc = Crc32.CalcCrc(All);
+                    }
+                }
+
+                for (int I = 0; I < V.LebCount; I++)
+                {
+                    Fill(Peb, 0xFF);
+                    WritePeb(Peb, 0, V.Id, (uint)I, DataSize, V.Type, UsedEbs, DataCrc);
+                    Output.Write(Peb, 0, Peb.Length);
+                }
+            }
         }
 
         /// <summary>Write the EC header, the VID header and the (zero/0xFF) padding of one PEB.</summary>
@@ -153,7 +277,7 @@ namespace NyaFs.Filesystem.UbiFs
                 var V = Volumes[i];
                 long Off = Base + i * VolumeTableRecord.Size;
 
-                WriteBE32(Image, Off + 0x00, (uint)V.Lebs.Count);   // reserved_pebs
+                WriteBE32(Image, Off + 0x00, (uint)V.LebCount);     // reserved_pebs
                 WriteBE32(Image, Off + 0x04, 1);                    // alignment
                 WriteBE32(Image, Off + 0x08, 0);                    // data_pad
                 Image[Off + 0x0C] = (byte)V.Type;                   // vol_type

@@ -1,11 +1,12 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
+using NyaFs.Filesystem.Universal;
 
 namespace NyaFs.Filesystem.Ext2
 {
-    public class Ext2FsBase : RawPacket
+    public class Ext2FsBase : StorePacket
     {
         internal Types.ExtSuperBlock Superblock;
 
@@ -25,9 +26,13 @@ namespace NyaFs.Filesystem.Ext2
         /// </summary>
         protected uint GroupDescSize => (Superblock.GroupDescSize != 0) ? Superblock.GroupDescSize : 0x20;
 
-        public Ext2FsBase(byte[] Data) : base(Data)
+        public Ext2FsBase(byte[] Data) : this(new MemoryStore(Data))
         {
-            Superblock = new Types.ExtSuperBlock(Raw, 0x400);
+        }
+
+        public Ext2FsBase(IRandomAccessStore Store) : base(Store)
+        {
+            Superblock = new Types.ExtSuperBlock(Store, 0x400);
         }
 
         /// <summary>
@@ -35,7 +40,7 @@ namespace NyaFs.Filesystem.Ext2
         /// </summary>
         /// <param name="Id"></param>
         /// <returns></returns>
-        internal Types.ExtBlockGroup GetBlockGroup(uint Id) => new Types.ExtBlockGroup(Raw, Id, GdtOffset + Id * GroupDescSize);
+        internal Types.ExtBlockGroup GetBlockGroup(uint Id) => new Types.ExtBlockGroup(Store, Id, GdtOffset + Id * GroupDescSize);
 
         internal Types.ExtBlockGroup GetBlockGroupByNodeId(uint Id) => GetBlockGroup(Id / Superblock.InodesPerGroup);
         internal Types.ExtBlockGroup GetBlockGroupByBlockId(uint Id) => GetBlockGroup(Id / Superblock.BlocksPerGroup);
@@ -46,7 +51,7 @@ namespace NyaFs.Filesystem.Ext2
             var INIndex = (Id - 1) % Superblock.InodesPerGroup;
 
             var BG = GetBlockGroup(BGIndex);
-            return new Types.ExtINode(Id, Raw, (BG.INodeTableLo * Superblock.BlockSize + INodeSize * INIndex), INodeSize);
+            return new Types.ExtINode(Id, Store, (BG.INodeTableLo * Superblock.BlockSize + INodeSize * INIndex), INodeSize);
         }
 
         /// <summary>

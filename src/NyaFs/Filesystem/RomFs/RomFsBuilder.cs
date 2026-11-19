@@ -1,12 +1,13 @@
-﻿using NyaFs.Filesystem.Universal;
+using NyaFs.Filesystem.Universal;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using NyaIO.Data;
 
 namespace NyaFs.Filesystem.RomFs
 {
-    public class RomFsBuilder : IFilesystemBuilder
+    public class RomFsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder
     {
         List<uint> InvalidGid = new List<uint>();
         List<uint> InvalidUid = new List<uint>();
@@ -136,6 +137,18 @@ namespace NyaFs.Filesystem.RomFs
 
         public byte[] GetFilesystemImage()
         {
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(System.IO.Stream Output)
+        {
+            if (!Output.CanSeek)
+                throw new NotSupportedException("RomFS streaming requires a seekable output stream");
+
             if (InvalidGid.Count > 0)
             {
                 Log.Warning(0, $"Filesystem containg group id which cannot be saved in romfs image: {String.Join(", ", Array.ConvertAll(InvalidGid.ToArray(), G => $"{G}"))}");
@@ -145,82 +158,118 @@ namespace NyaFs.Filesystem.RomFs
                 Log.Warning(0, $"Filesystem containg user id which cannot be saved in romfs image: {String.Join(", ", Array.ConvertAll(InvalidUid.ToArray(), U => $"{U}"))}");
             }
 
-            var Res = new List<byte>();
-            AppendSuperblock(Res);
-            AppendNodes(Res);
+            var Counter = new TrackingStream(Output);
+            var Superblock = new Types.RmSuperblock();
+            Counter.Write(Superblock.getPacket(), 0, Superblock.getPacket().Length);
 
-            var PreparedImage = Res.ToArray();
-            UpdateNodes(PreparedImage);
-            UpdateSuperblock(PreparedImage);
+            Root.FileOffset = Counter.Length;
+            AddDirectoryNodes(Counter, Root);
 
-            return PreparedImage;
+            UpdateNodes(Output);
+            UpdateSuperblock(Output, Counter);
         }
 
-        private void AppendSuperblock(List<byte> Res)
+        private void AddNodeWithContent(TrackingStream Output, List<Builder.Node> LocalNodes, Builder.Node Node)
         {
-            var SB = new Types.RmSuperblock();
+            Node.FileOffset = Output.Length;
 
-            Res.AddRange(SB.getPacket());
-        }
+            var Header = Node.GetHeader();
+            Output.Write(Header.getPacket(), 0, Header.getPacket().Length);
 
-        private void AppendNodes(List<byte> Res)
-        {
-            Root.FileOffset = Res.Count;
-            AddDirectoryNodes(Res, Root);
-        }
-
-        private void  AddNodeWithContent(List<byte> Res, List<Builder.Node> LocalNodes, Builder.Node Node)
-        {
-            Node.FileOffset = Res.Count;
-
-            var NodeData = Node.GetHeader();
-            Res.AddRange(NodeData.getPacket());
-            Res.AddRange(Node.GetContent());
+            var Content = Node.GetContent();
+            Output.Write(Content, 0, Content.Length);
 
             LocalNodes.Add(Node);
         }
 
-        private void AddParentNode(List<byte> Res, List<Builder.Node> LocalNodes, long Offset)
+        private void AddParentNode(TrackingStream Output, List<Builder.Node> LocalNodes, long Offset)
         {
-            var N = new Builder.Nodes.Parent(Offset);
-            AddNodeWithContent(Res, LocalNodes, N);
-
-            Nodes.Add(N);
+            var Node = new Builder.Nodes.Parent(Offset);
+            AddNodeWithContent(Output, LocalNodes, Node);
+            Nodes.Add(Node);
         }
 
-        private void AddDirectoryNodes(List<byte> Res, Builder.Nodes.Dir Dir)
+        private void AddDirectoryNodes(TrackingStream Output, Builder.Nodes.Dir Dir)
         {
-            List<Builder.Node> LocalNodes = new List<Builder.Node>();
+            var LocalNodes = new List<Builder.Node>();
 
-            var StartOffset = Res.Count;
-            // dir
-            AddNodeWithContent(Res, LocalNodes, Dir);
-            var NestedOffset = Res.Count;
-            // ..
-            AddParentNode(Res, LocalNodes, StartOffset);
+            var StartOffset = Output.Length;
+            AddNodeWithContent(Output, LocalNodes, Dir);
+            var NestedOffset = Output.Length;
+            AddParentNode(Output, LocalNodes, StartOffset);
 
-            // <nested files>
-            foreach (var N in Dir.NestedNodes)
+            foreach (var Node in Dir.NestedNodes)
             {
-                if (N.Type == Universal.Types.FilesystemItemType.Directory)
+                if (Node.Type == Universal.Types.FilesystemItemType.Directory)
                 {
-                    N.FileOffset = Res.Count;
-                    LocalNodes.Add(N);
-
-                    AddDirectoryNodes(Res, N as Builder.Nodes.Dir);
+                    Node.FileOffset = Output.Length;
+                    LocalNodes.Add(Node);
+                    AddDirectoryNodes(Output, Node as Builder.Nodes.Dir);
                 }
                 else
-                    AddNodeWithContent(Res, LocalNodes, N);
+                    AddNodeWithContent(Output, LocalNodes, Node);
             }
 
-            // Update offsets
-            for(int i = LocalNodes.Count - 1; i > 0; i--)
-                LocalNodes[i - 1].NextOffset = LocalNodes[i].FileOffset;
-            
+            for (int I = LocalNodes.Count - 1; I > 0; I--)
+                LocalNodes[I - 1].NextOffset = LocalNodes[I].FileOffset;
+
             Dir.DirLink = (Dir.Path == "/") ? StartOffset : NestedOffset;
-                
         }
 
+        private void UpdateNodes(System.IO.Stream Output)
+        {
+            foreach (var N in Nodes)
+            {
+                var Node = N.GetHeader();
+                Node.NextHeader = Convert.ToUInt32(N.NextOffset);
+                if (N.Type == Universal.Types.FilesystemItemType.Directory)
+                    Node.SpecInfo = Convert.ToUInt32((N as Builder.Nodes.Dir).DirLink);
+
+                Node.CalcChecksum();
+
+                var Packet = Node.getPacket();
+                Output.Seek(N.FileOffset, SeekOrigin.Begin);
+                Output.Write(Packet, 0, Packet.Length);
+            }
+        }
+
+        private void UpdateSuperblock(System.IO.Stream Output, TrackingStream Counter)
+        {
+            var Superblock = new Types.RmSuperblock();
+            Superblock.FullSize = Convert.ToUInt32(Counter.Length);
+            Superblock.Checksum = CalcChecksum(Counter.FirstBytes);
+
+            var Packet = Superblock.getPacket();
+            Output.Seek(0, SeekOrigin.Begin);
+            Output.Write(Packet, 0, Packet.Length);
+        }
+
+        private sealed class TrackingStream : System.IO.Stream
+        {
+            private readonly System.IO.Stream Target;
+            private long Count;
+            public readonly byte[] FirstBytes = new byte[512];
+
+            public TrackingStream(System.IO.Stream Target) { this.Target = Target; }
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => Count;
+            public override long Position { get => Count; set => throw new NotSupportedException(); }
+            public override void Write(byte[] Buffer, int Offset, int Count)
+            {
+                var Copy = (int)Math.Min(Count, Math.Max(0, FirstBytes.Length - this.Count));
+                if (Copy > 0)
+                    Array.Copy(Buffer, Offset, FirstBytes, (int)this.Count, Copy);
+
+                Target.Write(Buffer, Offset, Count);
+                this.Count += Count;
+            }
+            public override void Flush() => Target.Flush();
+            public override int Read(byte[] Buffer, int Offset, int Count) => throw new NotSupportedException();
+            public override long Seek(long Offset, SeekOrigin Origin) => throw new NotSupportedException();
+            public override void SetLength(long Value) => throw new NotSupportedException();
+        }
         private uint CalcChecksum(byte[] preparedImage)
         {
             int Count = Math.Min(512, preparedImage.Length) / 4;

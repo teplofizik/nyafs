@@ -1,12 +1,13 @@
 using NyaFs.Filesystem.Universal;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using NyaIO.Data;
 
 namespace NyaFs.Filesystem.CramFs
 {
-    public class CramFsBuilder : IFilesystemBuilder
+    public class CramFsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder
     {
         private readonly bool BigEndian;
         private readonly bool WideInodes;
@@ -144,28 +145,37 @@ namespace NyaFs.Filesystem.CramFs
 
         public byte[] GetFilesystemImage()
         {
-            if(InvalidGid.Count > 0)
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(System.IO.Stream Output)
+        {
+            if (!Output.CanSeek || !Output.CanRead)
+                throw new NotSupportedException("CramFS streaming requires a readable, seekable output stream");
+
+            if (InvalidGid.Count > 0)
             {
                 Log.Warning(0, $"Filesystem containg group id which cannot be saved in cramfs image: {String.Join(", ", Array.ConvertAll(InvalidGid.ToArray(), G => $"{G}"))}");
             }
 
-            var Res = new List<byte>();
-            AppendSuperblock(Res);
-            AppendNodes(Res);
-            AppendData(Res);
+            var Counter = new TrackingStream(Output);
+            AppendSuperblock(Counter);
+            AppendNodes(Counter);
+            AppendData(Counter);
 
-            var PreparedImage = Res.ToArray();
-            UpdateINodes(PreparedImage);
-            UpdateSuperblock(PreparedImage);
-
-            return PreparedImage;
+            UpdateINodes(Output);
+            UpdateSuperblock(Output, Counter.Length);
         }
 
-        private void AppendSuperblock(List<byte> Res)
+        private void AppendSuperblock(TrackingStream Output)
         {
-            var SB = new Types.CrSuperblock(BigEndian);
-
-            Res.AddRange(SB.getPacket());
+            var Superblock = new Types.CrSuperblock(BigEndian);
+            var Packet = Superblock.getPacket();
+            Output.Write(Packet, 0, Packet.Length);
         }
 
         private void PreprocessNodes(List<Builder.Nodes.Dir> Dirs, Builder.Nodes.Dir Base)
@@ -176,59 +186,109 @@ namespace NyaFs.Filesystem.CramFs
                 {
                     var D = N as Builder.Nodes.Dir;
                     Dirs.Add(D);
-
                     PreprocessNodes(Dirs, D);
                 }
             }
         }
 
-        private void AppendNodes(List<byte> Res)
+        private void AppendNodes(TrackingStream Output)
         {
-            List<Builder.Nodes.Dir> Dirs = new List<Builder.Nodes.Dir>();
+            var Dirs = new List<Builder.Nodes.Dir>();
 
-            WriteNode(Res, Root);
-            WriteDirEntries(Res, Root);
+            WriteNode(Output, Root);
+            WriteDirEntries(Output, Root);
 
             PreprocessNodes(Dirs, Root);
 
             foreach (var D in Dirs)
-                WriteDirEntries(Res, D);
+                WriteDirEntries(Output, D);
         }
 
-        private void WriteNode(List<byte> Res, Builder.Node N)
+        private void WriteNode(TrackingStream Output, Builder.Node Node)
         {
-            N.RelevantNodeOffset = Convert.ToUInt32(Res.Count);
-            var Data = N.GenerateNode(BigEndian, WideInodes);
-
-            Res.AddRange(Data.getPacket());
+            Node.RelevantNodeOffset = Convert.ToUInt32(Output.Length);
+            Node.RelevantNode = Node.GenerateNode(BigEndian, WideInodes);
+            var Packet = Node.RelevantNode.getPacket();
+            Output.Write(Packet, 0, Packet.Length);
         }
 
-        private void WriteDirEntries(List<byte> Res, Builder.Nodes.Dir D)
+        private void WriteDirEntries(TrackingStream Output, Builder.Nodes.Dir Dir)
         {
-            D.DataOffset = Convert.ToUInt32(Res.Count);
-            foreach (var N in D.NestedNodes)
+            Dir.DataOffset = Convert.ToUInt32(Output.Length);
+            foreach (var Node in Dir.NestedNodes)
+                WriteNode(Output, Node);
+
+            Dir.DataSize = Convert.ToUInt32(Output.Length) - Dir.DataOffset;
+        }
+
+        private void AppendData(TrackingStream Output)
+        {
+            foreach (var Node in Nodes)
             {
-                WriteNode(Res, N);
-            }
-            D.DataSize = Convert.ToUInt32(Res.Count) - D.DataOffset;
-        }
-
-        private void AppendData(List<byte> Res)
-        {
-            foreach (var N in Nodes)
-            {
-                var Data = N.Content;
-                if(Data != null)
+                var Data = Node.Content;
+                if (Data != null)
                 {
-                    N.DataOffset = Convert.ToUInt32(Res.Count);
-                    var Blocks = ConvertToBlocks(Data, N.DataOffset);
-
-                    N.DataSize = Convert.ToUInt32(Data.Length);
-                    Res.AddRange(Blocks);
+                    Node.DataOffset = Convert.ToUInt32(Output.Length);
+                    var Blocks = ConvertToBlocks(Data, Node.DataOffset);
+                    Node.DataSize = Convert.ToUInt32(Data.Length);
+                    Output.Write(Blocks, 0, Blocks.Length);
                 }
             }
         }
 
+        private void UpdateINodes(System.IO.Stream Output)
+        {
+            foreach (var N in Nodes)
+            {
+                if (N.RelevantNode == null)
+                    continue;
+
+                N.RelevantNode.Offset = N.DataOffset;
+                if (N.RelevantNode.FsNodeType == Universal.Types.FilesystemItemType.Directory)
+                    N.RelevantNode.Size = N.DataSize;
+
+                var Packet = N.RelevantNode.getPacket();
+                Output.Seek(N.RelevantNodeOffset, SeekOrigin.Begin);
+                Output.Write(Packet, 0, Packet.Length);
+            }
+        }
+
+        private void UpdateSuperblock(System.IO.Stream Output, long Size)
+        {
+            var Superblock = new Types.CrSuperblock(BigEndian);
+            Superblock.Flags = 3;
+            Superblock.FsIDFiles = Convert.ToUInt32(Nodes.Count);
+            Superblock.FsIDBlocks = BlocksCount;
+            Superblock.Size = Convert.ToUInt32(Size);
+            Superblock.FsIDCrc = 0;
+
+            var Packet = Superblock.getPacket();
+            Output.Seek(0, SeekOrigin.Begin);
+            Output.Write(Packet, 0, Packet.Length);
+
+            Superblock.FsIDCrc = Crc32.Compute(Output, Size);
+            Packet = Superblock.getPacket();
+            Output.Seek(0, SeekOrigin.Begin);
+            Output.Write(Packet, 0, Packet.Length);
+        }
+
+        private sealed class TrackingStream : System.IO.Stream
+        {
+            private readonly System.IO.Stream Target;
+            private long Count;
+
+            public TrackingStream(System.IO.Stream Target) { this.Target = Target; }
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => Count;
+            public override long Position { get => Count; set => throw new NotSupportedException(); }
+            public override void Write(byte[] Buffer, int Offset, int Count) { Target.Write(Buffer, Offset, Count); this.Count += Count; }
+            public override void Flush() => Target.Flush();
+            public override int Read(byte[] Buffer, int Offset, int Count) => throw new NotSupportedException();
+            public override long Seek(long Offset, SeekOrigin Origin) => throw new NotSupportedException();
+            public override void SetLength(long Value) => throw new NotSupportedException();
+        }
         private List<byte[]> GetBlocks(byte[] Data)
         {
             long Offset = 0;

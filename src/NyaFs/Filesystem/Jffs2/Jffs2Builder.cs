@@ -21,7 +21,7 @@ namespace NyaFs.Filesystem.Jffs2
     /// Basic JFFS2 writer: one inode version per object, no compression,
     /// no garbage collection and no cleanmarker/bad-block handling.
     /// </summary>
-    public sealed class Jffs2Builder : IFilesystemBuilder, IXattrBuilder
+    public sealed class Jffs2Builder : IFilesystemBuilder, IFilesystemStreamBuilder, IXattrBuilder
     {
         private sealed class Node
         {
@@ -56,7 +56,8 @@ namespace NyaFs.Filesystem.Jffs2
         private uint NextInodeVersion = 1;
         private uint NextXid = 1;
         private uint NextXseq = 1;
-        private List<byte> Image;
+        private Stream Output;
+        private long Written;
 
         public Jffs2Compression Compression { get; set; } = Jffs2Compression.None;
         public int PageSize { get; set; } = 4096;
@@ -157,58 +158,76 @@ namespace NyaFs.Filesystem.Jffs2
 
         public byte[] GetFilesystemImage()
         {
-            Image = new List<byte>();
-            WriteInode(Root);
-
-            foreach (var N in Nodes)
+            using (var Stream = new MemoryStream())
             {
-                if (N == Root)
-                    continue;
-
-                WriteDirent(N);
-                WriteInode(N);
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
             }
+        }
 
-            WriteXattrs();
+        public void WriteFilesystemImage(Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
 
-            int Size = Align(Image.Count, EraseBlockSize);
-            while (Image.Count < Size)
-                Image.Add(0xFF);
+            this.Output = Output;
+            Written = 0;
+            try
+            {
+                WriteInode(Root);
 
-            return Image.ToArray();
+                foreach (var N in Nodes)
+                {
+                    if (N == Root)
+                        continue;
+
+                    WriteDirent(N);
+                    WriteInode(N);
+                }
+
+                WriteXattrs();
+
+                long Size = Align(Written, EraseBlockSize);
+                if (Size > Written)
+                    WriteFill(0xFF, Size - Written);
+            }
+            finally
+            {
+                this.Output = null;
+            }
         }
 
         private void WriteDirent(Node N)
         {
             var Name = Encoding.UTF8.GetBytes(N.Name);
             int Length = Align(40 + Name.Length, 4);
-            int Offset = EnsureNodeSpace(Length);
+            EnsureNodeSpace(Length);
 
-            WriteU16(Image, MAGIC);
-            WriteU16(Image, DIRENT);
-            WriteU32(Image, (uint)Length);
-            WriteU32(Image, 0);
-            WriteU32(Image, N.ParentId);
-            WriteU32(Image, NextVersion++);
-            WriteU32(Image, N.Ino);
-            WriteU32(Image, Now());
-            Image.Add((byte)Name.Length);
-            Image.Add(DirentType(N.Type));
-            Image.Add(0); Image.Add(0);
-            WriteU32(Image, 0); // node_crc
-            WriteU32(Image, 0); // name_crc
-            Image.AddRange(Name);
-            while ((Image.Count - Offset) < Length)
-                Image.Add(0);
+            var Node = new List<byte>(Length);
 
-            var Data = Image.ToArray();
-            uint HdrCrc = Crc(Data, Offset, 8);
-            WriteU32At(Image, Offset + 8, HdrCrc);
-            Data = Image.ToArray();
-            uint NodeCrc = Crc(Data, Offset, 32);
-            uint NameCrc = Crc(Data, Offset + 40, Name.Length);
-            WriteU32At(Image, Offset + 32, NodeCrc);
-            WriteU32At(Image, Offset + 36, NameCrc);
+            WriteU16(Node, MAGIC);
+            WriteU16(Node, DIRENT);
+            WriteU32(Node, (uint)Length);
+            WriteU32(Node, 0);
+            WriteU32(Node, N.ParentId);
+            WriteU32(Node, NextVersion++);
+            WriteU32(Node, N.Ino);
+            WriteU32(Node, Now());
+            Node.Add((byte)Name.Length);
+            Node.Add(DirentType(N.Type));
+            Node.Add(0); Node.Add(0);
+            WriteU32(Node, 0); // node_crc
+            WriteU32(Node, 0); // name_crc
+            Node.AddRange(Name);
+            while (Node.Count < Length)
+                Node.Add(0);
+
+            var Data = Node.ToArray();
+            WriteU32(Data, 8, Crc(Data, 0, 8));
+            WriteU32(Data, 32, Crc(Data, 0, 32));
+            WriteU32(Data, 36, Crc(Data, 40, Name.Length));
+
+            Output.Write(Data, 0, Data.Length);
+            Written += Data.Length;
         }
 
         private void WriteInode(Node N)
@@ -236,74 +255,93 @@ namespace NyaFs.Filesystem.Jffs2
             }
         }
 
-        private int EnsureNodeSpace(int Length)
+        private long EnsureNodeSpace(int Length)
         {
-            if (Cleanmarkers && (Image.Count % EraseBlockSize) == 0)
+            if (Cleanmarkers && (Written % EraseBlockSize) == 0)
                 WriteCleanMarker();
 
-            int End = Image.Count % EraseBlockSize + Length;
+            long End = Written % EraseBlockSize + Length;
             if (End > EraseBlockSize)
             {
-                int Next = ((Image.Count / EraseBlockSize) + 1) * EraseBlockSize;
-                while (Image.Count < Next)
-                    Image.Add(0xFF);
+                long Next = ((Written / EraseBlockSize) + 1) * EraseBlockSize;
+                WriteFill(0xFF, Next - Written);
                 if (Cleanmarkers)
                     WriteCleanMarker();
             }
 
-            return Image.Count;
+            return Written;
+        }
+
+        private void WriteFill(byte Value, long Count)
+        {
+            var Buffer = new byte[64 * 1024];
+            for (int i = 0; i < Buffer.Length; i++)
+                Buffer[i] = Value;
+
+            while (Count > 0)
+            {
+                int Chunk = (int)Math.Min(Count, Buffer.Length);
+                Output.Write(Buffer, 0, Chunk);
+                Written += Chunk;
+                Count -= Chunk;
+            }
         }
 
         private void WriteCleanMarker()
         {
-            int Offset = Image.Count;
-            WriteU16(Image, MAGIC);
-            WriteU16(Image, CLEANMARKER);
-            WriteU32(Image, 12);
-            WriteU32(Image, 0);
-            var Data = Image.ToArray();
-            WriteU32At(Image, Offset + 8, Crc(Data, Offset, 8));
+            var Node = new List<byte>(12);
+            WriteU16(Node, MAGIC);
+            WriteU16(Node, CLEANMARKER);
+            WriteU32(Node, 12);
+            WriteU32(Node, 0);
+
+            var Data = Node.ToArray();
+            WriteU32(Data, 8, Crc(Data, 0, 8));
+
+            Output.Write(Data, 0, Data.Length);
+            Written += Data.Length;
         }
 
         private void WriteInodeNode(Node N, int Offset, uint Isize, int DataLength, byte[] Stored, byte Compr)
         {
             int Length = Align(68 + Stored.Length, 4);
-            int NodeOffset = EnsureNodeSpace(Length);
+            EnsureNodeSpace(Length);
 
-            WriteU16(Image, MAGIC);
-            WriteU16(Image, INODE);
-            WriteU32(Image, (uint)Length);
-            WriteU32(Image, 0);
-            WriteU32(Image, N.Ino);
-            WriteU32(Image, NextInodeVersion++);
-            WriteU32(Image, ModeValue(N));
-            WriteU16(Image, N.User & 0xFFFF);
-            WriteU16(Image, N.Group & 0xFFFF);
-            WriteU32(Image, Isize);
+            var Node = new List<byte>(Length);
+
+            WriteU16(Node, MAGIC);
+            WriteU16(Node, INODE);
+            WriteU32(Node, (uint)Length);
+            WriteU32(Node, 0);
+            WriteU32(Node, N.Ino);
+            WriteU32(Node, NextInodeVersion++);
+            WriteU32(Node, ModeValue(N));
+            WriteU16(Node, N.User & 0xFFFF);
+            WriteU16(Node, N.Group & 0xFFFF);
+            WriteU32(Node, Isize);
             uint NowValue = Now();
-            WriteU32(Image, NowValue);
-            WriteU32(Image, NowValue);
-            WriteU32(Image, NowValue);
-            WriteU32(Image, (uint)Offset);
-            WriteU32(Image, (uint)Stored.Length);
-            WriteU32(Image, (uint)DataLength);
-            Image.Add(Compr);
-            Image.Add(0);
-            WriteU16(Image, 0);
-            WriteU32(Image, 0); // data_crc
-            WriteU32(Image, 0); // node_crc
-            Image.AddRange(Stored);
-            while ((Image.Count - NodeOffset) < Length)
-                Image.Add(0);
+            WriteU32(Node, NowValue);
+            WriteU32(Node, NowValue);
+            WriteU32(Node, NowValue);
+            WriteU32(Node, (uint)Offset);
+            WriteU32(Node, (uint)Stored.Length);
+            WriteU32(Node, (uint)DataLength);
+            Node.Add(Compr);
+            Node.Add(0);
+            WriteU16(Node, 0);
+            WriteU32(Node, 0); // data_crc
+            WriteU32(Node, 0); // node_crc
+            Node.AddRange(Stored);
+            while (Node.Count < Length)
+                Node.Add(0);
 
-            var Data = Image.ToArray();
-            uint HdrCrc = Crc(Data, NodeOffset, 8);
-            WriteU32At(Image, NodeOffset + 8, HdrCrc);
-            Data = Image.ToArray();
-            uint NodeCrc = Crc(Data, NodeOffset, 60);
-            uint DataCrc = Crc(Data, NodeOffset + 68, Stored.Length);
-            WriteU32At(Image, NodeOffset + 60, DataCrc);
-            WriteU32At(Image, NodeOffset + 64, NodeCrc);
+            var Data = Node.ToArray();
+            WriteU32(Data, 8, Crc(Data, 0, 8));
+            WriteU32(Data, 60, Crc(Data, 68, Stored.Length));
+            WriteU32(Data, 64, Crc(Data, 0, 60));
+
+            Output.Write(Data, 0, Data.Length);
+            Written += Data.Length;
         }
 
         private void Compress(byte[] Data, out byte[] Stored, out byte Compr)
@@ -432,56 +470,59 @@ namespace NyaFs.Filesystem.Jffs2
 
             var NameBytes = Encoding.UTF8.GetBytes(Name);
             int Length = Align(32 + NameBytes.Length + 1 + Value.Length, 4);
-            int Offset = EnsureNodeSpace(Length);
+            EnsureNodeSpace(Length);
 
-            WriteU16(Image, MAGIC);
-            WriteU16(Image, XATTR);
-            WriteU32(Image, (uint)Length);
-            WriteU32(Image, 0);
-            WriteU32(Image, Xid);
-            WriteU32(Image, 1);
-            Image.Add(Prefix);
-            Image.Add((byte)NameBytes.Length);
-            WriteU16(Image, (uint)Value.Length);
-            WriteU32(Image, 0); // data_crc
-            WriteU32(Image, 0); // node_crc
-            Image.AddRange(NameBytes);
-            Image.Add(0);
-            Image.AddRange(Value);
-            while ((Image.Count - Offset) < Length)
-                Image.Add(0);
+            var Node = new List<byte>(Length);
 
-            var Data = Image.ToArray();
-            uint HdrCrc = Crc(Data, Offset, 8);
-            WriteU32At(Image, Offset + 8, HdrCrc);
-            Data = Image.ToArray();
-            uint DataCrc = Crc(Data, Offset + 32, NameBytes.Length + 1 + Value.Length);
-            WriteU32At(Image, Offset + 24, DataCrc);
-            Data = Image.ToArray();
-            uint NodeCrc = Crc(Data, Offset, 28);
-            WriteU32At(Image, Offset + 28, NodeCrc);
+            WriteU16(Node, MAGIC);
+            WriteU16(Node, XATTR);
+            WriteU32(Node, (uint)Length);
+            WriteU32(Node, 0);
+            WriteU32(Node, Xid);
+            WriteU32(Node, 1);
+            Node.Add(Prefix);
+            Node.Add((byte)NameBytes.Length);
+            WriteU16(Node, (uint)Value.Length);
+            WriteU32(Node, 0); // data_crc
+            WriteU32(Node, 0); // node_crc
+            Node.AddRange(NameBytes);
+            Node.Add(0);
+            Node.AddRange(Value);
+            while (Node.Count < Length)
+                Node.Add(0);
+
+            var Data = Node.ToArray();
+            WriteU32(Data, 8, Crc(Data, 0, 8));
+            WriteU32(Data, 24, Crc(Data, 32, NameBytes.Length + 1 + Value.Length));
+            WriteU32(Data, 28, Crc(Data, 0, 28));
+
+            Output.Write(Data, 0, Data.Length);
+            Written += Data.Length;
         }
 
         private void WriteXrefNode(uint Ino, uint Xid)
         {
             int Length = 28;
-            int Offset = EnsureNodeSpace(Length);
+            EnsureNodeSpace(Length);
 
-            WriteU16(Image, MAGIC);
-            WriteU16(Image, XREF);
-            WriteU32(Image, (uint)Length);
-            WriteU32(Image, 0);
-            WriteU32(Image, Ino);
-            WriteU32(Image, Xid);
-            WriteU32(Image, NextXseq);
+            var Node = new List<byte>(Length);
+
+            WriteU16(Node, MAGIC);
+            WriteU16(Node, XREF);
+            WriteU32(Node, (uint)Length);
+            WriteU32(Node, 0);
+            WriteU32(Node, Ino);
+            WriteU32(Node, Xid);
+            WriteU32(Node, NextXseq);
             NextXseq += 2;
-            WriteU32(Image, 0); // node_crc
+            WriteU32(Node, 0); // node_crc
 
-            var Data = Image.ToArray();
-            uint HdrCrc = Crc(Data, Offset, 8);
-            WriteU32At(Image, Offset + 8, HdrCrc);
-            Data = Image.ToArray();
-            WriteU32At(Image, Offset + 24, Crc(Data, Offset, 24));
+            var Data = Node.ToArray();
+            WriteU32(Data, 8, Crc(Data, 0, 8));
+            WriteU32(Data, 24, Crc(Data, 0, 24));
+
+            Output.Write(Data, 0, Data.Length);
+            Written += Data.Length;
         }
 
         private static bool SplitXattr(string FullName, out byte Prefix, out string Name)
@@ -561,13 +602,6 @@ namespace NyaFs.Filesystem.Jffs2
             Data.Add((byte)(Value >> 24));
         }
 
-        private static void WriteU32At(List<byte> Data, int Offset, uint Value)
-        {
-            Data[Offset] = (byte)Value;
-            Data[Offset + 1] = (byte)(Value >> 8);
-            Data[Offset + 2] = (byte)(Value >> 16);
-            Data[Offset + 3] = (byte)(Value >> 24);
-        }
 
         private static void WriteU32(byte[] Data, int Offset, uint Value)
         {
@@ -578,6 +612,8 @@ namespace NyaFs.Filesystem.Jffs2
         }
 
         private static int Align(int Value, int Alignment) => (Value + Alignment - 1) / Alignment * Alignment;
+
+        private static long Align(long Value, int Alignment) => (Value + Alignment - 1) / Alignment * Alignment;
 
         private static string Normalize(string Path)
         {

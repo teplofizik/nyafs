@@ -2,11 +2,12 @@ using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace NyaFs.Filesystem.ExFat
 {
-    public sealed class ExFatBuilder : IFilesystemBuilder
+    public sealed class ExFatBuilder : IFilesystemBuilder, IFilesystemStreamBuilder
     {
         private sealed class Node
         {
@@ -55,6 +56,8 @@ namespace NyaFs.Filesystem.ExFat
         private uint RootCluster;
         private int RootClusters;
 
+        private Stream ImageStream;
+
         public ExFatBuilder(long TotalBytes = DefaultSize)
         {
             this.TotalBytes = Math.Max(TotalBytes, 2 * 1024 * 1024);
@@ -86,6 +89,28 @@ namespace NyaFs.Filesystem.ExFat
 
         public byte[] GetFilesystemImage()
         {
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
+
+            if (!Output.CanSeek)
+            {
+                using (var Stream = new MemoryStream())
+                {
+                    WriteFilesystemImage(Stream);
+                    Stream.Position = 0;
+                    Stream.CopyTo(Output);
+                }
+                return;
+            }
+
             EnsureRoot();
             ComputeGeometry();
             CountEntries(Root);
@@ -93,15 +118,30 @@ namespace NyaFs.Filesystem.ExFat
             CollectDirectoryOrder(Root);
             AllocateClusters();
 
-            var Image = new byte[(long)((TotalBytes / BytesPerSector) * BytesPerSector)];
-            WriteFat(Image);
-            WriteUpcase(Image);
-            WriteBitmap(Image);
-            WriteDirectories(Image);
-            WriteFileData(Image);
-            WriteBoot(Image);
+            long Length = (TotalBytes / BytesPerSector) * BytesPerSector;
+            Output.SetLength(Length);
 
-            return Image;
+            ImageStream = Output;
+            try
+            {
+                WriteFat();
+                WriteUpcase();
+                WriteBitmap();
+                WriteDirectories();
+                WriteFileData();
+                WriteBoot();
+                Output.Flush();
+            }
+            finally
+            {
+                ImageStream = null;
+            }
+        }
+
+        private void WriteAt(long Offset, byte[] Data, int Length)
+        {
+            ImageStream.Seek(Offset, SeekOrigin.Begin);
+            ImageStream.Write(Data, 0, Length);
         }
 
         private void EnsureRoot()
@@ -264,7 +304,7 @@ namespace NyaFs.Filesystem.ExFat
                 throw new InvalidOperationException("ExFAT: not enough clusters");
         }
 
-        private void WriteFat(byte[] Image)
+        private void WriteFat()
         {
             var Fat = new uint[Math.Max(1, FatLength * BytesPerSector / 4)];
             Fat[0] = 0xFFFFFFF8;
@@ -284,17 +324,19 @@ namespace NyaFs.Filesystem.ExFat
             foreach (var File in Files)
                 Chain(File.FirstCluster, File.ClusterCount);
 
-            long Base = (long)FatOffset * BytesPerSector;
+            var Bytes = new byte[FatLength * BytesPerSector];
             for (int i = 0; i < Fat.Length; i++)
-                ExFatShared.WriteU32(Image, (int)(Base + i * 4), Fat[i]);
+                ExFatShared.WriteU32(Bytes, i * 4, Fat[i]);
+
+            WriteAt((long)FatOffset * BytesPerSector, Bytes, Bytes.Length);
         }
 
-        private void WriteUpcase(byte[] Image)
+        private void WriteUpcase()
         {
-            WriteAtClusters(Image, UpcaseCluster, UpcaseBytes);
+            WriteAtClusters(UpcaseCluster, UpcaseBytes);
         }
 
-        private void WriteBitmap(byte[] Image)
+        private void WriteBitmap()
         {
             int Bytes = (ClusterCount + 7) / 8;
             var Bitmap = new byte[Bytes];
@@ -317,10 +359,10 @@ namespace NyaFs.Filesystem.ExFat
             foreach (var File in Files)
                 Set(File.FirstCluster, File.ClusterCount);
 
-            WriteAtClusters(Image, BitmapCluster, Bitmap);
+            WriteAtClusters(BitmapCluster, Bitmap);
         }
 
-        private void WriteDirectories(byte[] Image)
+        private void WriteDirectories()
         {
             foreach (var Dir in Directories)
             {
@@ -342,7 +384,7 @@ namespace NyaFs.Filesystem.ExFat
                     Offset += Entry.Length;
                 }
 
-                WriteAtClusters(Image, Dir.FirstCluster, Data);
+                WriteAtClusters(Dir.FirstCluster, Data);
             }
         }
 
@@ -413,29 +455,30 @@ namespace NyaFs.Filesystem.ExFat
             return Entries;
         }
 
-        private void WriteFileData(byte[] Image)
+        private void WriteFileData()
         {
             foreach (var File in Files)
             {
                 if ((File.Data != null) && (File.Data.Length > 0))
-                    WriteAtClusters(Image, File.FirstCluster, File.Data);
+                    WriteAtClusters(File.FirstCluster, File.Data);
             }
         }
 
-        private void WriteAtClusters(byte[] Image, uint StartCluster, byte[] Data)
+        private void WriteAtClusters(uint StartCluster, byte[] Data)
         {
             if (StartCluster < 2)
                 return;
 
             long Base = (long)ClusterHeapOffset * BytesPerSector + (long)(StartCluster - 2) * ClusterSize;
-            Array.Copy(Data, 0, Image, Base, Math.Min(Data.Length, ClusterSize * Math.Max(1, (Data.Length + ClusterSize - 1) / ClusterSize)));
+            int Length = Math.Min(Data.Length, ClusterSize * Math.Max(1, (Data.Length + ClusterSize - 1) / ClusterSize));
+            if (Length > 0)
+                WriteAt(Base, Data, Length);
         }
 
-        private void WriteBoot(byte[] Image)
+        private void WriteBoot()
         {
             int TotalSectors = (int)Math.Min(Int32.MaxValue, TotalBytes / BytesPerSector);
             var Main = new byte[11 * BytesPerSector];
-            int Base = 0;
 
             Main[0] = 0xEB;
             Main[1] = 0x76;
@@ -470,10 +513,10 @@ namespace NyaFs.Filesystem.ExFat
             for (int i = 0; i < BytesPerSector / 4; i++)
                 ExFatShared.WriteU32(ChecksumSector, i * 4, Checksum);
 
-            Array.Copy(Main, 0, Image, 0, Main.Length);
-            Array.Copy(ChecksumSector, 0, Image, 11 * BytesPerSector, ChecksumSector.Length);
-            Array.Copy(Main, 0, Image, 12 * BytesPerSector, Main.Length);
-            Array.Copy(ChecksumSector, 0, Image, 23 * BytesPerSector, ChecksumSector.Length);
+            WriteAt(0, Main, Main.Length);
+            WriteAt(11L * BytesPerSector, ChecksumSector, ChecksumSector.Length);
+            WriteAt(12L * BytesPerSector, Main, Main.Length);
+            WriteAt(23L * BytesPerSector, ChecksumSector, ChecksumSector.Length);
         }
     }
 }

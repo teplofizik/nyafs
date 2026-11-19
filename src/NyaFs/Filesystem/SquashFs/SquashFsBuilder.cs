@@ -1,4 +1,4 @@
-﻿using NyaFs.Filesystem.Universal;
+using NyaFs.Filesystem.Universal;
 using NyaFs.ImageFormat.Types;
 using NyaIO.Data;
 using SharpCompress.Common;
@@ -8,10 +8,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using NyaFs.Filesystem.SquashFs.Builder;
 
 namespace NyaFs.Filesystem.SquashFs
 {
-    public class SquashFsBuilder : IFilesystemBuilder, Universal.IXattrBuilder
+    public class SquashFsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder, Universal.IXattrBuilder
     {
         private Compression.BaseCompressor Comp;
 
@@ -166,7 +167,7 @@ namespace NyaFs.Filesystem.SquashFs
         /// </summary>
         /// <param name="File"></param>
         /// <param name="Dst"></param>
-        private void AddBlocks(List<byte> Dst, Builder.Nodes.File File)
+        private void AddBlocks(IByteSink Dst, Builder.Nodes.File File)
         {
             var Blocks = File.GetBlocks();
             if (Blocks.Count > 0)
@@ -186,7 +187,7 @@ namespace NyaFs.Filesystem.SquashFs
             }
         }
 
-        private void AppendData(List<byte> Dst)
+        private void AppendData(IByteSink Dst)
         {
             foreach(var N in Nodes)
             {
@@ -204,7 +205,7 @@ namespace NyaFs.Filesystem.SquashFs
 
         private void PrepareFragmentTable()
         {
-            var Dst = new List<byte>();
+            var Dst = new ListSink();
 
             // Write fragment content
             uint Start = Convert.ToUInt32(Dst.Count);
@@ -266,7 +267,7 @@ namespace NyaFs.Filesystem.SquashFs
             FragmentBlock = Dst.ToArray();
         }
 
-        private void AppendFragmentTable(List<byte> Dst)
+        private void AppendFragmentTable(IByteSink Dst)
         {
             if (DebugBuilder) Debug.WriteLine($"AppendFragmentTable data: {Dst.Count:x06}");
             // Write fragment tables list
@@ -277,7 +278,6 @@ namespace NyaFs.Filesystem.SquashFs
             FragmentTablesList.Add(LastTable);
             //foreach (var F in Fragments)
             //int id = 0;
-            var Tmp = Dst.ToArray();
             for (int i = 0; i < Fragments.Count; i++)
             {
                 var F = Fragments[i];
@@ -308,7 +308,7 @@ namespace NyaFs.Filesystem.SquashFs
             }
         }
 
-        private void AppendIdTable(List<byte> Dst)
+        private void AppendIdTable(IByteSink Dst)
         {
             if (DebugBuilder) Debug.WriteLine($"AppendIdTable data: {Dst.Count:x06}");
 
@@ -324,12 +324,12 @@ namespace NyaFs.Filesystem.SquashFs
 
         }
 
-        private void AppendDirectoryTable(List<byte> Dst)
+        private void AppendDirectoryTable(IByteSink Dst)
         {
             if (DebugBuilder) Debug.WriteLine($"AppendDirectoryTable data: {Dst.Count:x06}");
             Superblock.DirectoryTableStart = Convert.ToUInt64(Dst.Count);
 
-            var Temp = new List<byte>();
+            var Temp = new ListSink();
             Builder.MetadataWriter Writer = new Builder.MetadataWriter(Temp, 0, MetadataBlockSize, Comp);
             Writer.FullBlocks = true;
             foreach (var N in Nodes)
@@ -371,29 +371,28 @@ namespace NyaFs.Filesystem.SquashFs
             }
         }
 
-        private byte[] ReadUncompressedMetadata(List<byte> Dst, ulong Start, Builder.MetadataRef Ref, uint Length)
+        private byte[] ReadUncompressedMetadata(IByteSink Dst, ulong Start, Builder.MetadataRef Ref, uint Length)
         {
             int Offset = Convert.ToInt32(Start + Ref.MetadataOffset + 2 + Ref.UnpackedOffset);
             var Res = new byte[Length];
             for (int i = 0; i < Length; i++)
-                Res[i] = Dst[Offset + i];
+                Array.Copy(Dst.ReadAt(Offset, Convert.ToInt32(Length)), 0, Res, 0, Convert.ToInt32(Length));
 
             return Res;
         }
 
-        private void WriteUncompressedMetadata(List<byte> Dst, ulong Start, Builder.MetadataRef Ref, byte[] Data)
+        private void WriteUncompressedMetadata(IByteSink Dst, ulong Start, Builder.MetadataRef Ref, byte[] Data)
         {
             int Offset = Convert.ToInt32(Start + Ref.MetadataOffset + 2 + Ref.UnpackedOffset);
-            for (int i = 0; i < Data.Length; i++)
-                Dst[Offset + i] = Data[i];
+            Dst.WriteAt(Offset, Data);
         }
 
-        private void AppendINodeTable(List<byte> Dst)
+        private void AppendINodeTable(IByteSink Dst)
         {
             Superblock.INodeTableStart = Convert.ToUInt64(Dst.Count);
             if (DebugBuilder) Debug.WriteLine($"AppendINodeTable: {Dst.Count:x06}");
 
-            var Temp = new List<byte>();
+            var Temp = new ListSink();
             Builder.MetadataWriter Writer = new Builder.MetadataWriter(Temp, 0, MetadataBlockSize, null);
             Writer.FullBlocks = true;
             for (int b = 0; b < NodesBlocks.Count; b++)
@@ -418,7 +417,7 @@ namespace NyaFs.Filesystem.SquashFs
             Dst.AddRange(Temp.ToArray());
         }
 
-        private void AppendExportTable(List<byte> Dst)
+        private void AppendExportTable(IByteSink Dst)
         {
             if (DebugBuilder) Debug.WriteLine($"AppendExportTable data: {Dst.Count:x06}");
 
@@ -456,13 +455,13 @@ namespace NyaFs.Filesystem.SquashFs
         /// Write correct offsets to tables
         /// </summary>
         /// <param name="Image"></param>
-        private void UpdateSuperBlock(byte[] Image)
+        private void UpdateSuperBlock(IByteSink Image)
         {
-            var SB = new Types.SqSuperblock(Image, 0);
+            var SB = Superblock;
 
             var RootDirRef = Nodes.First().Ref;
 
-            SB.BytesUsed = Convert.ToUInt32(Image.Length);
+            SB.BytesUsed = Convert.ToUInt32(Image.Count);
             SB.RootINodeRef = RootDirRef.SqRef;
             SB.IdCount = Convert.ToUInt32(IdTable.Count);
             SB.INodeCount = Convert.ToUInt32(Nodes.Count);
@@ -474,6 +473,7 @@ namespace NyaFs.Filesystem.SquashFs
             SB.INodeTableStart = Superblock.INodeTableStart;
             SB.DirectoryTableStart = Superblock.DirectoryTableStart;
             SB.Flags = Superblock.Flags;
+            Image.WriteAt(0, SB.getPacket());
         }
 
         private Builder.Nodes.Dir GetParentDirectory(string Path)
@@ -649,7 +649,7 @@ namespace NyaFs.Filesystem.SquashFs
             return Res;
         }
 
-        private void AppendXAttrTable(List<byte> Dst)
+        private void AppendXAttrTable(IByteSink Dst)
         {
             if ((XAttrSets == null) || (XAttrSets.Count == 0))
             {
@@ -659,7 +659,7 @@ namespace NyaFs.Filesystem.SquashFs
 
             ulong TableStart = Convert.ToUInt64(Dst.Count);
 
-            var Data = new List<byte>();
+            var Data = new ListSink();
             var Writer = new Builder.MetadataWriter(Data, 0, MetadataBlockSize, Comp);
             var Ids = new List<Types.SqXattrId>();
 
@@ -676,9 +676,9 @@ namespace NyaFs.Filesystem.SquashFs
             }
 
             Writer.Flush();
-            Dst.AddRange(Data);
+            Dst.AddRange(Data.ToArray());
 
-            var IdData = new List<byte>();
+            var IdData = new ListSink();
             var IdWriter = new Builder.MetadataWriter(IdData, 0, MetadataBlockSize, Comp);
             foreach (var Id in Ids)
                 IdWriter.Write(Id.getPacket());
@@ -686,7 +686,7 @@ namespace NyaFs.Filesystem.SquashFs
 
             var IdBlockOffsets = GetMetadataBlockOffsets(IdData.ToArray());
             ulong IdDataStart = Convert.ToUInt64(Dst.Count);
-            Dst.AddRange(IdData);
+            Dst.AddRange(IdData.ToArray());
 
             Superblock.XAttrIdTableStart = Convert.ToUInt64(Dst.Count);
 
@@ -704,7 +704,7 @@ namespace NyaFs.Filesystem.SquashFs
             }
         }
 
-        private void AddCompressorOptions(List<byte> Dst)
+        private void AddCompressorOptions(IByteSink Dst)
         {
             if(Superblock.CompressionId == Types.SqCompressionType.Lz4)
             {
@@ -728,7 +728,26 @@ namespace NyaFs.Filesystem.SquashFs
         /// <returns></returns>
         public byte[] GetFilesystemImage()
         {
-            var Res = new List<byte>();
+            var Res = new ListSink();
+            Build(Res);
+            return Res.ToArray();
+        }
+
+        public void WriteFilesystemImage(Stream Output)
+        {
+            var Res = Output.CanSeek ? (IByteSink)new StreamSink(Output) : new ListSink();
+            Build(Res);
+            if (Res is ListSink Memory)
+            {
+                var Data = Memory.ToArray();
+                Output.Write(Data, 0, Data.Length);
+            }
+            else
+                Output.Flush();
+        }
+
+        private void Build(IByteSink Res)
+        {
             Res.AddRange(Superblock.getPacket());
 
             PreprocessNodes();
@@ -744,13 +763,8 @@ namespace NyaFs.Filesystem.SquashFs
             AppendIdTable(Res);
             AppendXAttrTable(Res);
 
-            var Image = Res.ToArray();
-
-            UpdateSuperBlock(Image);
-            return Image;
+            UpdateSuperBlock(Res);
         }
-
-
         /// <summary>
         /// Create block device
         /// </summary>

@@ -2,11 +2,12 @@ using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace NyaFs.Filesystem.Iso9660
 {
-    public sealed class Iso9660Builder : IFilesystemBuilder
+    public sealed class Iso9660Builder : IFilesystemBuilder, IFilesystemStreamBuilder
     {
         private sealed class Node
         {
@@ -73,9 +74,20 @@ namespace NyaFs.Filesystem.Iso9660
 
         public byte[] GetFilesystemImage()
         {
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(System.IO.Stream Output)
+        {
+            if (!Output.CanSeek)
+                throw new NotSupportedException("ISO9660 streaming requires a seekable output stream");
+
             EnsureRoot();
             AssignIsoNames(Root);
-
             CollectDirectories(Root);
 
             foreach (var Dir in Directories)
@@ -101,23 +113,17 @@ namespace NyaFs.Filesystem.Iso9660
             }
 
             AssignFileExtents(Root, ref CurrentSector);
-
             int VolumeSectors = CurrentSector;
-            var Image = new byte[(long)VolumeSectors * Iso9660Shared.SectorSize];
+            Output.SetLength((long)VolumeSectors * Iso9660Shared.SectorSize);
 
-            WritePathTables(Image, LPathTableSector, MPathTableSector, PathTableSectors);
-
+            WritePathTables(Output, LPathTableSector, MPathTableSector, PathTableSectors);
             foreach (var Dir in Directories)
-                WriteDirectory(Image, Dir);
-
-            WriteFiles(Image, Root);
+                WriteDirectory(Output, Dir);
+            WriteFiles(Output, Root);
+            WriteDescriptors(Output, VolumeSectors, PathTableSize, LPathTableSector, MPathTableSector, BootCatalogSector);
             if (Bootable)
-                WriteBootCatalog(Image, BootCatalogSector, BootNode);
-            WriteDescriptors(Image, VolumeSectors, PathTableSize, LPathTableSector, MPathTableSector, BootCatalogSector);
-
-            return Image;
+                WriteBootCatalog(Output, BootCatalogSector, BootNode);
         }
-
         private void EnsureRoot()
         {
             if (Root != null)
@@ -318,10 +324,11 @@ namespace NyaFs.Filesystem.Iso9660
             return Result;
         }
 
-        private void WriteDirectory(byte[] Image, Node Directory)
+        private void WriteDirectory(System.IO.Stream Output, Node Directory)
         {
             long Base = (long)Directory.Extent * Iso9660Shared.SectorSize;
             int Offset = 0;
+            var Buffer = new byte[(int)Directory.DirectorySize];
 
             foreach (var Record in BuildRecordList(Directory))
             {
@@ -330,17 +337,18 @@ namespace NyaFs.Filesystem.Iso9660
                 var DataLength = Record.Dot ? Directory.DirectorySize :
                     (Record.DotDot ? (Directory.Parent ?? Directory).DirectorySize :
                     (Record.Node.IsDirectory ? Record.Node.DirectorySize : Record.Node.DataLength));
-
                 var Data = BuildRecord(Record, Directory, Extent, DataLength, true);
 
                 if ((Offset % Iso9660Shared.SectorSize) + Data.Length > Iso9660Shared.SectorSize)
                     Offset = ((Offset / Iso9660Shared.SectorSize) + 1) * Iso9660Shared.SectorSize;
 
-                Array.Copy(Data, 0, Image, Base + Offset, Data.Length);
+                Array.Copy(Data, 0, Buffer, Offset, Data.Length);
                 Offset += Data.Length;
             }
-        }
 
+            Output.Seek(Base, SeekOrigin.Begin);
+            Output.Write(Buffer, 0, Buffer.Length);
+        }
         private byte[] BuildRecord(DirectoryRecord Record, Node Directory, uint Extent, uint DataLength, bool WithSystemUse)
         {
             var Name = Record.Identifier;
@@ -514,22 +522,24 @@ namespace NyaFs.Filesystem.Iso9660
             }
         }
 
-        private void WriteFiles(byte[] Image, Node Directory)
+        private void WriteFiles(System.IO.Stream Output, Node Directory)
         {
             foreach (var Child in Directory.Children)
             {
                 if (Child.IsDirectory)
                 {
-                    WriteFiles(Image, Child);
+                    WriteFiles(Output, Child);
                     continue;
                 }
 
                 if ((Child.Data != null) && (Child.Data.Length > 0))
-                    Array.Copy(Child.Data, 0, Image, (long)Child.Extent * Iso9660Shared.SectorSize, Child.Data.Length);
+                {
+                    Output.Seek((long)Child.Extent * Iso9660Shared.SectorSize, SeekOrigin.Begin);
+                    Output.Write(Child.Data, 0, Child.Data.Length);
+                }
             }
         }
-
-        private void WritePathTables(byte[] Image, int LPathTableSector, int MPathTableSector, int PathTableSectors)
+        private void WritePathTables(System.IO.Stream Output, int LPathTableSector, int MPathTableSector, int PathTableSectors)
         {
             var L = new List<byte>();
             var M = new List<byte>();
@@ -558,8 +568,12 @@ namespace NyaFs.Filesystem.Iso9660
                 M.AddRange(MRecord);
             }
 
-            Array.Copy(L.ToArray(), 0, Image, (long)LPathTableSector * Iso9660Shared.SectorSize, L.Count);
-            Array.Copy(M.ToArray(), 0, Image, (long)MPathTableSector * Iso9660Shared.SectorSize, M.Count);
+            var LBytes = L.ToArray();
+            var MBytes = M.ToArray();
+            Output.Seek((long)LPathTableSector * Iso9660Shared.SectorSize, SeekOrigin.Begin);
+            Output.Write(LBytes, 0, LBytes.Length);
+            Output.Seek((long)MPathTableSector * Iso9660Shared.SectorSize, SeekOrigin.Begin);
+            Output.Write(MBytes, 0, MBytes.Length);
         }
 
         private static Node FindNode(Node Directory, string Path)
@@ -587,7 +601,7 @@ namespace NyaFs.Filesystem.Iso9660
             return Directory;
         }
 
-        private void WriteBootCatalog(byte[] Image, int CatalogSector, Node BootNode)
+        private void WriteBootCatalog(System.IO.Stream Output, int CatalogSector, Node BootNode)
         {
             var Catalog = new byte[Iso9660Shared.SectorSize];
 
@@ -622,9 +636,10 @@ namespace NyaFs.Filesystem.Iso9660
             Catalog[39] = (byte)(Sectors >> 8);
             Iso9660Shared.WriteU32LE(Catalog, 40, BootNode.Extent);
 
-            Array.Copy(Catalog, 0, Image, (long)CatalogSector * Iso9660Shared.SectorSize, Catalog.Length);
+            Output.Seek((long)CatalogSector * Iso9660Shared.SectorSize, SeekOrigin.Begin);
+            Output.Write(Catalog, 0, Catalog.Length);
         }
-        private void WriteDescriptors(byte[] Image, int VolumeSectors, int PathTableSize, int LPathTableSector, int MPathTableSector, int BootCatalogSector)
+        private void WriteDescriptors(System.IO.Stream Output, int VolumeSectors, int PathTableSize, int LPathTableSector, int MPathTableSector, int BootCatalogSector)
         {
             long Pvd = (long)Iso9660Shared.PrimaryVolumeDescriptorSector * Iso9660Shared.SectorSize;
             var Descriptor = new byte[Iso9660Shared.SectorSize];
@@ -659,7 +674,8 @@ namespace NyaFs.Filesystem.Iso9660
 
             var RootRecord = BuildRootRecord();
             Array.Copy(RootRecord, 0, Descriptor, Iso9660Shared.RootRecordOffset, RootRecord.Length);
-            Array.Copy(Descriptor, 0, Image, Pvd, Descriptor.Length);
+            Output.Seek(Pvd, SeekOrigin.Begin);
+            Output.Write(Descriptor, 0, Descriptor.Length);
 
             long Terminator = Pvd + ((BootCatalogSector >= 0) ? 2 : 1) * Iso9660Shared.SectorSize;
 
@@ -676,16 +692,20 @@ namespace NyaFs.Filesystem.Iso9660
                 Iso9660Shared.WriteAscii(Boot, 7, 32, "EL TORITO SPECIFICATION");
                 Iso9660Shared.WriteAscii(Boot, 39, 32, BootIdentifier);
                 Iso9660Shared.WriteU32LE(Boot, 71, (uint)BootCatalogSector);
-                Array.Copy(Boot, 0, Image, Pvd + Iso9660Shared.SectorSize, Boot.Length);
+                Output.Seek(Pvd + Iso9660Shared.SectorSize, SeekOrigin.Begin);
+                Output.Write(Boot, 0, Boot.Length);
             }
-            Array.Clear(Image, (int)Terminator, Iso9660Shared.SectorSize);
-            Image[Terminator] = 0xFF;
-            Image[Terminator + 1] = (byte)'C';
-            Image[Terminator + 2] = (byte)'D';
-            Image[Terminator + 3] = (byte)'0';
-            Image[Terminator + 4] = (byte)'0';
-            Image[Terminator + 5] = (byte)'1';
-            Image[Terminator + 6] = 1;
+
+            var Term = new byte[Iso9660Shared.SectorSize];
+            Term[0] = 0xFF;
+            Term[1] = (byte)'C';
+            Term[2] = (byte)'D';
+            Term[3] = (byte)'0';
+            Term[4] = (byte)'0';
+            Term[5] = (byte)'1';
+            Term[6] = 1;
+            Output.Seek(Terminator, SeekOrigin.Begin);
+            Output.Write(Term, 0, Term.Length);
         }
 
         private static void WritePvdDate(byte[] Data, int Offset, DateTime Time)

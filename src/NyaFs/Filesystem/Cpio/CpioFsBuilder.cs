@@ -3,11 +3,12 @@ using NyaFs.Filesystem.Universal;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 
 namespace NyaFs.Filesystem.Cpio
 {
-    public class CpioFsBuilder : IFilesystemBuilder
+    public class CpioFsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder
     {
         private readonly List<Types.CpioNode> Files = new List<Types.CpioNode>();
         private readonly string Magic;
@@ -33,16 +34,34 @@ namespace NyaFs.Filesystem.Cpio
         /// <returns></returns>
         public byte[] GetFilesystemImage()
         {
-            var Res = new List<byte>();
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
 
+        public void WriteFilesystemImage(Stream Output)
+        {
+            long Count = 0;
             foreach (var F in Files)
-                Res.AddRange(F.RawBytes);
+            {
+                Output.Write(F.RawBytes, 0, F.RawBytes.Length);
+                Count += F.RawBytes.Length;
+            }
 
-            Res.AddRange(new Types.Nodes.CpioTrailer(Magic).RawBytes);
+            var Trailer = new Types.Nodes.CpioTrailer(Magic).RawBytes;
+            Output.Write(Trailer, 0, Trailer.Length);
+            Count += Trailer.Length;
 
-            var Padding = Convert.ToInt64(Res.Count).MakeSizeAligned(0x100);
-            for (long i = 0; i < Padding; i++) Res.Add(0);
-            return Res.ToArray();
+            var Padding = Convert.ToInt64(Count).MakeSizeAligned(0x100);
+            var Zero = new byte[64 * 1024];
+            while (Padding > 0)
+            {
+                var Chunk = (int)Math.Min(Padding, Zero.Length);
+                Output.Write(Zero, 0, Chunk);
+                Padding -= Chunk;
+            }
         }
 
         /// <summary>

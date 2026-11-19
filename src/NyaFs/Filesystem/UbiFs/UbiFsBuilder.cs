@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.IO;
 using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.UbiFs.Types;
 
@@ -10,7 +11,7 @@ namespace NyaFs.Filesystem.UbiFs
     /// Wraps a <see cref="Ubifs.UbifsBuilder"/> (raw UBIFS volume) into a UBI container:
     /// builds the layout volume (volume table) and the volume LEBs with the given geometry.
     /// </summary>
-    public class UbiFsBuilder : IFilesystemBuilder, IXattrBuilder
+    public class UbiFsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder, IXattrBuilder
     {
         public readonly Ubifs.UbifsBuilder Ubifs;
 
@@ -45,8 +46,52 @@ namespace NyaFs.Filesystem.UbiFs
 
         public byte[] GetFilesystemImage()
         {
-            var Volume = Ubifs.GetFilesystemImage();
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
+
             int LebSize = PebSize - 2 * PageSize;
+            if (LebSize <= 0)
+                throw new InvalidOperationException("UBI: PEB must be larger than two pages");
+
+            if (!Output.CanSeek)
+            {
+                // The UBI layout (tables/headers before the payload) needs addressing;
+                // build the raw volume in memory, then emit PEBs sequentially.
+                WriteUbiFromVolume(Output, Ubifs.GetFilesystemImage(), LebSize);
+                return;
+            }
+
+            long Start = Output.Position;
+
+            Ubifs.WriteToStore(Len =>
+            {
+                int Lebs = (int)(Len / LebSize);
+                var Builder = new UbiBuilder(PebSize, PageSize);
+                Builder.AddReservedVolume(VolumeId, VolumeName, Lebs, VolumeType.UBI_VID_DYNAMIC, AutoResize);
+
+                // Layout PEBs + EC/VID headers for all volume PEBs, pre-filled with 0xFF.
+                Builder.WriteHeadersTo(Output);
+
+                // UBIFS now fills the volume data areas directly.
+                return new PebStore(Output, PebSize, 2 * PageSize, LebSize,
+                    (int)UbiBuilder.UBI_LAYOUT_VOLUME_EBS, (long)Lebs * LebSize, Start);
+            });
+
+            Output.Flush();
+        }
+
+        private void WriteUbiFromVolume(Stream Output, byte[] Volume, int LebSize)
+        {
+            if (Volume == null)
+                throw new InvalidOperationException("UBI: no UBIFS volume");
 
             var Builder = new UbiBuilder(PebSize, PageSize);
             var Vol = Builder.AddVolume(VolumeId, VolumeName, VolumeType.UBI_VID_DYNAMIC, AutoResize);
@@ -59,7 +104,7 @@ namespace NyaFs.Filesystem.UbiFs
                 Vol.Lebs.Add(L);
             }
 
-            return Builder.Build();
+            Builder.WriteTo(Output);
         }
     }
 }

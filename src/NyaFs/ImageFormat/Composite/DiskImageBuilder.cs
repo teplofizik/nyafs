@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
@@ -24,6 +24,9 @@ namespace NyaFs.ImageFormat.Composite
             public long Offset;
             public long Size;
             public byte[] Data;
+            public string FilePath;
+            public long DataLength;
+            public Func<System.IO.Stream, string> WriteData;
             public byte MbrType;
             public Guid TypeGuid;
             public Guid UniqueGuid;
@@ -31,13 +34,35 @@ namespace NyaFs.ImageFormat.Composite
 
         public static byte[] Build(ImageBuildNode Root, PluginRegistry Plugins, out string Error)
         {
+            using (var Stream = new System.IO.MemoryStream())
+            {
+                if (!BuildTo(Stream, Root, Plugins, out Error))
+                    return null;
+
+                return Stream.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Stream a disk image to the output without allocating the whole disk.
+        /// The stream must be writable; seeking is not required.
+        /// </summary>
+        public static bool BuildTo(System.IO.Stream Output, ImageBuildNode Root,
+            PluginRegistry Plugins, out string Error)
+        {
             Error = null;
+
+            if ((Output == null) || !Output.CanWrite)
+            {
+                Error = "Disk output stream is not writable";
+                return false;
+            }
 
             var Table = Get(Root, "table", "gpt").ToLowerInvariant();
             if ((Table != "mbr") && (Table != "gpt"))
             {
                 Error = "disk table must be 'mbr' or 'gpt'";
-                return null;
+                return false;
             }
 
             Root.Options.TryGetValue("plan.base", out var BaseDir);
@@ -52,11 +77,47 @@ namespace NyaFs.ImageFormat.Composite
 
             foreach (var Child in Root.Children)
             {
-                if (!PlanNodeSerializer.TrySerialize(Child, Plugins, BaseDir, BlobDir,
-                    out var Data, out var Skip, out var Err))
+                byte[] Data = null;
+                string FilePath = null;
+                long DataLength;
+                bool Skip = false;
+                Func<System.IO.Stream, string> WriteData = null;
+
+                if (PlanNodeSerializer.TryProbeStreaming(Child, Plugins, BaseDir, BlobDir,
+                    out var StreamLength, out var Handled, out var StreamError))
                 {
-                    Error = Err;
-                    return null;
+                    DataLength = StreamLength;
+                    var Node = Child;
+                    WriteData = Stream =>
+                    {
+                        if (!PlanNodeSerializer.TryWriteStreaming(Node, Plugins, BaseDir, BlobDir, Stream, out _, out var WriteError))
+                            return WriteError ?? "Cannot write streamable content";
+                        return null;
+                    };
+                }
+                else if (Handled)
+                {
+                    Error = StreamError;
+                    return false;
+                }
+                else if (PlanContentFile.TryGet(Child, BaseDir, out FilePath, out DataLength, out Skip, out var FileError))
+                {
+                    if (!String.IsNullOrEmpty(FileError))
+                    {
+                        Error = FileError;
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (!PlanNodeSerializer.TrySerialize(Child, Plugins, BaseDir, BlobDir,
+                        out Data, out Skip, out var Err))
+                    {
+                        Error = Err;
+                        return false;
+                    }
+
+                    DataLength = Data?.Length ?? 0;
                 }
 
                 if (Skip)
@@ -64,14 +125,14 @@ namespace NyaFs.ImageFormat.Composite
 
                 long Size;
                 if (Child.SizeAuto || !Child.Size.HasValue)
-                    Size = RoundUp(Data.Length, Sector);
+                    Size = RoundUp(DataLength, Sector);
                 else
                     Size = Child.Size.Value;
 
-                if (Size < Data.Length)
+                if (Size < DataLength)
                 {
-                    Error = $"Partition '{Child.Name}' is too small for its content ({Size} < {Data.Length} bytes)";
-                    return null;
+                    Error = $"Partition '{Child.Name}' is too small for its content ({Size} < {DataLength} bytes)";
+                    return false;
                 }
 
                 Size = RoundUp(Size, Sector);
@@ -80,7 +141,7 @@ namespace NyaFs.ImageFormat.Composite
                 if ((Offset % Sector) != 0)
                 {
                     Error = $"Partition '{Child.Name}' offset 0x{Offset:x} is not sector aligned";
-                    return null;
+                    return false;
                 }
 
                 if (Table == "mbr")
@@ -88,13 +149,13 @@ namespace NyaFs.ImageFormat.Composite
                     if (Parts.Count >= 4)
                     {
                         Error = "MBR supports at most 4 partitions; use 'table: gpt'";
-                        return null;
+                        return false;
                     }
 
                     if ((Offset / Sector) > 0xFFFFFFFF || (Size / Sector) > 0xFFFFFFFF)
                     {
                         Error = $"Partition '{Child.Name}' does not fit into MBR addressing";
-                        return null;
+                        return false;
                     }
                 }
 
@@ -102,7 +163,7 @@ namespace NyaFs.ImageFormat.Composite
                 if (!Guid.TryParse(TypeGuidText, out var TypeGuid))
                 {
                     Error = $"Partition '{Child.Name}' has an invalid type-guid";
-                    return null;
+                    return false;
                 }
 
                 var UniqueGuidText = Get(Child, "partition-guid", null);
@@ -116,6 +177,9 @@ namespace NyaFs.ImageFormat.Composite
                     Offset = Offset,
                     Size = Size,
                     Data = Data,
+                    FilePath = FilePath,
+                    DataLength = DataLength,
+                    WriteData = WriteData,
                     MbrType = (byte)(Option(Child, "mbr-type", 0x83) & 0xFF),
                     TypeGuid = TypeGuid,
                     UniqueGuid = UniqueGuid
@@ -130,25 +194,253 @@ namespace NyaFs.ImageFormat.Composite
             if (Total < Cursor)
             {
                 Error = $"Disk size 0x{Total:x} is smaller than the last partition end 0x{Cursor:x}";
-                return null;
+                return false;
             }
 
-            var Result = new byte[Total];
+            var Sorted = new List<Part>(Parts);
+            Sorted.Sort((A, B) => A.Offset.CompareTo(B.Offset));
 
-            foreach (var Part in Parts)
+            long Pos = 0;
+
+            if (Table == "mbr")
             {
-                if (Part.Data.Length > 0)
-                    Buffer.BlockCopy(Part.Data, 0, Result, (int)Part.Offset, Part.Data.Length);
+                var Mbr = new byte[Sector];
+                WriteMbr(Mbr, Parts);
+                Output.Write(Mbr, 0, Mbr.Length);
+                Pos = Mbr.Length;
+            }
+            else
+            {
+                long TotalSectors = Total / Sector;
+                if (TotalSectors < 2 + GptEntriesSectors + GptEntriesSectors + 2)
+                {
+                    Error = "Disk is too small for a GPT";
+                    return false;
+                }
+
+                var Entries = new byte[GptEntryCount * GptEntrySize];
+                for (int I = 0; I < Parts.Count; I++)
+                {
+                    var Part = Parts[I];
+                    var Base = I * GptEntrySize;
+
+                    if (((Part.Offset / Sector) < 34) || ((Part.Offset + Part.Size) > Total))
+                    {
+                        Error = $"Partition '{Part.Name}' is outside the GPT usable area";
+                        return false;
+                    }
+
+                    WriteGuid(Entries, Base, Part.TypeGuid);
+                    WriteGuid(Entries, Base + 16, Part.UniqueGuid);
+                    WriteU64(Entries, Base + 32, (ulong)(Part.Offset / Sector));
+                    WriteU64(Entries, Base + 40, (ulong)((Part.Offset + Part.Size) / Sector - 1));
+                    WriteName(Entries, Base + 56, Part.Name);
+                }
+
+                var EntriesCrc = Crc32(Entries);
+                var DiskGuid = GuidFromName(Seed, "disk");
+                long BackupEntriesLba = TotalSectors - 1 - GptEntriesSectors;
+                long FirstUsable = 2 + GptEntriesSectors;
+                long LastUsable = BackupEntriesLba - 1;
+
+                var Protective = new byte[Sector];
+                var Entry = 446;
+                Protective[Entry + 4] = 0xEE;
+                DiskImage.WriteU32(Protective, Entry + 8, 1);
+                DiskImage.WriteU32(Protective, Entry + 12, (uint)Math.Min(TotalSectors - 1, 0xFFFFFFFFL));
+                Protective[510] = 0x55;
+                Protective[511] = 0xAA;
+                Output.Write(Protective, 0, Protective.Length);
+                Pos = Protective.Length;
+
+                var PrimaryHeader = new byte[Sector];
+                WriteGptHeader(PrimaryHeader, 0, 1, TotalSectors - 1, FirstUsable, LastUsable,
+                    DiskGuid, 2, EntriesCrc);
+                Output.Write(PrimaryHeader, 0, PrimaryHeader.Length);
+                Pos += PrimaryHeader.Length;
+
+                Output.Write(Entries, 0, Entries.Length);
+                Pos += Entries.Length;
+
+                WriteZeros(Output, FirstUsable * Sector - Pos);
+                Pos = FirstUsable * Sector;
+
+                foreach (var Part in Sorted)
+                {
+                    if (Part.Offset < Pos)
+                    {
+                        Error = $"Partition '{Part.Name}' overlaps the previous data";
+                        return false;
+                    }
+
+                    WriteZeros(Output, Part.Offset - Pos);
+                    if (!WritePart(Output, Part, out Error))
+                        return false;
+
+                    Pos = Part.Offset + Part.DataLength;
+
+                    WriteZeros(Output, Part.Offset + Part.Size - Pos);
+                    Pos = Part.Offset + Part.Size;
+                }
+
+                WriteZeros(Output, BackupEntriesLba * Sector - Pos);
+                Pos = BackupEntriesLba * Sector;
+                Output.Write(Entries, 0, Entries.Length);
+                Pos += Entries.Length;
+
+                var BackupHeader = new byte[Sector];
+                WriteGptHeader(BackupHeader, 0, TotalSectors - 1, 1, FirstUsable, LastUsable,
+                    DiskGuid, BackupEntriesLba, EntriesCrc);
+                WriteZeros(Output, (TotalSectors - 1) * Sector - Pos);
+                Output.Write(BackupHeader, 0, BackupHeader.Length);
+                Pos = Total;
             }
 
             if (Table == "mbr")
-                WriteMbr(Result, Parts);
-            else if (!WriteGpt(Result, Parts, Seed, out Error))
-                return null;
+            {
+                foreach (var Part in Sorted)
+                {
+                    if (Part.Offset < Pos)
+                    {
+                        Error = $"Partition '{Part.Name}' overlaps the previous data";
+                        return false;
+                    }
 
-            return Result;
+                    WriteZeros(Output, Part.Offset - Pos);
+                    if (!WritePart(Output, Part, out Error))
+                        return false;
+
+                    Pos = Part.Offset + Part.DataLength;
+
+                    WriteZeros(Output, Part.Offset + Part.Size - Pos);
+                    Pos = Part.Offset + Part.Size;
+                }
+
+                WriteZeros(Output, Total - Pos);
+            }
+
+            return true;
         }
 
+        private static bool WritePart(System.IO.Stream Output, Part Part, out string Error)
+        {
+            Error = null;
+
+            if (Part.WriteData != null)
+            {
+                if (Output.CanSeek)
+                {
+                    long Start = Output.Position;
+                    var Region = new RegionStream(Output, Start);
+                    var StreamError = Part.WriteData(Region);
+                    if (StreamError != null)
+                    {
+                        Error = StreamError;
+                        return false;
+                    }
+
+                    if (Region.Length != Part.DataLength)
+                    {
+                        Error = $"Partition '{Part.Name}' produced {Region.Length} bytes, expected {Part.DataLength}";
+                        return false;
+                    }
+
+                    Output.Seek(Start + Part.DataLength, System.IO.SeekOrigin.Begin);
+                }
+                else
+                {
+                    using (var Memory = new System.IO.MemoryStream())
+                    {
+                        var StreamError = Part.WriteData(Memory);
+                        if (StreamError != null)
+                        {
+                            Error = StreamError;
+                            return false;
+                        }
+
+                        if (Memory.Length != Part.DataLength)
+                        {
+                            Error = $"Partition '{Part.Name}' produced {Memory.Length} bytes, expected {Part.DataLength}";
+                            return false;
+                        }
+
+                        var Buffer = Memory.GetBuffer();
+                        Output.Write(Buffer, 0, (int)Memory.Length);
+                    }
+                }
+
+                return true;
+            }
+
+            if (Part.FilePath != null)
+            {
+                try
+                {
+                    using (var Source = new System.IO.FileStream(Part.FilePath,
+                        System.IO.FileMode.Open, System.IO.FileAccess.Read,
+                        System.IO.FileShare.Read, 1024 * 1024, System.IO.FileOptions.SequentialScan))
+                    {
+                        if (Source.Length < Part.DataLength)
+                        {
+                            Error = $"Content file '{Part.FilePath}' is shorter than expected";
+                            return false;
+                        }
+
+                        return CopyExactly(Source, Output, Part.DataLength, out Error);
+                    }
+                }
+                catch (Exception E)
+                {
+                    Error = $"Cannot read content file '{Part.FilePath}': {E.Message}";
+                    return false;
+                }
+            }
+
+            if ((Part.Data == null) || (Part.Data.Length < Part.DataLength))
+            {
+                Error = $"Partition '{Part.Name}' has no content";
+                return false;
+            }
+
+            Output.Write(Part.Data, 0, (int)Part.DataLength);
+            return true;
+        }
+
+        private static bool CopyExactly(System.IO.Stream Source, System.IO.Stream Output,
+            long Length, out string Error)
+        {
+            Error = null;
+            var Buffer = new byte[1024 * 1024];
+
+            while (Length > 0)
+            {
+                var Read = Source.Read(Buffer, 0, (int)Math.Min(Buffer.Length, Length));
+                if (Read <= 0)
+                {
+                    Error = "Content file ended before the declared size";
+                    return false;
+                }
+
+                Output.Write(Buffer, 0, Read);
+                Length -= Read;
+            }
+
+            return true;
+        }
+        private static readonly byte[] ZeroBuffer = new byte[64 * 1024];
+
+        private static void WriteZeros(System.IO.Stream Output, long Count)
+        {
+            if (Count <= 0)
+                return;
+
+            while (Count > 0)
+            {
+                var Chunk = (int)Math.Min(Count, ZeroBuffer.Length);
+                Output.Write(ZeroBuffer, 0, Chunk);
+                Count -= Chunk;
+            }
+        }
         private static void WriteMbr(byte[] Disk, List<Part> Parts)
         {
             for (int I = 0; I < Parts.Count; I++)

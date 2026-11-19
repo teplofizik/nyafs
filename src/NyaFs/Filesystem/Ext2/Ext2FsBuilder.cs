@@ -1,13 +1,14 @@
-﻿using NyaFs.Filesystem.Universal;
+using NyaFs.Filesystem.Universal;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using NyaIO.Data;
+using System.IO;
 
 namespace NyaFs.Filesystem.Ext2
 {
-    public class Ext2FsBuilder : Ext2FsBase, IFilesystemBuilder, IXattrBuilder
+    public class Ext2FsBuilder : Ext2FsBase, IFilesystemBuilder, IFilesystemStreamBuilder, IXattrBuilder
     {
         uint DiskBlockSize;
         internal uint INodeIndex = 2;
@@ -20,7 +21,11 @@ namespace NyaFs.Filesystem.Ext2
 
         private uint[] BlockMap;
 
-        public Ext2FsBuilder(uint DiskBlockSize) : base(new byte[DiskBlockSize])
+        public Ext2FsBuilder(uint DiskBlockSize) : this(DiskBlockSize, new MemoryStore(DiskBlockSize))
+        {
+        }
+
+        public Ext2FsBuilder(uint DiskBlockSize, IRandomAccessStore Store) : base(Store)
         {
             BlockMap = new uint[DiskBlockSize / 32];
             BlockMap.Fill(0u);
@@ -90,7 +95,7 @@ namespace NyaFs.Filesystem.Ext2
         {
             MaxBlockGroupCount = Convert.ToUInt32(getLength() / Superblock.BlockSize / Superblock.BlocksPerGroup);
 
-            Superblock.BlocksCount = Convert.ToUInt32((Raw.Length - 0x400) / Superblock.BlockSize);
+            Superblock.BlocksCount = Convert.ToUInt32((Length - 0x400) / Superblock.BlockSize);
             Superblock.INodesCount = Superblock.InodesPerGroup * MaxBlockGroupCount;
             Superblock.FreeINodeCount = Superblock.INodesCount;
             Superblock.FreeBlocksCount = Superblock.BlocksCount - 1;
@@ -180,7 +185,7 @@ namespace NyaFs.Filesystem.Ext2
                 WriteArray(Offset + 0x400, SBRaw, 0x400);
                 WriteArray(Offset + 0x800, BGRaw, 0x400);
 
-                var SB = new Types.ExtSuperBlock(Raw, Offset + 0x400);
+                var SB = new Types.ExtSuperBlock(Store, Offset + 0x400);
                 SB.BlockGroup = i;
             }
         }
@@ -191,6 +196,15 @@ namespace NyaFs.Filesystem.Ext2
         /// <returns></returns>
         public byte[] GetFilesystemImage()
         {
+            using (var Output = new MemoryStream())
+            {
+                WriteFilesystemImage(Output);
+                return Output.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(Stream Output)
+        {
             foreach (var D in Dirs)
             {
                 SetNodeBlockContent(D.Node, D.Content);
@@ -198,10 +212,11 @@ namespace NyaFs.Filesystem.Ext2
             }
 
             WriteXattrs();
-
             DuplicateSuperblocks();
-
-            return getPacket();
+            if (Store is StreamStore)
+                Output.Flush();
+            else
+                CopyTo(Output);
         }
 
         private BuilderDirectory GetParentDirectory(string Path)

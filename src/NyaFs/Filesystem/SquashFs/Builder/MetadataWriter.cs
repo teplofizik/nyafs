@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NyaIO.Data;
@@ -7,7 +7,7 @@ namespace NyaFs.Filesystem.SquashFs.Builder
 {
     class MetadataWriter
     {
-        List<byte> Dst;
+        IByteSink Dst;
         uint BlockSize;
         ulong Offset;
         bool AddHeader;
@@ -16,7 +16,7 @@ namespace NyaFs.Filesystem.SquashFs.Builder
         FragmentBlock TempMetablock;
         Compression.BaseCompressor Compressor;
 
-        public MetadataWriter(List<byte> Dst, ulong Offset, uint BlockSize, Compression.BaseCompressor Compressor, bool AddHeader = true)
+        public MetadataWriter(IByteSink Dst, ulong Offset, uint BlockSize, Compression.BaseCompressor Compressor, bool AddHeader = true)
         {
             this.AddHeader = AddHeader;
             this.Dst = Dst;

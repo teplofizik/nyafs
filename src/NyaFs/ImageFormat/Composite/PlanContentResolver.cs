@@ -4,6 +4,7 @@ using System.IO;
 using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Items;
 using NyaFs.ImageFormat.Elements.Fs;
+using NyaFs.ImageFormat.Elements.Fs.Writer;
 using NyaFs.ImageFormat.Plugins;
 
 namespace NyaFs.ImageFormat.Composite
@@ -154,6 +155,69 @@ namespace NyaFs.ImageFormat.Composite
                 return null;
 
             return SerializeFilesystem(Fs, Format, Plugins, out Error);
+        }
+
+        /// <summary>
+        /// Prepare a streaming writer for a filesystem node with a `content.dir` source.
+        /// Returns false when the node is not streamable (no dir, compressed, dirty, or
+        /// no writable plugin); <paramref name="Handled"/> is true when the node was
+        /// recognised and an error must be reported.
+        /// </summary>
+        public static bool TryBuildStreamingFilesystem(ImageBuildNode Node, PluginRegistry Plugins,
+            string BaseDir, out Writer Writer, out LinuxFilesystem Fs, out bool Handled, out string Error)
+        {
+            Writer = null;
+            Fs = null;
+            Handled = false;
+            Error = null;
+
+            if ((Node == null) || Node.Dirty || (Node.Content == null))
+                return false;
+
+            var C = Node.Content;
+            if (String.IsNullOrEmpty(C.Dir) || !String.IsNullOrWhiteSpace(C.Compression))
+                return false;
+
+            var Format = !String.IsNullOrEmpty(Node.Format) ? Node.Format : GetOption(C, "fs", null);
+            if (String.IsNullOrEmpty(Format))
+                return false;
+
+            var Plugin = Plugins?.ResolveFilesystem(Format);
+            if ((Plugin == null) || !Plugin.SupportWrite)
+                return false;
+
+            Handled = true;
+
+            var DirPath = ResolvePath(C.Dir, BaseDir);
+            if (!Directory.Exists(DirPath))
+            {
+                Error = $"Content directory '{DirPath}' for '{Node.Path}' is not found";
+                return false;
+            }
+
+            var FsObject = BuildFilesystemObject(Format, DirPath, C, out Error);
+            if (FsObject == null)
+                return false;
+
+            if (!FilesystemPlanOptions.Apply(FsObject, Format, Node.Options, Plugins, out Error))
+                return false;
+
+            var W = Plugin.GetFilesystemWriter(FsObject);
+            if (W == null)
+            {
+                Error = $"No filesystem writer for '{Format}'";
+                return false;
+            }
+
+            if (!W.CheckFilesystem(FsObject))
+            {
+                Error = $"Filesystem '{Format}' cannot represent the content of the directory";
+                return false;
+            }
+
+            Writer = W;
+            Fs = FsObject;
+            return true;
         }
 
         /// <summary>Read a local directory into an in-memory filesystem object.</summary>

@@ -1,16 +1,18 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using NyaFs.Packages;
 using NyaFs.Processor.Scripting.Helper;
 
 namespace NyaFs.Processor.Scripting.Commands
 {
-    /// <summary>
-    /// Package commands: pkg info/add &lt;file&gt;, pkg create &lt;file&gt; &lt;fs-path&gt;
-    /// &lt;name&gt; &lt;version&gt; [compression], pkg createdir &lt;file&gt; &lt;local-dir&gt;
-    /// &lt;name&gt; &lt;version&gt; [compression].
-    /// </summary>
+        /// <summary>
+        /// Package commands: pkg info/add &lt;file&gt;, pkg create &lt;file&gt; &lt;fs-path&gt;
+        /// &lt;name&gt; &lt;version&gt; [compression], pkg createdir &lt;file&gt; &lt;local-dir&gt;
+        /// &lt;name&gt; &lt;version&gt; [compression], pkg adddir &lt;dir&gt; &lt;root-package&gt;,
+        /// pkg meta &lt;file&gt; &lt;key&gt; &lt;value|-&gt;.
+        /// </summary>
     public class Pkg : ScriptStepGenerator
     {
         public Pkg() : base("pkg")
@@ -65,6 +67,14 @@ namespace NyaFs.Processor.Scripting.Commands
                 new Params.StringScriptArgsParam("version"),
                 new Params.StringScriptArgsParam("compression")
             }));
+
+            AddConfig(new ScriptArgsConfig(6, new ScriptArgsParam[]
+            {
+                new Params.EnumScriptArgsParam("action", new[] { "meta" }),
+                new Params.StringScriptArgsParam("file"),
+                new Params.StringScriptArgsParam("key"),
+                new Params.StringScriptArgsParam("value")
+            }));
         }
 
         public override ScriptStep Get(ScriptArgs Args)
@@ -72,6 +82,9 @@ namespace NyaFs.Processor.Scripting.Commands
             var A = Args.RawArgs;
             if (Args.ArgConfig == 5)
                 return new PkgScriptStep(A[0], null, A[1], A[2], null, null);
+
+            if (Args.ArgConfig == 6)
+                return new PkgScriptStep(A[0], A[1], null, null, null, null, A[2], A[3]);
 
             var Compression = (Args.ArgConfig == 2 || Args.ArgConfig == 4) ? A[5] : null;
             if (Args.ArgConfig == 0)
@@ -88,8 +101,11 @@ namespace NyaFs.Processor.Scripting.Commands
             private readonly string PkgName;
             private readonly string PkgVersion;
             private readonly string Compression;
+            private readonly string MetaKey;
+            private readonly string MetaValue;
 
-            public PkgScriptStep(string Action, string File, string Path, string Name, string Version, string Compression) : base("pkg")
+            public PkgScriptStep(string Action, string File, string Path, string Name, string Version,
+                string Compression, string MetaKey = null, string MetaValue = null) : base("pkg")
             {
                 this.Action = Action.ToLowerInvariant();
                 this.File = File;
@@ -97,6 +113,8 @@ namespace NyaFs.Processor.Scripting.Commands
                 this.PkgName = Name;
                 this.PkgVersion = Version;
                 this.Compression = Compression;
+                this.MetaKey = MetaKey;
+                this.MetaValue = MetaValue;
             }
 
             public override ScriptStepResult Exec(ImageProcessor Processor)
@@ -110,8 +128,26 @@ namespace NyaFs.Processor.Scripting.Commands
                         case "info":
                             {
                                 var P = NyaPackage.Open(System.IO.File.ReadAllBytes(Resolved));
+                                var Fields = string.Join(", ",
+                                    P.Metadata.All.Select(KV => KV.Key + "=" + KV.Value));
                                 return new ScriptStepResult(ScriptStepStatus.Ok,
-                                    $"Package: {P.Metadata} entries={P.Entries.Count}");
+                                    $"Package: {Fields} entries={P.Entries.Count}");
+                            }
+                        case "meta":
+                            {
+                                if (string.IsNullOrWhiteSpace(MetaKey))
+                                    return new ScriptStepResult(ScriptStepStatus.Error,
+                                        "Usage: pkg meta <file> <key> <value|->");
+
+                                var P = NyaPackage.Open(System.IO.File.ReadAllBytes(Resolved));
+                                if (string.IsNullOrEmpty(MetaValue) || (MetaValue == "-"))
+                                    P.Metadata.Remove(MetaKey.Trim());
+                                else
+                                    P.Metadata.Set(MetaKey.Trim(), MetaValue);
+
+                                System.IO.File.WriteAllBytes(Resolved, P.ToFile(P.Metadata.Compression));
+                                return new ScriptStepResult(ScriptStepStatus.Ok,
+                                    $"Updated package {Resolved}: {P.Metadata}");
                             }
                         case "add":
                             {

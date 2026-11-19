@@ -34,6 +34,12 @@ namespace NyaFs.Packages
             Fields[Key] = Value ?? "";
         }
 
+        public void Remove(string Key)
+        {
+            if (!string.IsNullOrEmpty(Key))
+                Fields.Remove(Key);
+        }
+
         public IEnumerable<KeyValuePair<string, string>> All => Fields;
 
         public byte[] ToControl()

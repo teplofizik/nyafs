@@ -140,12 +140,31 @@ namespace NyaFs.Packages
                     VersionMatches(Package.Version, Spec.Op, Spec.Version))
                     return true;
 
-                foreach (var ProvideValue in Package.GetList("provides"))
-                {
-                    var Provide = ParseSpec(ProvideValue);
-                    if ((Provide != null) && String.Equals(Provide.Name, Spec.Name, StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
+                if (Provides(Package, Spec))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Does the package provide the requested virtual name? A provide without an
+        /// explicit version satisfies any constraint; when both versions are present
+        /// the dependency's operator is honoured.
+        /// </summary>
+        private static bool Provides(NyaPackage Package, DependencySpec Spec) =>
+            Provides(Package.Metadata, Spec);
+
+        private static bool Provides(PackageMetadata Metadata, DependencySpec Spec)
+        {
+            foreach (var ProvideValue in Metadata.GetList("provides"))
+            {
+                var Provide = ParseSpec(ProvideValue);
+                if ((Provide == null) || !String.Equals(Provide.Name, Spec.Name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (String.IsNullOrEmpty(Spec.Op) || String.IsNullOrEmpty(Provide.Version) ||
+                    VersionMatches(Provide.Version, Spec.Op, Spec.Version))
+                    return true;
             }
             return false;
         }
@@ -185,16 +204,33 @@ namespace NyaFs.Packages
                 foreach (var Spec in P.Metadata.GetList("depends"))
                 {
                     var Dep = ParseSpec(Spec);
-                    if ((Dep == null) || !All.TryGetValue(Dep.Name, out var Child))
+                    if (Dep == null)
+                        continue;
+
+                    NyaPackage Child = null;
+                    if (All.TryGetValue(Dep.Name, out var Direct) &&
+                        VersionMatches(Direct.Metadata.Version, Dep.Op, Dep.Version))
+                    {
+                        Child = Direct;
+                    }
+                    else
+                    {
+                        foreach (var Candidate in All.Values)
+                        {
+                            if (Provides(Candidate, Dep))
+                            {
+                                Child = Candidate;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (Child == null)
                     {
                         Failure = "Missing dependency '" + Spec + "' for '" + Name + "'";
                         return false;
                     }
-                    if (!VersionMatches(Child.Metadata.Version, Dep.Op, Dep.Version))
-                    {
-                        Failure = "Dependency '" + Spec + "' has version " + Child.Metadata.Version;
-                        return false;
-                    }
+
                     if (!Visit(Child))
                         return false;
                 }
@@ -202,9 +238,27 @@ namespace NyaFs.Packages
                 foreach (var Spec in P.Metadata.GetList("conflicts"))
                 {
                     var Conflict = ParseSpec(Spec);
-                    if ((Conflict != null) && All.TryGetValue(Conflict.Name, out var Other))
+                    if (Conflict == null)
+                        continue;
+
+                    NyaPackage Other = null;
+                    if (All.TryGetValue(Conflict.Name, out var Direct))
+                        Other = Direct;
+                    else
                     {
-                        Failure = "Package '" + Name + "' conflicts with '" + Conflict.Name + "'";
+                        foreach (var Candidate in All.Values)
+                        {
+                            if ((Candidate != P) && Provides(Candidate, Conflict))
+                            {
+                                Other = Candidate;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (Other != null)
+                    {
+                        Failure = "Package '" + Name + "' conflicts with '" + Other.Metadata.Name + "'";
                         return false;
                     }
                 }

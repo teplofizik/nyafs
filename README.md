@@ -13,7 +13,9 @@ firmware images (kernel, ramfs/rootfs, device tree and composite containers).
 - Streaming image writers (`IFilesystemStreamBuilder`): every built-in filesystem
   can emit its image directly to a `Stream`; multi-volume UBI and NAND/disk
   filesystem slots are written without materialising the whole image in memory.
-- `.nyapkg` packages with TAR/PAX xattrs and filtering.
+- `.nyapkg` packages with TAR/PAX xattrs, arch/os filtering, dependency/
+  conflict/provides metadata, creation from a filesystem subtree or local
+  directory, and gzip/zstd compression.
 - Plugin architecture for filesystems, compressors, images and commands,
   including optional remote transports (SSH/SCP/SFTP/FTP) and services
   (SFTP/NFS/TFTP servers).

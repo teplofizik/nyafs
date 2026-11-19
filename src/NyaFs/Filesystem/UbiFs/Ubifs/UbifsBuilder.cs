@@ -19,7 +19,7 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
     /// LEB (gc_lnum) is kept just before them, and the LPT is written as
     /// [pnodes][nnodes bottom-up..root][ltab] in the first LPT LEB.
     /// </summary>
-    public class UbifsBuilder : IFilesystemBuilder, IXattrBuilder
+    public class UbifsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder, IXattrBuilder
     {
         public const int DefaultMinIoSize = 2048;
         public const uint FirstIno = 16;
@@ -55,6 +55,20 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
 
         private uint Sqnum = 1;
 
+        /// <summary>Geometry and generated nodes captured by <see cref="PrepareLayout"/>.</summary>
+        private sealed class PreparedLayout
+        {
+            public List<NRef> Real;
+            public int IndexLebs;
+            public int IndexFirst;
+            public int GcLnum;
+            public int MainFirst;
+            public uint HighestInum;
+            public UbifsLpt.Geometry Geom;
+        }
+
+        private PreparedLayout Prepared;
+
         // ---- in-memory tree ----
 
         private class Node
@@ -79,7 +93,6 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         }
 
         private Node Root;
-        private Func<long, IRandomAccessStore> StoreFactory;
 
         public UbifsBuilder(int LebSize, int LebCnt, int MinIoSize = DefaultMinIoSize)
         {
@@ -413,28 +426,35 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
         {
             if (Output == null) throw new ArgumentNullException(nameof(Output));
 
-            var Seekable = Output.CanSeek;
-            StoreFactory = Len => Seekable ? (IRandomAccessStore)new StreamStore(Output, Len) : new MemoryStore(Len);
-            try
+            if (Output.CanSeek)
             {
-                var Data = GetFilesystemImage();
-                if (!Seekable && (Data != null))
-                    Output.Write(Data, 0, Data.Length);
-                else
-                    Output.Flush();
+                WriteToStore(Len => new StreamStore(Output, Len));
+                Output.Flush();
             }
-            finally
+            else
             {
-                StoreFactory = null;
+                // Non-seekable sinks cannot be addressed by LEB; build in memory and copy.
+                var Data = GetFilesystemImage();
+                if (Data != null)
+                    Output.Write(Data, 0, Data.Length);
             }
         }
-        public byte[] GetFilesystemImage()
+
+        /// <summary>
+        /// Compute the final geometry and generate the node stream without writing it.
+        /// The returned LEB count tells a UBI container how many PEBs to reserve before
+        /// it writes the volume table. Call <see cref="WritePreparedToStore"/> afterwards.
+        /// </summary>
+        public int PrepareLayout()
         {
             if (Root == null)
                 throw new InvalidOperationException("No root directory: call Directory(\"/\", ...) first");
 
             if (LebSize <= 0x30 + 0x1000)
                 throw new InvalidOperationException("UBIFS: LEB size must exceed the maximum data node size (0x30 + 4096)");
+
+            if (Prepared != null)
+                return LebCnt;
 
             // 1. assign inode numbers and generate the real nodes
             uint Next = FirstIno;
@@ -476,12 +496,57 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             LebCnt = Total;
             BigLptBuilt = BigLpt;
             LptLebsBuilt = LptLebsSelected;
-            uint MainFirst = (uint)(BaseLebs + LptLebsSelected);
 
             int IndexFirst = LebCnt - IndexLebs;
             int GcLnum = IndexFirst - 1;
 
-            var Store = StoreFactory != null ? StoreFactory((long)LebCnt * LebSize) : new MemoryStore((long)LebCnt * LebSize);
+            Prepared = new PreparedLayout
+            {
+                Real = Real,
+                IndexLebs = IndexLebs,
+                IndexFirst = IndexFirst,
+                GcLnum = GcLnum,
+                MainFirst = BaseLebs + LptLebsSelected,
+                HighestInum = HighestInum,
+                Geom = Geom
+            };
+
+            return LebCnt;
+        }
+
+        /// <summary>
+        /// Build the volume into a caller-provided random-access store. The factory is
+        /// invoked once the final geometry (LEB count) is known, so a UBI container can
+        /// place the volume's LEBs directly into its PEB data areas.
+        /// </summary>
+        public void WriteToStore(Func<long, IRandomAccessStore> StoreFactory)
+        {
+            if (StoreFactory == null) throw new ArgumentNullException(nameof(StoreFactory));
+
+            if (Prepared == null)
+                PrepareLayout();
+
+            WritePreparedToStore(StoreFactory);
+        }
+
+        /// <summary>Write the geometry prepared by <see cref="PrepareLayout"/>.</summary>
+        public byte[] WritePreparedToStore(Func<long, IRandomAccessStore> StoreFactory)
+        {
+            if (StoreFactory == null) throw new ArgumentNullException(nameof(StoreFactory));
+            if (Prepared == null)
+                throw new InvalidOperationException("UBIFS: PrepareLayout must be called before writing");
+
+            var Real = Prepared.Real;
+            int IndexLebs = Prepared.IndexLebs;
+            int IndexFirst = Prepared.IndexFirst;
+            int GcLnum = Prepared.GcLnum;
+            uint MainFirst = (uint)Prepared.MainFirst;
+            int LptLebsSelected = LptLebsBuilt;
+            bool BigLpt = BigLptBuilt;
+            var Geom = Prepared.Geom;
+            uint HighestInum = Prepared.HighestInum;
+
+            var Store = StoreFactory((long)LebCnt * LebSize);
             var FillBuf = new byte[LebSize];
             for (int i = 0; i < LebSize; i++) FillBuf[i] = 0xFF;
             for (int i = 0; i < LebCnt; i++) Store.Write((long)i * LebSize, FillBuf, 0, LebSize);
@@ -607,8 +672,15 @@ namespace NyaFs.Filesystem.UbiFs.Ubifs
             Lebs.Write(1, Mst.Length, Pad);
             Lebs.Write(2, Mst.Length, Pad);
 
-            // flatten
             return Store is MemoryStore M ? M.ToArray() : null;
+        }
+
+        public byte[] GetFilesystemImage()
+        {
+            if (Prepared == null)
+                PrepareLayout();
+
+            return WritePreparedToStore(Len => new MemoryStore(Len));
         }
 
         // ---- main-area packing ----

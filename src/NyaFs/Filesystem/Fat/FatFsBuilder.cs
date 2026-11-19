@@ -42,7 +42,6 @@ namespace NyaFs.Filesystem.Fat
         private uint RootCluster;
         private int ClusterSize;
 
-        private byte[] Image;
         private System.IO.Stream ImageStream;
         private uint[] FatEntries;
         private UInt32 NextCluster;

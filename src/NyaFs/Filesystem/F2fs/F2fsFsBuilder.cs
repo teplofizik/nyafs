@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using NyaIO.Data;
+using NyaFs.Filesystem.Universal;
 
 namespace NyaFs.Filesystem.F2fs
 {
@@ -9,7 +11,7 @@ namespace NyaFs.Filesystem.F2fs
     /// F2FS image builder: empty filesystem (mkfs-like) and writing a directory tree
     /// (inodes, dentry blocks, data blocks, direct-node blocks) with NAT/SIT/SSA/checkpoint.
     /// </summary>
-    public class F2fsFsBuilder : Universal.IFilesystemBuilder, Universal.IXattrBuilder
+    public class F2fsFsBuilder : Universal.IFilesystemBuilder, Universal.IFilesystemStreamBuilder, Universal.IXattrBuilder
     {
         public const int BlockSize = 4096;
         public const int BlocksPerSeg = 512;
@@ -55,7 +57,7 @@ namespace NyaFs.Filesystem.F2fs
         private int CpBlkaddr, SitBlkaddr, NatBlkaddr, SsaBlkaddr, MainBlkaddr;
         private int SectionCount, SegmentCount, SegCkpt, SegSit, SegNat, SegSsa, SegMain;
 
-        private byte[] Image;
+        private IRandomAccessStore Store;
 
         private int NextFreeSeg;
         private int NextFreeNid;
@@ -379,17 +381,46 @@ namespace NyaFs.Filesystem.F2fs
 
         public byte[] GetFilesystemImage()
         {
-            Image = new byte[TotalBytes];
-            EnsureRoot();
-            Root.Ino = RootIno;
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
 
-            AssignInodes(Root);
+        public void WriteFilesystemImage(Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
 
-            WriteSuperblock();
-            WriteTree(Root);
-            FinalizeImage();
+            if (!Output.CanSeek)
+            {
+                using (var Stream = new MemoryStream())
+                {
+                    WriteFilesystemImage(Stream);
+                    Stream.Position = 0;
+                    Stream.CopyTo(Output);
+                }
+                return;
+            }
 
-            return Image;
+            Store = new StreamStore(Output, TotalBytes);
+            try
+            {
+                EnsureRoot();
+                Root.Ino = RootIno;
+
+                AssignInodes(Root);
+
+                WriteSuperblock();
+                WriteTree(Root);
+                FinalizeImage();
+            }
+            finally
+            {
+                Store = null;
+            }
+
+            Output.Flush();
         }
 
         private void AssignInodes(Node N)
@@ -1094,7 +1125,7 @@ namespace NyaFs.Filesystem.F2fs
 
         private void WriteBlock(long Addr, byte[] Data)
         {
-            Array.Copy(Data, 0, Image, Addr * BlockSize, BlockSize);
+            Store.Write(Addr * BlockSize, Data, 0, BlockSize);
         }
 
         // ---- finalize ----
@@ -1123,10 +1154,10 @@ namespace NyaFs.Filesystem.F2fs
         private void WriteCheckpointPack(int Base, uint Version)
         {
             var Cp = BuildCheckpoint(Version);
-            Array.Copy(Cp, 0, Image, (long)Base * BlockSize, BlockSize);
+            Store.Write((long)Base * BlockSize, Cp, 0, BlockSize);
             for (int i = 0; i < 6; i++)
                 WriteSummaryBlock(Base + 1 + i, i, Cursegs[i]);
-            Array.Copy(Cp, 0, Image, (long)(Base + 7) * BlockSize, BlockSize);
+            Store.Write((long)(Base + 7) * BlockSize, Cp, 0, BlockSize);
 
             if (Base == CpBlkaddr && TotalBytes >= LargeImageThreshold)
                 WriteNatBits(Cp);
@@ -1146,7 +1177,7 @@ namespace NyaFs.Filesystem.F2fs
             NatBits[Empty] &= 0xFE;
 
             var Addr = Segment0Blkaddr + BlocksPerSeg - Blocks;
-            Buffer.BlockCopy(NatBits, 0, Image, (int)((long)Addr * BlockSize), NatBits.Length);
+            Store.Write((long)Addr * BlockSize, NatBits, 0, NatBits.Length);
         }
 
         private void WriteSit(int Segno, int Type, int Count)
@@ -1160,9 +1191,11 @@ namespace NyaFs.Filesystem.F2fs
             {
                 int Block = SitBlkaddr + Copy * PerCopy + Segno / SitsPerBlock;
                 long Off = (long)Block * BlockSize + (Segno % SitsPerBlock) * SitEntrySize;
-                PutU16(Image, Off + 0, (ushort)((Type << 10) | Count));
-                Array.Copy(Map, 0, Image, Off + 2, 64);
-                PutU64(Image, Off + 66, 0);
+
+                var Entry = new byte[SitEntrySize];
+                PutU16(Entry, 0, (ushort)((Type << 10) | Count));
+                Array.Copy(Map, 0, Entry, 2, 64);
+                Store.Write(Off, Entry, 0, Entry.Length);
             }
         }
 
@@ -1180,7 +1213,7 @@ namespace NyaFs.Filesystem.F2fs
                 PutU16(Buf, i * 7 + 5, S.Ofs);
             }
             Buf[4091] = (byte)(Type < 3 ? 0 : 1);
-            Array.Copy(Buf, 0, Image, Block, BlockSize);
+            Store.Write(Block, Buf, 0, BlockSize);
         }
 
         private void WriteSummaryBlock(int BlkAddr, int Type, Curseg C)
@@ -1196,7 +1229,7 @@ namespace NyaFs.Filesystem.F2fs
                 PutU16(Buf, i * 7 + 5, S.Ofs);
             }
             Buf[4091] = (byte)(Type < 3 ? 0 : 1);
-            Array.Copy(Buf, 0, Image, (long)BlkAddr * BlockSize, BlockSize);
+            Store.Write((long)BlkAddr * BlockSize, Buf, 0, BlockSize);
         }
 
         private void WriteNatArea()
@@ -1221,9 +1254,11 @@ namespace NyaFs.Filesystem.F2fs
                 {
                     long Block = BaseBlock + Copy * BlocksPerSeg;
                     long Off = Block * BlockSize + SlotOff;
-                    Image[Off + 0] = 0;
-                    PutU32(Image, Off + 1, Ino);
-                    PutU32(Image, Off + 5, (uint)Blk);
+
+                    var Entry = new byte[NatEntrySize];
+                    PutU32(Entry, 1, Ino);
+                    PutU32(Entry, 5, (uint)Blk);
+                    Store.Write(Off, Entry, 0, Entry.Length);
                 }
             }
         }
@@ -1308,8 +1343,8 @@ namespace NyaFs.Filesystem.F2fs
                 PutU32(Sb, 0x884, FeatureCompression | FeatureExtraAttr);
             PutU32(Sb, 0x2A0, 0);
 
-            Array.Copy(Sb, 0, Image, 1024, Sb.Length);
-            Array.Copy(Sb, 0, Image, 1024 + BlockSize, Sb.Length);
+            Store.Write(1024, Sb, 0, Sb.Length);
+            Store.Write(1024 + BlockSize, Sb, 0, Sb.Length);
         }
 
         // ---- xattr ----

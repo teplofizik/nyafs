@@ -8,7 +8,7 @@ using System.Text;
 
 namespace NyaFs.Filesystem.EroFs
 {
-    public class EroFsBuilder : IFilesystemBuilder, IXattrBuilder
+    public class EroFsBuilder : IFilesystemBuilder, IFilesystemStreamBuilder, IXattrBuilder
     {
         private const int BlockSize = 4096;
         private const int InodeUnit = 32;
@@ -209,6 +209,28 @@ namespace NyaFs.Filesystem.EroFs
 
         public byte[] GetFilesystemImage()
         {
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
+
+            if (!Output.CanSeek)
+            {
+                using (var Stream = new MemoryStream())
+                {
+                    WriteFilesystemImage(Stream);
+                    Stream.Position = 0;
+                    Stream.CopyTo(Output);
+                }
+                return;
+            }
+
             PrepareCompression();
             PrepareFragments();
             PrepareXattrs();
@@ -271,16 +293,16 @@ namespace NyaFs.Filesystem.EroFs
                 }
             }
 
-            var Result = new byte[NextBlock * BlockSize];
+            var Result = new ImageStore(new StreamStore(Output, (long)NextBlock * BlockSize));
             WriteSuperblock(Result, NextBlock);
 
             for (int i = 0; i < Nodes.Count; i++)
                 WriteInode(Result, Nodes[i], i);
 
             if (SharedXattrData != null)
-                Array.Copy(SharedXattrData, 0, Result, (long)SharedXattrBlock * BlockSize, SharedXattrData.Length);
+                Result.Write((long)SharedXattrBlock * BlockSize, SharedXattrData);
             if (XattrPrefixData != null)
-                Array.Copy(XattrPrefixData, 0, Result, (long)XattrPrefixBlock * BlockSize, XattrPrefixData.Length);
+                Result.Write((long)XattrPrefixBlock * BlockSize, XattrPrefixData);
 
             foreach (var N in Nodes)
             {
@@ -292,18 +314,18 @@ namespace NyaFs.Filesystem.EroFs
                         if (Group.PhysicalBlocks == 0)
                             continue;
 
-                        Array.Copy(Group.Data, 0, Result, (long)Block * BlockSize, Group.Data.Length);
+                        Result.Write((long)Block * BlockSize, Group.Data);
                         Block += Group.PhysicalBlocks;
                     }
                 }
                 else if (N.Data.Length > 0)
                 {
                     long Offset = (long)N.StartBlock * BlockSize;
-                    Array.Copy(N.Data, 0, Result, Offset, N.Data.Length);
+                    Result.Write(Offset, N.Data);
                 }
             }
 
-            return Result;
+            Output.Flush();
         }
 
         private void PrepareFragments()
@@ -855,7 +877,7 @@ namespace NyaFs.Filesystem.EroFs
             });
         }
 
-        private void WriteSuperblock(byte[] Data, int Blocks)
+        private void WriteSuperblock(ImageStore Data, int Blocks)
         {
             const int Sb = EroFsShared.SuperblockOffset;
 
@@ -873,7 +895,7 @@ namespace NyaFs.Filesystem.EroFs
             WriteU32(Data, Sb + 44, (uint)SharedXattrBlock);
 
             var Uuid = new Guid("6e79732d-6572-6f66-732d-696d61676500").ToByteArray();
-            Array.Copy(Uuid, 0, Data, Sb + 48, 16);
+            Data.Write(Sb + 48, Uuid);
 
             bool BigPclusters = Nodes.Exists(N => N.Compressed && N.BigPclusters);
             uint Features = 0;
@@ -911,14 +933,15 @@ namespace NyaFs.Filesystem.EroFs
             WriteU64(Data, Sb + 120, 0);
         }
 
-        private static void WriteXattrs(byte[] Image, Node Node, int InodeOffset)
+        private static void WriteXattrs(ImageStore Image, Node Node, int InodeOffset)
         {
             if ((Node.XattrData == null) || (Node.XattrData.Length == 0))
                 return;
 
-            Array.Copy(Node.XattrData, 0, Image, InodeOffset + InodeSize, Node.XattrData.Length);
+            Image.Write(InodeOffset + InodeSize, Node.XattrData);
         }
-        private void WriteInode(byte[] Image, Node Node, int Index)
+
+        private void WriteInode(ImageStore Image, Node Node, int Index)
         {
             int Offset = (int)(Node.Nid * InodeUnit);
 
@@ -979,13 +1002,13 @@ namespace NyaFs.Filesystem.EroFs
                 if (Node.Inline)
                 {
                     var Last = Node.Groups[Node.Groups.Count - 1];
-                    Array.Copy(Last.Data, Last.Data.Length - Node.InlineLength,
-                        Image, Node.InlineOffset, Node.InlineLength);
+                    Image.Write(Node.InlineOffset, Last.Data,
+                        Last.Data.Length - Node.InlineLength, Node.InlineLength);
                 }
             }
         }
 
-        private void WriteFullIndexes(byte[] Image, Node Node, int Header)
+        private void WriteFullIndexes(ImageStore Image, Node Node, int Header)
         {
             int EntryBase = Header + 16;
             int BlockOffset = 0;
@@ -1045,7 +1068,7 @@ namespace NyaFs.Filesystem.EroFs
             FourBEnd = Total - Initial - TwoB;
         }
 
-        private void WriteCompactIndexes(byte[] Image, Node Node, int Header)
+        private void WriteCompactIndexes(ImageStore Image, Node Node, int Header)
         {
             int Total = Node.TotalLclusters;
             var Types = new int[Total];
@@ -1112,7 +1135,7 @@ namespace NyaFs.Filesystem.EroFs
             }
         }
 
-        private void WriteCompactPack(byte[] Image, ref int PackOffset, int[] Types, int[] Physical,
+        private void WriteCompactPack(ImageStore Image, ref int PackOffset, int[] Types, int[] Physical,
             int[] Delta0, int[] Delta1, ref int Lcn, int Count, int EntrySize, bool Final,
             ref int BlkAddr, ref bool DummyHead)
         {
@@ -1250,6 +1273,25 @@ namespace NyaFs.Filesystem.EroFs
         {
             WriteU32(Data, Offset, (uint)Value);
             WriteU32(Data, Offset + 4, (uint)(Value >> 32));
+        }
+
+        private static void WriteU16(ImageStore Data, long Offset, uint Value) => Data.U16(Offset, Value);
+
+        private static void WriteU32(ImageStore Data, long Offset, uint Value) => Data.U32(Offset, Value);
+
+        private static void WriteU64(ImageStore Data, long Offset, ulong Value) => Data.U64(Offset, Value);
+
+        private static void WriteBits(ImageStore Data, int Offset, ref int Bit, int Value, int Count)
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                if ((Value & (1 << i)) != 0)
+                {
+                    int Pos = Offset + ((Bit + i) / 8);
+                    Data[Pos] = (byte)(Data[Pos] | (1 << ((Bit + i) % 8)));
+                }
+            }
+            Bit += Count;
         }
     }
 }

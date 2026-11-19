@@ -2,6 +2,7 @@ using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace NyaFs.Filesystem.Yaffs2
@@ -10,7 +11,7 @@ namespace NyaFs.Filesystem.Yaffs2
     /// Minimal YAFFS2 writer for a clean NAND image. It emits one version of every
     /// object and does not implement garbage collection or bad-block management.
     /// </summary>
-    public sealed class Yaffs2Builder : IFilesystemBuilder
+    public sealed class Yaffs2Builder : IFilesystemBuilder, IFilesystemStreamBuilder
     {
         private sealed class Node
         {
@@ -37,7 +38,7 @@ namespace NyaFs.Filesystem.Yaffs2
         private uint NextObjectId = 0x100;
         private uint NextSequence = 0x1001;
         private int UsedChunks;
-        private byte[] Image;
+        private Stream ImageStream;
 
         public Yaffs2Builder(int PageSize = 2048, int OobSize = 64)
         {
@@ -128,23 +129,35 @@ namespace NyaFs.Filesystem.Yaffs2
 
         public byte[] GetFilesystemImage()
         {
-            // Assign IDs to the tree before emitting any chunk.
-            UsedChunks = 0;
-            Image = new byte[0];
-
-            EmitHeader(Root);
-            foreach (var N in Nodes)
+            using (var Stream = new MemoryStream())
             {
-                if (N != Root)
-                    EmitNode(N);
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
             }
+        }
 
-            int Bytes = Math.Max(UsedChunks, 1) * ChunkSize;
-            var Result = new byte[Bytes];
-            for (int i = 0; i < Result.Length; i++)
-                Result[i] = 0xFF;
-            Array.Copy(Image, 0, Result, 0, Math.Min(Image.Length, Result.Length));
-            return Result;
+        public void WriteFilesystemImage(Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
+
+            ImageStream = Output;
+            UsedChunks = 0;
+            try
+            {
+                EmitHeader(Root);
+                foreach (var N in Nodes)
+                {
+                    if (N != Root)
+                        EmitNode(N);
+                }
+
+                if (UsedChunks == 0)
+                    WriteChunk(BuildChunk(0xFF));
+            }
+            finally
+            {
+                ImageStream = null;
+            }
         }
 
         private void EmitNode(Node N)
@@ -158,7 +171,7 @@ namespace NyaFs.Filesystem.Yaffs2
 
         private void EmitHeader(Node N)
         {
-            int Offset = EnsureChunk();
+            var Data = BuildChunk(0);
             var Header = new byte[PageSize];
             WriteU32(Header, 0, (uint)ObjectType(N.Type));
             WriteU32(Header, 4, 1);
@@ -177,10 +190,10 @@ namespace NyaFs.Filesystem.Yaffs2
             WriteU32(Header, 460, EncodeRdev(N));
             WriteU32(Header, 496, 0xFFFFFFFF);
 
-            Array.Copy(Header, 0, Image, Offset, PageSize);
-            WriteOob(Offset + PageSize, (uint)(((int)ObjectType(N.Type) << 28) | (N.ObjectId & 0x0FFFFFFF)),
+            Array.Copy(Header, 0, Data, 0, PageSize);
+            WriteOob(Data, PageSize, (uint)(((int)ObjectType(N.Type) << 28) | (N.ObjectId & 0x0FFFFFFF)),
                 0x80000000u | N.ParentId, 0);
-            UsedChunks++;
+            WriteChunk(Data);
         }
 
         private void EmitData(Node N)
@@ -190,35 +203,40 @@ namespace NyaFs.Filesystem.Yaffs2
             int Source = 0;
             while (Remaining > 0)
             {
-                int Offset = EnsureChunk();
+                var Data = BuildChunk(0);
                 int Length = Math.Min(Remaining, PageSize);
-                Array.Copy(N.Content, Source, Image, Offset, Length);
-                WriteOob(Offset + PageSize, N.ObjectId, (uint)Chunk, (uint)Length);
+                Array.Copy(N.Content, Source, Data, 0, Length);
+                WriteOob(Data, PageSize, N.ObjectId, (uint)Chunk, (uint)Length);
+                WriteChunk(Data);
                 Source += Length;
                 Remaining -= Length;
                 Chunk++;
-                UsedChunks++;
             }
         }
 
-        private int EnsureChunk()
+        private byte[] BuildChunk(byte Fill)
         {
-            int Needed = (UsedChunks + 1) * ChunkSize;
-            if (Image.Length < Needed)
-            {
-                int NewLength = Math.Max(Needed, Math.Max(ChunkSize, Image.Length * 2));
-                Array.Resize(ref Image, NewLength);
-            }
-            return UsedChunks * ChunkSize;
+            var Data = new byte[ChunkSize];
+            if (Fill != 0)
+                for (int i = 0; i < Data.Length; i++)
+                    Data[i] = Fill;
+
+            return Data;
         }
 
-        private void WriteOob(int Offset, uint ObjectId, uint ChunkId, uint NBytes)
+        private void WriteChunk(byte[] Data)
         {
-            Image[Offset + 1] = 0xFF;
-            WriteU32(Image, Offset + 2, NextSequence++);
-            WriteU32(Image, Offset + 6, ObjectId);
-            WriteU32(Image, Offset + 10, ChunkId);
-            WriteU16(Image, Offset + 14, NBytes);
+            ImageStream.Write(Data, 0, Data.Length);
+            UsedChunks++;
+        }
+
+        private void WriteOob(byte[] Data, int Offset, uint ObjectId, uint ChunkId, uint NBytes)
+        {
+            Data[Offset + 1] = 0xFF;
+            WriteU32(Data, Offset + 2, NextSequence++);
+            WriteU32(Data, Offset + 6, ObjectId);
+            WriteU32(Data, Offset + 10, ChunkId);
+            WriteU16(Data, Offset + 14, NBytes);
         }
 
         private uint ModeValue(Node N)

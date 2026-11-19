@@ -135,7 +135,14 @@ namespace NyaFs.ImageFormat.Plugins.Base
         /// <summary>Can this writer emit directly to a stream without building the whole image in memory.</summary>
         public virtual bool SupportsStreaming => false;
 
-        /// <summary>Streaming writer entry point; the default builds in memory and writes it.</summary>
+        /// <summary>
+        /// Streaming writer entry point; the default builds in memory and writes it.
+        /// Container plugins that can avoid the byte[] should override this and return
+        /// true from <see cref="SupportsStreaming"/> (see UbiImagePlugin/DiskImagePlugin).
+        /// TODO(streaming): FIT/Android/CIMG/RKFW/SWUpdate/TVIP still use this default.
+        /// Revisit when such a container is used as a large NAND/disk slot (plan-0013:
+        /// memory limit / OOM or probe+write cost becomes noticeable).
+        /// </summary>
         public virtual bool BuildTo(System.IO.Stream Output, BaseImageBlob Blob,
             Plugins.PluginRegistry Plugins, out string Error)
         {

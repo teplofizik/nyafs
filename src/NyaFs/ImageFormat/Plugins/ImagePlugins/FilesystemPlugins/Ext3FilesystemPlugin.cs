@@ -29,7 +29,8 @@ namespace NyaFs.ImageFormat.Plugins.ImagePlugins.FilesystemPlugins
         /// Get writer (ext2 layout + a journal generated from scratch)
         /// </summary>
         public override Elements.Fs.Writer.Writer GetFilesystemWriter(Elements.Fs.LinuxFilesystem Fs) =>
-            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Ext2.Ext3FsBuilder(DetectFixDiskSize(Fs)));
+            new Elements.Fs.Writer.BaseFsWriter(new Filesystem.Ext2.Ext3FsBuilder(DetectFixDiskSize(Fs)),
+                S => new Filesystem.Ext2.Ext3FsBuilder(DetectFixDiskSize(Fs), new Filesystem.Universal.StreamStore(S, DetectFixDiskSize(Fs))));
 
         private uint DetectFixDiskSize(Elements.Fs.LinuxFilesystem Fs)
         {

@@ -26,6 +26,7 @@ namespace NyaFs.ImageFormat.Composite
             public byte[] Data;
             public string FilePath;
             public long DataLength;
+            public Func<System.IO.Stream, string> WriteData;
             public byte MbrType;
             public Guid TypeGuid;
             public Guid UniqueGuid;
@@ -79,9 +80,27 @@ namespace NyaFs.ImageFormat.Composite
                 byte[] Data = null;
                 string FilePath = null;
                 long DataLength;
-                bool Skip;
+                bool Skip = false;
+                Func<System.IO.Stream, string> WriteData = null;
 
-                if (PlanContentFile.TryGet(Child, BaseDir, out FilePath, out DataLength, out Skip, out var FileError))
+                if (PlanNodeSerializer.TryProbeStreaming(Child, Plugins, BaseDir, BlobDir,
+                    out var StreamLength, out var Handled, out var StreamError))
+                {
+                    DataLength = StreamLength;
+                    var Node = Child;
+                    WriteData = Stream =>
+                    {
+                        if (!PlanNodeSerializer.TryWriteStreaming(Node, Plugins, BaseDir, BlobDir, Stream, out _, out var WriteError))
+                            return WriteError ?? "Cannot write streamable content";
+                        return null;
+                    };
+                }
+                else if (Handled)
+                {
+                    Error = StreamError;
+                    return false;
+                }
+                else if (PlanContentFile.TryGet(Child, BaseDir, out FilePath, out DataLength, out Skip, out var FileError))
                 {
                     if (!String.IsNullOrEmpty(FileError))
                     {
@@ -160,6 +179,7 @@ namespace NyaFs.ImageFormat.Composite
                     Data = Data,
                     FilePath = FilePath,
                     DataLength = DataLength,
+                    WriteData = WriteData,
                     MbrType = (byte)(Option(Child, "mbr-type", 0x83) & 0xFF),
                     TypeGuid = TypeGuid,
                     UniqueGuid = UniqueGuid
@@ -305,6 +325,52 @@ namespace NyaFs.ImageFormat.Composite
         private static bool WritePart(System.IO.Stream Output, Part Part, out string Error)
         {
             Error = null;
+
+            if (Part.WriteData != null)
+            {
+                if (Output.CanSeek)
+                {
+                    long Start = Output.Position;
+                    var Region = new RegionStream(Output, Start);
+                    var StreamError = Part.WriteData(Region);
+                    if (StreamError != null)
+                    {
+                        Error = StreamError;
+                        return false;
+                    }
+
+                    if (Region.Length != Part.DataLength)
+                    {
+                        Error = $"Partition '{Part.Name}' produced {Region.Length} bytes, expected {Part.DataLength}";
+                        return false;
+                    }
+
+                    Output.Seek(Start + Part.DataLength, System.IO.SeekOrigin.Begin);
+                }
+                else
+                {
+                    using (var Memory = new System.IO.MemoryStream())
+                    {
+                        var StreamError = Part.WriteData(Memory);
+                        if (StreamError != null)
+                        {
+                            Error = StreamError;
+                            return false;
+                        }
+
+                        if (Memory.Length != Part.DataLength)
+                        {
+                            Error = $"Partition '{Part.Name}' produced {Memory.Length} bytes, expected {Part.DataLength}";
+                            return false;
+                        }
+
+                        var Buffer = Memory.GetBuffer();
+                        Output.Write(Buffer, 0, (int)Memory.Length);
+                    }
+                }
+
+                return true;
+            }
 
             if (Part.FilePath != null)
             {

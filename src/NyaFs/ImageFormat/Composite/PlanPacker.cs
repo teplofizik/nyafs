@@ -16,6 +16,12 @@ namespace NyaFs.ImageFormat.Composite
         public long? RepeatStride;
         public byte Fill = 0xFF;
         public byte[] Data;
+
+        /// <summary>Exact byte count produced by <see cref="WriteData"/>.</summary>
+        public long DataLength = -1;
+
+        /// <summary>Stream the payload instead of providing it as <see cref="Data"/>; returns an error or null.</summary>
+        public Func<System.IO.Stream, string> WriteData;
     }
 
     /// <summary>
@@ -66,10 +72,13 @@ namespace NyaFs.ImageFormat.Composite
             {
                 var Align = (Slot.Align.HasValue && (Slot.Align.Value > 0)) ? Slot.Align.Value : Math.Max(1, DefaultAlign);
                 var Data = Slot.Data ?? Array.Empty<byte>();
+                long DataLength = (Slot.WriteData != null)
+                    ? Math.Max(0, Slot.DataLength)
+                    : Data.Length;
 
                 long Size;
                 if (Slot.SizeAuto || !Slot.Size.HasValue)
-                    Size = Data.Length;
+                    Size = DataLength;
                 else
                     Size = Slot.Size.Value;
 
@@ -79,9 +88,9 @@ namespace NyaFs.ImageFormat.Composite
                     return false;
                 }
 
-                if (Data.Length > Size)
+                if (DataLength > Size)
                 {
-                    Error = $"Slot '{Slot.Name}' is too small for its content ({Size} < {Data.Length} bytes)";
+                    Error = $"Slot '{Slot.Name}' is too small for its content ({Size} < {DataLength} bytes)";
                     return false;
                 }
 
@@ -136,6 +145,7 @@ namespace NyaFs.ImageFormat.Composite
                 var Offset = P.Item2;
                 var Size = P.Item3;
                 var Data = Slot.Data ?? Array.Empty<byte>();
+                long DataLength = (Slot.WriteData != null) ? Math.Max(0, Slot.DataLength) : Data.Length;
 
                 if (Offset < Pos)
                 {
@@ -146,14 +156,58 @@ namespace NyaFs.ImageFormat.Composite
                 WriteFill(Output, Offset - Pos, DefaultFill);
                 Pos = Offset;
 
-                if (Data.Length > 0)
+                if (Slot.WriteData != null)
+                {
+                    if (!Output.CanSeek)
+                    {
+                        using (var Memory = new System.IO.MemoryStream())
+                        {
+                            var StreamError = Slot.WriteData(Memory);
+                            if (StreamError != null)
+                            {
+                                Error = StreamError;
+                                return false;
+                            }
+
+                            if (Memory.Length != DataLength)
+                            {
+                                Error = $"Slot '{Slot.Name}' produced {Memory.Length} bytes, expected {DataLength}";
+                                return false;
+                            }
+
+                            var Buffer = Memory.GetBuffer();
+                            Output.Write(Buffer, 0, (int)Memory.Length);
+                        }
+                    }
+                    else
+                    {
+                        var Region = new RegionStream(Output, Offset);
+                        var StreamError = Slot.WriteData(Region);
+                        if (StreamError != null)
+                        {
+                            Error = StreamError;
+                            return false;
+                        }
+
+                        if (Region.Length != DataLength)
+                        {
+                            Error = $"Slot '{Slot.Name}' produced {Region.Length} bytes, expected {DataLength}";
+                            return false;
+                        }
+
+                        Output.Seek(Offset + DataLength, System.IO.SeekOrigin.Begin);
+                    }
+
+                    Pos += DataLength;
+                }
+                else if (Data.Length > 0)
                 {
                     Output.Write(Data, 0, Data.Length);
                     Pos += Data.Length;
                 }
 
-                WriteFill(Output, Size - Data.Length, Slot.Fill);
-                Pos += Size - Data.Length;
+                WriteFill(Output, Size - DataLength, Slot.Fill);
+                Pos += Size - DataLength;
             }
 
             WriteFill(Output, TotalSize - Pos, DefaultFill);

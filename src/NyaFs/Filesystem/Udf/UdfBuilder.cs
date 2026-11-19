@@ -2,11 +2,12 @@ using NyaFs.Filesystem.Universal;
 using NyaFs.Filesystem.Universal.Types;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace NyaFs.Filesystem.Udf
 {
-    public class UdfBuilder : IFilesystemBuilder
+    public class UdfBuilder : IFilesystemBuilder, IFilesystemStreamBuilder
     {
         private const int BlockSize = 2048;
         private const int PartitionStart = 257;
@@ -133,8 +134,33 @@ namespace NyaFs.Filesystem.Udf
 
         public byte[] GetFilesystemImage()
         {
+            using (var Stream = new MemoryStream())
+            {
+                WriteFilesystemImage(Stream);
+                return Stream.ToArray();
+            }
+        }
+
+        public void WriteFilesystemImage(Stream Output)
+        {
+            if (Output == null) throw new ArgumentNullException(nameof(Output));
+
+            if (!Output.CanSeek)
+            {
+                using (var Stream = new MemoryStream())
+                {
+                    WriteFilesystemImage(Stream);
+                    Stream.Position = 0;
+                    Stream.CopyTo(Output);
+                }
+                return;
+            }
+
             if (Vat)
-                return GetVatImage();
+            {
+                WriteVatImage(Output);
+                return;
+            }
 
             int NextIcb = PartitionStart + 2;
             foreach (var N in Nodes)
@@ -181,7 +207,7 @@ namespace NyaFs.Filesystem.Udf
                 PartitionLength = Reserve - PartitionStart;
             }
 
-            var Image = new byte[Total * BlockSize];
+            var Image = new ImageStore(new StreamStore(Output, (long)Total * BlockSize));
             WriteVrs(Image, 0);
             WriteVolumeDescriptors(Image, 96, Reserve);
             WriteLvid(Image, 128);
@@ -195,16 +221,16 @@ namespace NyaFs.Filesystem.Udf
             {
                 WriteFe(Image, N);
                 if (N.Data.Length > 0)
-                    Array.Copy(N.Data, 0, Image, (long)N.DataBlock * BlockSize, N.Data.Length);
+                    Image.Write((long)N.DataBlock * BlockSize, N.Data);
             }
 
             if (Sparable)
                 WriteSparableLayout(Image);
 
-            return Image;
+            Output.Flush();
         }
 
-        private void WriteSparableLayout(byte[] Image)
+        private void WriteSparableLayout(ImageStore Image)
         {
             int Lvd = 97 * BlockSize;
             int Map = Lvd + 440;
@@ -239,7 +265,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, Lvd, 6, 510, 97);
         }
 
-        private byte[] GetVatImage()
+        private void WriteVatImage(Stream Output)
         {
             int NextIcb = PartitionStart + 1;
             foreach (var N in Nodes)
@@ -307,7 +333,7 @@ namespace NyaFs.Filesystem.Udf
             int Reserve = Total - 160;
             int PartitionLength = FeBlock - PartitionStart + 1;
 
-            var Image = new byte[Total * BlockSize];
+            var Image = new ImageStore(new StreamStore(Output, (long)Total * BlockSize));
             WriteVrs(Image, 0);
             WriteVolumeDescriptors(Image, 96, Reserve, PartitionLength);
             WriteLvid(Image, 128, true);
@@ -319,10 +345,10 @@ namespace NyaFs.Filesystem.Udf
             {
                 WriteFe(Image, N);
                 if (N.Data.Length > 0)
-                    Array.Copy(N.Data, 0, Image, (long)N.DataBlock * BlockSize, N.Data.Length);
+                    Image.Write((long)N.DataBlock * BlockSize, N.Data);
             }
 
-            return Image;
+            Output.Flush();
         }
 
         private byte[] BuildVatTable(int Entries)
@@ -409,7 +435,7 @@ namespace NyaFs.Filesystem.Udf
             Result.AddRange(Entry);
         }
 
-        private void WriteSpaceBitmap(byte[] Image, int Block, int PartitionLength, int UsedBlocks)
+        private void WriteSpaceBitmap(ImageStore Image, int Block, int PartitionLength, int UsedBlocks)
         {
             int Bytes = (PartitionLength + 7) / 8;
             int Length = 24 + Bytes;
@@ -425,21 +451,21 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, Block * BlockSize, 264, Length, 0);
         }
 
-        private void WriteVrs(byte[] Image, int Offset)
+        private void WriteVrs(ImageStore Image, int Offset)
         {
             WriteVrsEntry(Image, 16 * BlockSize, "BEA01");
             WriteVrsEntry(Image, 17 * BlockSize, "NSR03");
             WriteVrsEntry(Image, 18 * BlockSize, "TEA01");
         }
 
-        private void WriteVrsEntry(byte[] Image, int Offset, string Name)
+        private void WriteVrsEntry(ImageStore Image, int Offset, string Name)
         {
             Image[Offset] = 0;
-            Array.Copy(Encoding.ASCII.GetBytes(Name), 0, Image, Offset + 1, 5);
+            Image.Write(Offset + 1, Encoding.ASCII.GetBytes(Name), 5);
             Image[Offset + 6] = 1;
         }
 
-        private void WriteVolumeDescriptors(byte[] Image, int Start, int Reserve, int PartitionLength = 0)
+        private void WriteVolumeDescriptors(ImageStore Image, int Start, int Reserve, int PartitionLength = 0)
         {
             WritePvd(Image, Start);
             WriteLvd(Image, Start + 1);
@@ -449,7 +475,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTd(Image, Start + 5);
         }
 
-        private void WritePvd(byte[] Image, int Block)
+        private void WritePvd(ImageStore Image, int Block)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 1, 512, Block);
@@ -470,7 +496,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 1, 512, Block);
         }
 
-        private void WriteLvd(byte[] Image, int Block)
+        private void WriteLvd(ImageStore Image, int Block)
         {
             int B = Block * BlockSize;
             int MapLength = Vat ? 70 : 6;
@@ -505,7 +531,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 6, 440 + MapLength, Block);
         }
 
-        private void WritePd(byte[] Image, int Block, int PartitionLength)
+        private void WritePd(ImageStore Image, int Block, int PartitionLength)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 5, 512, Block);
@@ -520,7 +546,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 5, 512, Block);
         }
 
-        private void WriteUsd(byte[] Image, int Block)
+        private void WriteUsd(ImageStore Image, int Block)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 7, 24, Block);
@@ -529,7 +555,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 7, 24, Block);
         }
 
-        private void WriteIuvd(byte[] Image, int Block)
+        private void WriteIuvd(ImageStore Image, int Block)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 4, 512, Block);
@@ -538,12 +564,12 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 4, 512, Block);
         }
 
-        private void WriteTd(byte[] Image, int Block)
+        private void WriteTd(ImageStore Image, int Block)
         {
             WriteTag(Image, Block * BlockSize, 8, 16, Block);
         }
 
-        private void WriteLvid(byte[] Image, int Block, bool Vat = false)
+        private void WriteLvid(ImageStore Image, int Block, bool Vat = false)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 9, 80, Block);
@@ -553,7 +579,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 9, 80, Block);
         }
 
-        private void WriteAnchor(byte[] Image, int Block, int Main, int Reserve)
+        private void WriteAnchor(ImageStore Image, int Block, int Main, int Reserve)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 2, 512, Block);
@@ -564,7 +590,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 2, 512, Block);
         }
 
-        private void WriteFsd(byte[] Image, int Block, bool Vat)
+        private void WriteFsd(ImageStore Image, int Block, bool Vat)
         {
             int B = Block * BlockSize;
             WriteTag(Image, B, 256, 512, Block - PartitionStart);
@@ -582,7 +608,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 256, 512, Block - PartitionStart);
         }
 
-        private void WriteFe(byte[] Image, Node Node)
+        private void WriteFe(ImageStore Image, Node Node)
         {
             if (Node.Vat)
             {
@@ -633,7 +659,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 261, Length, Node.IcbBlock - PartitionStart);
         }
 
-        private void WriteVatFe(byte[] Image, Node Node)
+        private void WriteVatFe(ImageStore Image, Node Node)
         {
             int B = Node.IcbBlock * BlockSize;
             int Alloc = 216;
@@ -684,7 +710,7 @@ namespace NyaFs.Filesystem.Udf
             WriteTag(Image, B, 266, Length, Node.IcbBlock - PartitionStart);
         }
 
-        private void WriteTag(byte[] Image, int Offset, int Id, int Length, int Location)
+        private void WriteTag(ImageStore Image, int Offset, int Id, int Length, int Location)
         {
             WriteU16(Image, Offset, (uint)Id);
             WriteU16(Image, Offset + 2, 2);
@@ -715,14 +741,26 @@ namespace NyaFs.Filesystem.Udf
             return Crc;
         }
 
-        private void WriteLongAd(byte[] Image, int Offset, uint Length, int Location, int Partition)
+        private static ushort Crc16(ImageStore Data, int Offset, int Length)
+        {
+            ushort Crc = 0;
+            for (int i = 0; i < Length; i++)
+            {
+                Crc ^= (ushort)(Data[Offset + i] << 8);
+                for (int Bit = 0; Bit < 8; Bit++)
+                    Crc = (ushort)((Crc & 0x8000) != 0 ? (Crc << 1) ^ 0x1021 : Crc << 1);
+            }
+            return Crc;
+        }
+
+        private void WriteLongAd(ImageStore Image, int Offset, uint Length, int Location, int Partition)
         {
             WriteU32(Image, Offset, Length);
             WriteU32(Image, Offset + 4, (uint)Location);
             WriteU16(Image, Offset + 8, (uint)Partition);
         }
 
-        private void WriteTimestamp(byte[] Image, int Offset)
+        private void WriteTimestamp(ImageStore Image, int Offset)
         {
             var Now = DateTime.UtcNow;
             Image[Offset] = 1;
@@ -735,21 +773,57 @@ namespace NyaFs.Filesystem.Udf
             Image[Offset + 8] = (byte)Now.Second;
         }
 
-        private void WriteDstring(byte[] Image, int Offset, int Size, string Value)
+        private void WriteDstring(ImageStore Image, int Offset, int Size, string Value)
         {
             var Bytes = Encoding.ASCII.GetBytes(Value ?? "");
             if (Bytes.Length + 1 > Size)
                 Array.Resize(ref Bytes, Size - 1);
 
             Image[Offset] = 8;
-            Array.Copy(Bytes, 0, Image, Offset + 1, Bytes.Length);
+            Image.Write(Offset + 1, Bytes);
         }
 
-        private void WriteRegid(byte[] Image, int Offset, string Identifier)
+        private void WriteRegid(ImageStore Image, int Offset, string Identifier)
         {
             var Bytes = Encoding.ASCII.GetBytes(Identifier ?? "");
             int Length = Math.Min(Bytes.Length, 23);
-            Array.Copy(Bytes, 0, Image, Offset + 1, Length);
+            Image.Write(Offset + 1, Bytes, Length);
+        }
+
+        private void WriteDstring(byte[] Data, int Offset, int Size, string Value)
+        {
+            var Bytes = Encoding.ASCII.GetBytes(Value ?? "");
+            if (Bytes.Length + 1 > Size)
+                Array.Resize(ref Bytes, Size - 1);
+
+            Data[Offset] = 8;
+            Array.Copy(Bytes, 0, Data, Offset + 1, Bytes.Length);
+        }
+
+        private void WriteTag(byte[] Image, int Offset, int Id, int Length, int Location)
+        {
+            WriteU16(Image, Offset, (uint)Id);
+            WriteU16(Image, Offset + 2, 2);
+            Image[Offset + 4] = 0;
+            Image[Offset + 5] = 0;
+            WriteU16(Image, Offset + 6, 0);
+            WriteU16(Image, Offset + 10, (uint)Math.Max(0, Length - 16));
+            WriteU32(Image, Offset + 12, (uint)Location);
+
+            ushort Crc = Crc16(Image, Offset + 16, Math.Max(0, Length - 16));
+            WriteU16(Image, Offset + 8, Crc);
+
+            byte Sum = 0;
+            for (int i = 0; i < 16; i++)
+                Sum += Image[Offset + i];
+            Image[Offset + 4] = Sum;
+        }
+
+        private void WriteLongAd(byte[] Image, int Offset, uint Length, int Location, int Partition)
+        {
+            WriteU32(Image, Offset, Length);
+            WriteU32(Image, Offset + 4, (uint)Location);
+            WriteU16(Image, Offset + 8, (uint)Partition);
         }
 
         private static uint Permissions(uint Mode)
@@ -821,5 +895,11 @@ namespace NyaFs.Filesystem.Udf
             WriteU32(Data, Offset, (uint)Value);
             WriteU32(Data, Offset + 4, (uint)(Value >> 32));
         }
+
+        private static void WriteU16(ImageStore Data, int Offset, uint Value) => Data.U16(Offset, Value);
+
+        private static void WriteU32(ImageStore Data, int Offset, uint Value) => Data.U32(Offset, Value);
+
+        private static void WriteU64(ImageStore Data, int Offset, ulong Value) => Data.U64(Offset, Value);
     }
 }

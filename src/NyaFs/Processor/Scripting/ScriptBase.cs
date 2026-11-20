@@ -50,6 +50,7 @@ namespace NyaFs.Processor.Scripting
             Add(new Commands.Export());
             Add(new Commands.Info());
             Add(new Commands.Inspect());
+            Add(new Commands.Fdt());
         Add(new Commands.MkImage());
         Add(new Commands.Layout());
         Add(new Commands.Build());

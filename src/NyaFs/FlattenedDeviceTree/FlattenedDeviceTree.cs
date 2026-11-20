@@ -60,5 +60,72 @@ namespace NyaFs.FlattenedDeviceTree
                 return false;
             }
         }
+
+        /// <summary>
+        /// Resolve a node by path ("/", "/soc/uart@0") or by label ("&uart0" via /__symbols__).
+        /// Returns null when the node is not found.
+        /// </summary>
+        public Types.Node Resolve(string Path)
+        {
+            if (string.IsNullOrEmpty(Path) || (Path == "/") || (Path == "."))
+                return Root;
+
+            var P = Path.Trim();
+            if (P.Length == 0)
+                return Root;
+
+            if (P[0] == '&')
+            {
+                var Symbols = Root.GetNode("__symbols__");
+                if (Symbols == null)
+                    return null;
+
+                var Target = Symbols.GetStringValue(P.Substring(1));
+                return (Target != null) ? Resolve(Target) : null;
+            }
+
+            var Parts = P.Split('/');
+            Types.Node Current = Root;
+            foreach (var Part in Parts)
+            {
+                if ((Part.Length == 0) || (Part == "."))
+                    continue;
+
+                Current = Current.GetNode(Part);
+                if (Current == null)
+                    return null;
+            }
+
+            return Current;
+        }
+
+        /// <summary>
+        /// Resolve the parent of a literal path. Root is returned for top-level names.
+        /// <paramref name="Name"/> receives the final path component.
+        /// </summary>
+        public Types.Node ResolveParent(string Path, out string Name)
+        {
+            Name = null;
+            if (string.IsNullOrEmpty(Path))
+                return null;
+
+            var P = Path.Trim().TrimEnd('/');
+            if (P.Length == 0)
+                return null;
+
+            var Slash = P.LastIndexOf('/');
+            if (Slash < 0)
+            {
+                Name = P;
+                return Root;
+            }
+
+            Name = P.Substring(Slash + 1);
+            if (Name.Length == 0)
+                return null;
+
+            var ParentPath = P.Substring(0, Slash);
+            return Resolve(ParentPath.Length == 0 ? "/" : ParentPath);
+        }
     }
 }

@@ -48,16 +48,18 @@ namespace NyaFs.FlattenedDeviceTree.Types
             return null;
         }
 
-        public byte[] GetValue(string PropertyName)
+        public Property GetProperty(string PropertyName)
         {
-            foreach(var P in Properties)
+            foreach (var P in Properties)
             {
-                if(P.Name == PropertyName)
-                    return P.Value;
+                if (P.Name == PropertyName)
+                    return P;
             }
 
             return null;
         }
+
+        public byte[] GetValue(string PropertyName) => GetProperty(PropertyName)?.Value;
 
         public string GetStringValue(string PropertyName)
         {
